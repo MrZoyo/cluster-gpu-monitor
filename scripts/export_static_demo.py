@@ -274,21 +274,18 @@ _SHIM_JS = r"""// 静态演示模式：拦截 /api/* 请求，改读导出的 JS
   };
 
   // 时间冻结：导出后真实时钟还在走，若不处理，"更新于 x 分钟前"会一直变大，
-  // 几天后变成"3 天前"，看起来像站挂了。把 Date.now 钉在导出时刻，
-  // 让所有相对时间显示都停在那一刻。
+  // 几天后变成"3 天前"，看起来像站挂了。
+  //
+  // ⚠️ 只能改 Date.now，**绝不能替换 Date 构造函数**。
+  // zrender（ECharts 的渲染层）的动画时钟是 `function(){return (new Date).getTime()}`。
+  // 一旦把无参 new Date() 也钉住，每帧算出的 elapsed 恒为 0，补间动画永远停在第 0 帧
+  // —— 条形图的条宽从 0 开始长，于是"条一根都看不见"，只剩坐标轴和标签。
+  // （headless 截图看不出来：--virtual-time-budget 会把动画快进完，真实浏览器才复现。）
+  //
+  // 前端只有 components.js 的 ago() 用 Date.now()，改这一个静态方法就够。
   origFetch(base + "api/meta.json").then((r) => r.json()).then((m) => {
     if (!m || !m.server_time) return;
-    const frozen = m.server_time * 1000;
-    const RealDate = Date;
-    // 只改无参构造与 Date.now；带参构造保持原样（图表要用它解析时间戳）
-    function FrozenDate(...a) {
-      return a.length ? new RealDate(...a) : new RealDate(frozen);
-    }
-    FrozenDate.prototype = RealDate.prototype;
-    FrozenDate.now = () => frozen;
-    FrozenDate.parse = RealDate.parse;
-    FrozenDate.UTC = RealDate.UTC;
-    window.Date = FrozenDate;
+    Date.now = () => m.server_time * 1000;
   }).catch(() => {});
 })();
 """

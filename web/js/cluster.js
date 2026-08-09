@@ -57,6 +57,7 @@ window.Views.cluster = (function () {
     root.appendChild(chartPanel);
     const ser = await API.series("cluster", c.id, "util_gpu", w);
     const chart = lineChart(chartDom, [{ name: c.name, points: ser.points, color: accent }], { max: 100 });
+    chart.resize();  // 修复超宽屏初始化时尺寸计算错误
     GM.onResize(chart);
 
     // 集群内使用人 Top（按本集群过滤）
@@ -71,6 +72,7 @@ window.Views.cluster = (function () {
     const labels = data.items.map((x) => x.username);
     const vals = data.items.map((x) => x.gpu_hours);
     const chart = barChart(dom, labels, vals, { xName: "GPU·小时", color: color || "#76b900" });
+    chart.resize();  // 修复超宽屏初始化时尺寸计算错误
     GM.onResize(chart);
   }
 

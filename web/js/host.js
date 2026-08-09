@@ -54,6 +54,7 @@ window.Views.host = (function () {
     const palette = Palette.seriesColors(seriesData.length);
     seriesData.forEach((s, i) => (s.color = palette[i]));
     const chart = lineChart(dom, seriesData, { max: 100 });
+    chart.resize();  // 修复超宽屏初始化时尺寸计算错误
     GM.onResize(chart);
 
     // 当前使用人（该机）

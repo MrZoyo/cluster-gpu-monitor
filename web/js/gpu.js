@@ -65,6 +65,7 @@ window.Views.gpu = (function () {
       if (chart) chart.dispose();
       chart = lineChart(dom, [{ name: m.label, points: s.points, color: m.color }],
         { max: m.max, yName: m.yName });
+      chart.resize();  // 修复超宽屏初始化时尺寸计算错误
       GM.onResize(chart);
     }
     METRICS.forEach((m) => {

@@ -160,13 +160,14 @@ window.Views.ranking = (function () {
         confine: true,                  // 大集群下别把 tooltip 顶出屏幕
         formatter: rankTooltip },
       legend: { type: "scroll", top: 0, textStyle: { color: cText }, pageTextStyle: { color: cText } },
-      grid: { left: 100, right: 30, top: 38, bottom: 30 },
+      grid: { left: 150, right: 30, top: 38, bottom: 30 },
       xAxis: { type: "value", name: "GPU·小时", nameTextStyle: { color: cText },
         axisLabel: { color: cText }, splitLine: { lineStyle: { color: cSplit } } },
       yAxis: { type: "category", data: usernames, inverse: true,
         axisLabel: { color: cText }, axisLine: { lineStyle: { color: cAxis } } },
       series,
     });
+    chart.resize();  // 修复超宽屏初始化时尺寸计算错误
     GM.onResize(chart);
   }
 

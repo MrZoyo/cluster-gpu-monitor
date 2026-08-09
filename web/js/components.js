@@ -269,7 +269,7 @@ window.UI = (function () {
     chart.setOption({
       backgroundColor: "transparent",
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: theme.tooltipBg, borderColor: theme.tooltipBorder, textStyle: { color: cssVar("--ink", "#f7f7f7") } },
-      grid: { left: 90, right: 24, top: 10, bottom: 30 },
+      grid: { left: 150, right: 24, top: 10, bottom: 30 },
       xAxis: { type: "value", name: opts.xName || "", nameTextStyle: { color: theme.text }, axisLabel: { color: theme.text }, splitLine: { lineStyle: { color: theme.split } } },
       yAxis: { type: "category", data: labels, inverse: true, axisLabel: { color: theme.text }, axisLine: { lineStyle: { color: theme.axis } } },
       series: [{ type: "bar", data: values, itemStyle: { color: opts.color || theme.bar }, barMaxWidth: 22 }],
