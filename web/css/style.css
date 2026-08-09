@@ -726,7 +726,12 @@ body[data-theme="light"] .cfg-badge.tone-neutral { --badge-c: #5d646f; }
 /* 集群详情页面板头：标题 + 标签一行 */
 .panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.cards { display: flex; gap: 7px; flex-wrap: wrap; }
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 64px);
+  gap: 7px;
+  max-width: calc(8 * 64px + 7 * 7px); /* 8卡 + 7个间隙 = 561px */
+}
 .card {
   width: 64px;
   height: 54px;
