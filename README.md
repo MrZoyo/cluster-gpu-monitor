@@ -112,6 +112,36 @@ uv run gpumon web              # 起网页 http://127.0.0.1:8848/
 `web` 默认只监听 `127.0.0.1`，**自身不带任何认证**——对外暴露请务必在前面放一层反向代理
 并加上鉴权（`deploy/` 下有 systemd 与 Caddy 的模板）。
 
+## 在线演示
+
+不想装就先看 demo：**https://mrzoyo.github.io/cluster-gpu-monitor/**
+
+里面的算力域、集群、用户名全是编造的（4 算力域 / 9 集群 / 32 机 / 256 卡），
+时间冻结在导出那一刻。它是**纯静态页面** —— 每次构建重新造数据、把各接口快照成
+JSON，前端代码一行没改（原理见 `scripts/export_static_demo.py`）。
+
+本地也能造一份：
+
+```bash
+# 造演示库 + 配套清单（256 卡 / 3 天历史，约 14s）
+uv run python scripts/gen_demo_db.py --scale large --days 3 \
+    --db data/demo.db --inventory config/inventory.demo.yaml
+
+# 想直接用后端看
+cp config/inventory.demo.yaml config/inventory.yaml
+# 再把 config/settings.toml 的 [db] path 指向 data/demo.db
+uv run gpumon web
+
+# 或者导出成静态站点，随便什么静态服务器都能托管
+uv run python scripts/export_static_demo.py \
+    --db data/demo.db --inventory config/inventory.demo.yaml --out dist/demo
+cd dist/demo && python3 -m http.server 8080
+```
+
+`--scale small` 是 48 卡的轻量版本。演示数据刻意覆盖了各种边界：满载卡、空占卡
+（占着显存但利用率 <5%）、离线主机、少一张卡的主机、待接入集群、已退役集群、
+AMD 集群，以及标签超过 3 枚触发折叠的集群。
+
 ## 配置
 
 两个文件，都不入库（已在 `.gitignore`）：

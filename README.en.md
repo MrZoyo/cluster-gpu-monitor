@@ -142,6 +142,39 @@ A production setup runs two processes: `gpumon collect` (the polling loop) and `
 expose it, put a reverse proxy with auth in front of it (`deploy/` has systemd and Caddy
 templates).
 
+## Live demo
+
+**https://mrzoyo.github.io/cluster-gpu-monitor/**
+
+Every name in it is made up (4 capacity domains / 9 clusters / 32 hosts / 256 GPUs),
+and the clock is frozen at export time. It's a **fully static page**: the build
+generates fresh data, snapshots each API response to JSON, and a small shim rewrites
+`/api/...` requests to those files — the frontend code is unmodified. See
+`scripts/export_static_demo.py`.
+
+Build one locally:
+
+```bash
+# demo database + matching inventory (256 GPUs, 3 days of history, ~14s)
+uv run python scripts/gen_demo_db.py --scale large --days 3 \
+    --db data/demo.db --inventory config/inventory.demo.yaml
+
+# serve it with the real backend
+cp config/inventory.demo.yaml config/inventory.yaml
+# then point [db] path in config/settings.toml at data/demo.db
+uv run gpumon web
+
+# or export a static site that any web server can host
+uv run python scripts/export_static_demo.py \
+    --db data/demo.db --inventory config/inventory.demo.yaml --out dist/demo
+cd dist/demo && python3 -m http.server 8080
+```
+
+`--scale small` gives a 48-GPU variant. The demo data deliberately covers the edge
+cases: saturated GPUs, idle-but-occupied GPUs (VRAM held at <5% utilization), an
+offline host, a host reporting one GPU short, a planned cluster, a retired cluster,
+an AMD cluster, and a cluster with enough badges to trigger the `+N` fold.
+
 ## Configuration
 
 Two files, both gitignored:
