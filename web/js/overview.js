@@ -215,7 +215,7 @@ window.Views.overview = (function () {
       ]),
     ]);
     details.appendChild(summary);
-    if (c.note) details.appendChild(el("div", { class: "cluster-note" }, [c.note]));
+    if (c.note) details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${col}` }, [c.note]));
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
     } else {

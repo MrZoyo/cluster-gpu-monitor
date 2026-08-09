@@ -485,12 +485,13 @@ a { color: var(--accent); text-decoration: none; }
   box-shadow: var(--shadow-1);
   transition: border-color .15s ease, transform .1s ease, background .15s ease, box-shadow .15s ease;
   /* 为上移悬停预留顶部空间，避免高亮边框被截断 */
-  margin-top: 2px;
+  margin-top: 4px;
+  margin-bottom: 2px;
 }
 .capacity-tabs button:hover,
 .cluster-tabs button:hover {
   border-color: var(--accent);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   background: var(--surface-soft);
   box-shadow: var(--shadow-2), 0 0 0 1px var(--accent);
 }
@@ -550,11 +551,16 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 12px;
   background: var(--surface-low);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--caccent, var(--line-strong));
+  border-left: 4px solid var(--note-accent, var(--line-strong));
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
   padding: 10px 12px;
   margin-bottom: 12px;
 }
+/* 算力域的 description 继承算力域家族色 */
+.capacity-section > .capacity-note {
+  border-left-color: var(--caccent, var(--line-strong));
+}
+/* 集群的 note 继承集群家族色（通过 JS inline style 注入 --note-accent） */
 .cluster-block {
   margin-top: 12px;
   overflow: hidden;
