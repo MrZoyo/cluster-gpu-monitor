@@ -1,0 +1,13 @@
+[Unit]
+Description=gpumon database backup (daily at 4am)
+After=gpumon-collector.service
+
+[Service]
+Type=oneshot
+User=gpumon
+WorkingDirectory=/opt/gpu-monitor
+Environment="GPUMON_ROOT=/opt/gpu-monitor"
+ExecStart=/opt/gpu-monitor/.venv/bin/gpumon backup
+
+[Install]
+WantedBy=multi-user.target

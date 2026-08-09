@@ -87,6 +87,22 @@ def _cmd_rollup_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    from .db.backup import backup_and_prune, list_backups
+
+    new_backup, deleted = backup_and_prune(keep=3)
+    print(f"备份完成: {new_backup.name}  ({new_backup.stat().st_size / (1024*1024):.1f} MB)")
+    if deleted:
+        print(f"已删除 {len(deleted)} 个旧备份: {', '.join(f.name for f in deleted)}")
+
+    backups = list_backups()
+    print(f"\n当前备份 ({len(backups)}):")
+    for b in backups:
+        size_mb = b.stat().st_size / (1024 * 1024)
+        print(f"  {b.name}  {size_mb:.1f} MB")
+    return 0
+
+
 def _cmd_web(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -112,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.set_defaults(func=_cmd_collect)
 
     sub.add_parser("rollup-once", help="手动聚合+清理").set_defaults(func=_cmd_rollup_once)
+    sub.add_parser("backup", help="备份数据库（保留最近 3 个）").set_defaults(func=_cmd_backup)
 
     w = sub.add_parser("web", help="启动网页服务")
     w.add_argument("--host", default=None)
