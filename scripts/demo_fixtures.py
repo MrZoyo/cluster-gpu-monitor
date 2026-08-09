@@ -41,8 +41,51 @@ LARGE_GPUS = 256
 SMALL_GPUS = 48
 
 # ---------------------------------------------------------------------------
+# 标签库（可复用说明标签）。集中定义一次，算力域/集群/主机按 key 引用。
+# 演示站刻意覆盖三种 type、有无 icon、以及同一标签被多处引用的情况。
+# ---------------------------------------------------------------------------
+LABEL_TYPES = ("info", "warning", "success")
+
+LABELS: list[dict] = [
+    {
+        "key": "book-ahead",
+        "name": "需预约",
+        "content": "长期满载，用之前先在群里喊一声。",
+        "type": "warning",
+    },
+    {
+        "key": "billed-hourly",
+        "name": "按小时计费",
+        "content": "跑完记得把进程杀干净，空占也算钱。",
+        "icon": "💸",
+        "type": "warning",
+    },
+    {
+        "key": "fresh-online",
+        "name": "新上线",
+        "content": "刚接入，配置还在调，遇到问题直接反馈。",
+        "icon": "✨",
+        "type": "success",
+    },
+    {
+        "key": "door-permit",
+        "name": "门禁报备",
+        "content": "进机房要提前三天报备，刷卡进不去。",
+        "type": "info",
+    },
+    {
+        "key": "under-maintenance",
+        "name": "维护中",
+        "content": "计划内维护，完事会在群里同步。",
+        "icon": "🔧",
+        "type": "warning",
+    },
+]
+
+# ---------------------------------------------------------------------------
 # 算力域（第一层）。palette 全部显式指定，不走自动轮转 ——
 # 演示站的截图要稳定，自动轮转会随 sort_order 变动而换色。
+# labels 引用 LABELS 里的 key，验证「算力域级标签」渲染路径。
 # ---------------------------------------------------------------------------
 DOMAINS: list[dict] = [
     {
@@ -51,6 +94,7 @@ DOMAINS: list[dict] = [
         "palette": "lime",
         "sort_order": 1,
         "description": "自建机房。空调是去年双十一买的，夏天限功耗跑。",
+        "labels": ["book-ahead"],
     },
     {
         "key": "awaimama",
@@ -58,6 +102,7 @@ DOMAINS: list[dict] = [
         "palette": "violet",
         "sort_order": 2,
         "description": "租的。按小时计费，月底账单一出全组集体沉默。",
+        "labels": ["billed-hourly"],
     },
     {
         "key": "longguo-dianxin",
@@ -65,6 +110,7 @@ DOMAINS: list[dict] = [
         "palette": "azure",
         "sort_order": 3,
         "description": "合作方提供，带宽管够，进机房要提前三天报备。",
+        "labels": ["door-permit"],
     },
     {
         "key": "caotai",
@@ -117,6 +163,8 @@ CLUSTERS: list[dict] = [
              "tooltip": "写在墙上了，但还是有人试"},
         ],
         "note": "全域最好的卡，也是最抢不到的卡。",
+        # 与所在算力域引用同一枚 book-ahead —— 验证标签跨层级复用
+        "labels": ["book-ahead"],
     },
 
     # 银山 2/3：双机 16 卡整机，标签 0 枚（验证卡片标题无标签时的排版）
@@ -150,7 +198,9 @@ CLUSTERS: list[dict] = [
         "hosts": [
             {"key": "ys-zc-1", "name": "祖传-01"},
             {"key": "ys-zc-2", "name": "祖传-02"},
-            {"key": "ys-zc-3", "name": "祖传-03（重启大师）"},
+            # 主机级标签：只这一台在维护，验证「标签挂到单台机器」的渲染
+            {"key": "ys-zc-3", "name": "祖传-03（重启大师）",
+             "labels": ["under-maintenance"]},
         ],
         "badges": [
             {"text": "祖传", "mark": "◆", "tone": "gold",
@@ -238,6 +288,8 @@ CLUSTERS: list[dict] = [
              "tooltip": "先跑一台看看，好用再加"},
         ],
         "note": "全站唯一 AMD，采集走 rocm-smi 分支。",
+        # 两枚标签：验证多标签依次堆叠的排版
+        "labels": ["fresh-online", "door-permit"],
     },
 
     # 草台 1/3：4 卡野卡机，卡数不是 8 的整数倍，用来抓「默认 8 卡」的硬编码
@@ -460,12 +512,25 @@ def validate() -> None:
     # --- 算力域 ---
     dom_keys = [d["key"] for d in DOMAINS]
     assert len(dom_keys) == len(set(dom_keys)), f"算力域 key 重复: {dom_keys}"
+    # --- 标签库：key 唯一、字段合法；引用方的 key 必须在这里能查到 ---
+    label_keys: set[str] = set()
+    for lb in LABELS:
+        assert lb["key"] not in label_keys, f"标签 key 重复: {lb['key']}"
+        label_keys.add(lb["key"])
+        assert re.fullmatch(r"[a-z][a-z0-9-]*", lb["key"]), f"标签 key 非法: {lb['key']}"
+        assert lb["name"], f"标签 {lb['key']} 缺 name"
+        assert lb["content"], f"标签 {lb['key']} 缺 content"
+        assert lb["type"] in LABEL_TYPES, f"标签 {lb['key']} type 非法: {lb['type']}"
+        assert lb.get("icon") is None or isinstance(lb["icon"], str)
+
     for d in DOMAINS:
         assert re.fullmatch(r"[a-z][a-z0-9-]*", d["key"]), f"域 key 非法: {d['key']}"
         assert d["palette"] in PALETTES, f"域 {d['key']} 的 palette 非法: {d['palette']}"
         assert d["name"], f"域 {d['key']} 缺 name"
         assert isinstance(d["sort_order"], int), f"域 {d['key']} 的 sort_order 应为 int"
         assert d["description"] is None or isinstance(d["description"], str)
+        for k in d.get("labels", []):
+            assert k in label_keys, f"域 {d['key']} 引用了不存在的标签 {k}"
 
     # --- 集群 + 主机（主机 key 要求全局唯一，不只是集群内唯一）---
     cl_keys: set[str] = set()
@@ -481,11 +546,15 @@ def validate() -> None:
         assert isinstance(c["sort_order"], int)
         assert c["gpu_model"], f"集群 {c['key']} 缺 gpu_model"
         assert c["note"] is None or isinstance(c["note"], str)
+        for k in c.get("labels", []):
+            assert k in label_keys, f"集群 {c['key']} 引用了不存在的标签 {k}"
         for h in c["hosts"]:
             assert h["key"] not in host_keys, f"主机 key 全局重复: {h['key']}"
             host_keys.add(h["key"])
             assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", h["key"]), f"主机 key 非法: {h['key']}"
             assert h["name"], f"主机 {h['key']} 缺 name"
+            for k in h.get("labels", []):
+                assert k in label_keys, f"主机 {h['key']} 引用了不存在的标签 {k}"
         for b in c["badges"]:
             assert b["text"], f"集群 {c['key']} 有标签缺 text"
             assert b["tone"] in TONES, f"集群 {c['key']} 标签 tone 非法: {b['tone']}"
@@ -512,6 +581,16 @@ def validate() -> None:
     assert any(c["vendor"] == "amd" for c in CLUSTERS), "缺 AMD 集群（ROCm 分支）"
     assert any(len(c["badges"]) > 3 for c in CLUSTERS), "缺 >3 枚标签的集群（+N 折叠）"
     assert any(not c["badges"] for c in CLUSTERS), "缺 0 标签集群（无标签排版）"
+
+    # --- 标签库覆盖度：三个层级 + 多标签 + 跨层复用，都要在演示站上看得到 ---
+    assert any(d.get("labels") for d in DOMAINS), "缺挂标签的算力域"
+    assert any(c.get("labels") for c in CLUSTERS), "缺挂标签的集群"
+    assert any(h.get("labels") for c in CLUSTERS for h in c["hosts"]), "缺挂标签的主机"
+    assert any(len(c.get("labels", [])) > 1 for c in CLUSTERS), "缺多标签集群（堆叠排版）"
+    used = ([k for d in DOMAINS for k in d.get("labels", [])]
+            + [k for c in CLUSTERS for k in c.get("labels", [])]
+            + [k for c in CLUSTERS for h in c["hosts"] for k in h.get("labels", [])])
+    assert any(used.count(k) > 1 for k in set(used)), "缺被多处引用的标签（复用是这功能的重点）"
 
     # --- 用户 ---
     names = [u["name"] for u in USERS]

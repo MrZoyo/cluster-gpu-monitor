@@ -589,14 +589,15 @@ a { color: var(--accent); text-decoration: none; }
   background: color-mix(in srgb, #6EE7B7 8%, var(--surface-low));
 }
 
-/* 主机标签容器 */
-.host-with-labels {
-  display: contents;
-}
+/* 主机标签条：贴在 .host-row 下方，左右内边距与行对齐 */
 .host-labels {
-  padding: 0 0 0 220px;
-  margin-top: -8px;
-  margin-bottom: 8px;
+  padding: 0 14px 12px;
+}
+.host-labels .label-card {
+  margin-bottom: 0;
+}
+.host-labels .label-card + .label-card {
+  margin-top: 8px;
 }
 .cluster-block {
   margin-top: 12px;

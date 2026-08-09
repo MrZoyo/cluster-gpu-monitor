@@ -164,7 +164,7 @@ def topology():
     topo, groups, cluster_meta, host_meta = _topology_with_inventory_placeholders()
     for c in topo:
         c.update(cluster_meta.get(c["key"], _orphan_cluster_meta()))
-        for h in c.hosts:
+        for h in c["hosts"]:
             h.update(host_meta.get(h["key"],
                                    {"status": "active", "note": None, "vendor": None, "meta": {}, "labels": []}))
     return {"capacity_groups": groups, "clusters": topo}

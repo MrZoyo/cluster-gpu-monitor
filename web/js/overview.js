@@ -246,12 +246,12 @@ window.Views.overview = (function () {
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
     } else {
-      c.hosts.forEach((h) => details.appendChild(hostRow(h, c)));
+      c.hosts.forEach((h) => details.appendChild(hostRow(h, c, col)));
     }
     return details;
   }
 
-  function hostRow(h, c) {
+  function hostRow(h, c, clusterColor) {
     const sys = h.system;
     const sysText = h.status === "planned"
       ? `${(h.meta && h.meta.gpu_model) || "GPU"} · 规划 ${h.gpu_count} 卡`
@@ -273,13 +273,16 @@ window.Views.overview = (function () {
     ]);
     if (h.last_error && h.status !== "planned") row.title = `${c.name}: ${h.last_error}`;
     if (h.note && h.status === "planned") row.title = h.note;
-    // 渲染主机标签（在 host-row 后面独立显示）
-    if (h.labels && h.labels.length) {
-      const labelsContainer = el("div", { class: "host-labels" });
-      h.labels.forEach((label) => labelsContainer.appendChild(renderLabel(label, c.capacity_group)));
-      return el("div", { class: "host-with-labels" }, [row, labelsContainer]);
-    }
-    return row;
+    if (!h.labels || !h.labels.length) return row;
+    // 有主机标签时用 fragment 把「行 + 标签条」一起交出去：
+    // 标签挂在行下方独立成条，不能塞进 .host-row 的三列网格里（会挤掉卡阵）。
+    const frag = document.createDocumentFragment();
+    frag.appendChild(row);
+    const strip = el("div", { class: "host-labels" });
+    h.labels.forEach((label) =>
+      strip.appendChild(renderLabel(label, c.capacity_group, clusterColor)));
+    frag.appendChild(strip);
+    return frag;
   }
 
   function compareTable(ov, multi) {
