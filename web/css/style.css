@@ -983,6 +983,32 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 .rank-table tr:first-child .rank-sticky,
 .rank-table tr:nth-child(2) .rank-sticky { z-index: 3; }
 
+/* 静态演示站顶部横幅。只有 export_static_demo.py 导出的站点会注入这个元素，
+   正常部署里 DOM 中没有它，这段样式也就不生效。 */
+.demo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 18px;
+  font-size: 12px;
+  color: var(--table-ink);
+  background: color-mix(in srgb, var(--sig) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--sig) 34%, transparent);
+}
+.demo-banner b {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .5px;
+  color: var(--sig-ink);
+  padding: 2px 8px;
+  background: var(--sig-soft);
+  border: 1px solid var(--sig-line);
+  border-radius: 999px;
+}
+.demo-banner a { color: var(--sig-ink); text-decoration: none; border-bottom: 1px dotted; }
+.demo-banner a:hover { color: var(--ink); }
+
 /* 展开 / 合并切换按钮 */
 .rank-toggle {
   margin-left: auto;

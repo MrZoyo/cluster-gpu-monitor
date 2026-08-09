@@ -30,3 +30,10 @@ deploy/caddy/*.env
 .vscode/
 *.swp
 .DS_Store
+
+# 演示产物（可由 scripts/ 一键重建，不入库：db 是二进制且体积大）
+data/demo.db
+data/demo.db-wal
+data/demo.db-shm
+config/inventory.demo.yaml
+dist/
