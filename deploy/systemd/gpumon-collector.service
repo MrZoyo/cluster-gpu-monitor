@@ -1,0 +1,15 @@
+[Unit]
+Description=gpumon collector (SSH 轮询采集 GPU 占用)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+Environment=GPUMON_ROOT=__ROOT__
+ExecStart=__ROOT__/.venv/bin/gpumon collect
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,129 @@
+"""命令行入口：gpumon <子命令>。
+
+子命令：
+  config-check   载入并打印 inventory + settings，校验配置
+  initdb         初始化数据库（建表）
+  collect        采集：--once 跑一轮后退出；否则常驻按周期轮询
+  rollup-once    手动跑一次聚合 + 保留清理
+  web            启动 FastAPI 网页服务
+
+各子命令内部延迟 import，避免一个模块缺失影响其它命令。
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+
+def _cmd_config_check(args: argparse.Namespace) -> int:
+    from .config import ROOT, db_path, load_inventory, load_settings
+
+    inv = load_inventory()
+    st = load_settings()
+    print(f"项目根: {ROOT}")
+    print(f"数据库: {db_path()}")
+    print(f"采集周期: {st.collector.poll_interval_s}s  并发: {st.collector.max_concurrency}")
+    print(f"Web: {st.web.host}:{st.web.port}")
+    # 算力域：打印最终生效的域列表 + 每域分到的色带，配错色带名/漏声明域能立刻看出来
+    groups = inv.resolved_groups()
+    group_names = {g.key: g.name for g in groups}
+    print("\n算力域（含自动补齐与色带分配）:")
+    for g in groups:
+        n_cl = sum(1 for c in inv.clusters if inv.group_key_of(c) == g.key)
+        print(f"  - {g.key:12s} {g.name:12s} palette={g.palette:8s} "
+              f"sort={g.sort_order:<4d} {n_cl} 集群")
+
+    n_hosts = n_gpus = 0
+    for c in sorted(inv.clusters, key=lambda x: x.sort_order):
+        gk = inv.group_key_of(c)
+        group_name = group_names.get(gk, gk)
+        print(f"\n[{c.key}] {c.name}  ({group_name}, status={c.status}, jump={c.jump})")
+        if c.note:
+            print(f"  note: {c.note}")
+        badges = c.resolved_badges()
+        if badges:
+            print("  标签: " + "  ".join(
+                f"[{(b.mark + ' ') if b.mark else ''}{b.text}]({b.tone})" for b in badges))
+        if not c.hosts:
+            print("  - 暂无主机")
+        for _, h, gc in [(c, h, (h.gpu_count or inv.defaults.gpu_count)) for h in c.hosts]:
+            alias = h.ssh_alias or "-"
+            vend = f"  vendor={h.vendor}" if h.vendor else ""
+            print(f"  - {h.key:18s} alias={alias:16s} {h.display_name}  "
+                  f"status={h.status}  期望 {gc} 卡{vend}")
+            if h.note:
+                print(f"    note: {h.note}")
+            n_hosts += 1
+            n_gpus += gc
+    print(f"\n合计: {len(inv.clusters)} 集群 / {n_hosts} 机 / {n_gpus} 卡")
+    return 0
+
+
+def _cmd_initdb(args: argparse.Namespace) -> int:
+    from .db.store import Store
+
+    store = Store()
+    store.init_schema()
+    store.sync_topology()
+    print("数据库已初始化，拓扑已同步。")
+    return 0
+
+
+def _cmd_collect(args: argparse.Namespace) -> int:
+    from .collector.run import run_forever, run_once
+
+    if args.once:
+        return run_once(host_filter=args.host)
+    run_forever()
+    return 0
+
+
+def _cmd_rollup_once(args: argparse.Namespace) -> int:
+    from .db.rollup import Rollup
+    from .db.store import Store
+
+    Rollup(Store()).run_all()
+    print("聚合与清理完成。")
+    return 0
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .config import load_settings
+
+    st = load_settings()
+    host = args.host or st.web.host
+    port = args.port or st.web.port
+    uvicorn.run("gpumon.api.app:app", host=host, port=port, log_level="info")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="gpumon", description="GPU 集群占用监控")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("config-check", help="校验并打印配置").set_defaults(func=_cmd_config_check)
+    sub.add_parser("initdb", help="初始化数据库").set_defaults(func=_cmd_initdb)
+
+    c = sub.add_parser("collect", help="采集")
+    c.add_argument("--once", action="store_true", help="只跑一轮后退出")
+    c.add_argument("--host", default=None, help="只采指定主机 key（配合 --once 调试）")
+    c.set_defaults(func=_cmd_collect)
+
+    sub.add_parser("rollup-once", help="手动聚合+清理").set_defaults(func=_cmd_rollup_once)
+
+    w = sub.add_parser("web", help="启动网页服务")
+    w.add_argument("--host", default=None)
+    w.add_argument("--port", type=int, default=None)
+    w.set_defaults(func=_cmd_web)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

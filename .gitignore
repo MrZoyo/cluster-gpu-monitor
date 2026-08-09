@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# 运行时数据与本地配置（含真实机器信息，绝不入库）
+data/*.db
+data/*.db-wal
+data/*.db-shm
+config/settings.toml
+config/inventory.yaml
+
+# 部署过程中产生的真实值（IP/域名/口令 hash）
+deploy/DEPLOYMENT-local.md
+*.env
+deploy/caddy/*.env
+
+# SSH key / 凭据
+*id_ed25519*
+*id_rsa*
+*.pem
+*.key
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store

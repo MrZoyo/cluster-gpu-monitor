@@ -1,0 +1,98 @@
+# ============================================================================
+# 机器清单示例。复制为 inventory.yaml 后改成你的真实机器（inventory.yaml 不入库）。
+#   cp config/inventory.example.yaml config/inventory.yaml
+#
+# 层级固定为三层：算力域(capacity_group) → 集群(cluster) → 服务器(host)。
+# 只要按这个层级填，网页/统计表/排行/配色全部自适应，无需改代码。
+#
+# 加机器：在对应集群的 hosts 下加一条；加集群：在 clusters 下加一块。
+# 改完重启采集器即可（自动 upsert 拓扑、首轮发现 GPU）。
+#
+# 字段说明：
+#   key         稳定标识，历史数据按它关联，一旦上线请勿修改
+#   ssh_alias   ~/.ssh/config 里的别名，采集器用它 SSH（同集群直连、跨集群可经跳板 ProxyJump）；
+#               迁到别的部署机时只改这个，key 不变 → 历史曲线连续
+#   gpu_count   期望卡数，用于"断卡/掉线"检测（缺省取 defaults.gpu_count）
+#   vendor      主机级 GPU 厂商，留空 = 远端自动探测（nvidia-smi → rocm-smi）。
+#               只有自动探测判错时才需要显式写 nvidia / amd
+#   capacity_group  算力域，用于网页分组展示；留空则落到 defaults 的兜底域
+#   status      active / planned / retired
+#               planned = 待接入占位（网页显示占位卡）；
+#               retired = 已退役（采集器不再探测、网页不再显示，DB 行与历史保留供对账）
+#   jump        仅元数据，记录该集群跳板机别名，供迁移参考
+#   badges      集群级自定义标签，可挂多枚，网页在集群卡片标题上显示。
+#               每枚：{ text（必填）, mark（前缀符号）, tooltip（悬停说明）,
+#                       tone（cyan/gold/green/violet/neutral，缺省 cyan） }
+#               超过 3 枚会折叠成 "+N"，悬停展开
+#   configured_by  兼容写法：等于加一枚 { mark: "◆", text: "<名字> 配置" } 标签
+#   meta        主机级自由元数据，透传到网页。约定字段：
+#                 gpu_model     卡型号，待接入占位卡上显示
+# ============================================================================
+version: 1
+
+defaults:
+  gpu_count: 8
+  poll_interval_s: 30
+  # 集群没写 capacity_group 时落到这个域（名字可改成你习惯的说法）
+  fallback_group_key: default
+  fallback_group_name: "未分组"
+
+# 算力域。palette 可选，指定该域的色系；留空则按 sort_order 自动轮转分配。
+# 内置色带：lime / violet / azure / amber / rose / teal / indigo / slate
+# 超过 8 个域时自动生成新色相，不会撞成灰色。
+capacity_groups:
+  - key: own
+    name: "自有算力"
+    sort_order: 1
+    palette: lime
+  - key: rented
+    name: "租用算力"
+    sort_order: 2
+    palette: violet
+  - key: partner
+    name: "合作算力"
+    sort_order: 3
+    palette: azure
+
+clusters:
+  - key: cluster-a
+    name: "A 集群（双机示例）"
+    sort_order: 1
+    capacity_group: own
+    jump: jump-a                 # 仅元数据；跨集群采集时该集群节点经此跳板
+    badges:
+      - { text: "自建", mark: "◆", tone: cyan, tooltip: "本地自行装机，账号自助申请" }
+      - { text: "InfiniBand", tone: green }
+    hosts:
+      - { key: a-1, ssh_alias: my-a-1, display_name: "A-1", meta: { gpu_model: "NVIDIA H200" } }
+      - { key: a-2, ssh_alias: my-a-2, display_name: "A-2", meta: { gpu_model: "NVIDIA H200" } }
+
+  # AMD 集群示例：vendor 留空即自动探测，写死也可以
+  - key: cluster-amd
+    name: "B 集群（AMD 示例）"
+    sort_order: 2
+    capacity_group: own
+    badges:
+      - { text: "ROCm", tone: gold, tooltip: "AMD Instinct，需用 ROCm 版框架" }
+    hosts:
+      - { key: b-1, ssh_alias: my-b-1, display_name: "B-1", vendor: amd,
+          meta: { gpu_model: "AMD Instinct MI300X" } }
+
+  # configured_by 兼容示例：网页卡片会打"◆ <名字> 配置"标签
+  - key: cluster-c
+    name: "C 集群（租用单机示例）"
+    sort_order: 3
+    capacity_group: rented
+    jump: jump-c
+    configured_by: "运维组"
+    hosts:
+      - { key: c-1, ssh_alias: my-c-1, display_name: "C-1", meta: { gpu_model: "NVIDIA H800" } }
+
+  - key: partner-planned
+    name: "合作方待接入集群"
+    sort_order: 101
+    capacity_group: partner
+    status: planned
+    note: "拿到 SSH 权限后在 hosts 下添加设备"
+    jump: partner-jump
+    hosts: []
