@@ -483,10 +483,17 @@ a { color: var(--accent); text-decoration: none; }
   gap: 10px;
   white-space: nowrap;
   box-shadow: var(--shadow-1);
-  transition: border-color .15s ease, transform .1s ease, background .15s ease;
+  transition: border-color .15s ease, transform .1s ease, background .15s ease, box-shadow .15s ease;
+  /* 为上移悬停预留顶部空间，避免高亮边框被截断 */
+  margin-top: 2px;
 }
 .capacity-tabs button:hover,
-.cluster-tabs button:hover { border-color: var(--accent); transform: translateY(-1px); background: var(--surface-soft); }
+.cluster-tabs button:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  background: var(--surface-soft);
+  box-shadow: var(--shadow-2), 0 0 0 1px var(--accent);
+}
 .tab-name { font-weight: 700; letter-spacing: .2px; }
 .tab-meta,
 .cluster-tabs small { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -543,8 +550,8 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 12px;
   background: var(--surface-low);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
-  border-radius: var(--r-sm);
+  border-left: 3px solid var(--caccent, var(--line-strong));
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
   padding: 10px 12px;
   margin-bottom: 12px;
 }
