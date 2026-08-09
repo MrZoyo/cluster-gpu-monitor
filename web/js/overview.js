@@ -215,7 +215,11 @@ window.Views.overview = (function () {
       ]),
     ]);
     details.appendChild(summary);
-    if (c.note) details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${col}` }, [c.note]));
+    if (c.note) {
+      // 集群 note 装饰线颜色：集群家族色压暗 35%，用 color-mix 与背景混合
+      const noteColor = `color-mix(in srgb, ${col} 65%, var(--bg))`;
+      details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [c.note]));
+    }
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
     } else {
