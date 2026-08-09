@@ -3,21 +3,6 @@ window.Views = window.Views || {};
 window.Views.overview = (function () {
   const { el, gpuCard, gpuPlaceholder, utilCell, fmtPct, fmtGB, Palette, ago, badgeRow } = UI;
 
-  function renderLabel(label, groupKey, clusterColor) {
-    // groupKey 用于算力域，clusterColor 用于集群
-    const baseColor = clusterColor || Palette.groupAccent(groupKey);
-    const accentColor = `color-mix(in srgb, ${baseColor} 65%, var(--bg))`;
-    const content = [];
-    if (label.icon) content.push(el("span", { class: "label-icon" }, [label.icon]));
-    content.push(el("span", { class: "label-name" }, [label.name]));
-    if (label.content) content.push(el("span", { class: "label-content" }, [label.content]));
-    return el("div", {
-      class: `label-card label-${label.type || "info"}`,
-      style: `--note-accent:${accentColor}`,
-      title: label.content,
-    }, content);
-  }
-
   function statsForClusters(clusters) {
     const hosts = clusters.flatMap((c) => c.hosts || []);
     const gpus = hosts.flatMap((h) => h.gpus || []);
@@ -158,10 +143,12 @@ window.Views.overview = (function () {
     const nC = group.clusters.length;
     const section = el("section", { class: "capacity-section", id: "cap-" + group.key, style: `--caccent:${Palette.groupAccent(group.key)}` });
     section.appendChild(el("div", { class: "capacity-head" }, [
-      el("div", {}, [
+      el("div", { class: "capacity-title" }, [
         el("div", { class: "eyebrow" }, ["CAPACITY DOMAIN"]),
         el("h2", {}, [group.name]),
-      ]),
+        // 算力域标签：与集群卡片同一套 tone 语义色，来源同一个标签库
+        badgeRow(group),
+      ].filter(Boolean)),
       el("div", { class: "capacity-metrics" }, [
         metric("集群", st.clusters),
         metric("主机", `${st.activeHosts}/${st.hosts}`),
@@ -170,10 +157,6 @@ window.Views.overview = (function () {
       ]),
     ]));
     if (group.description) section.appendChild(el("div", { class: "capacity-note" }, [group.description]));
-    // 渲染算力域标签
-    if (group.labels && group.labels.length) {
-      group.labels.forEach((label) => section.appendChild(renderLabel(label, group.key)));
-    }
     section.appendChild(el("div", { class: "cluster-tabs" },
       group.clusters.map((c, i) => clusterTab(c, i, group.key, nC))));
     group.clusters.forEach((c, i) => section.appendChild(clusterBlock(c, i, group.key, nC)));
@@ -239,19 +222,15 @@ window.Views.overview = (function () {
       const noteColor = `color-mix(in srgb, ${col} 65%, var(--bg))`;
       details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [c.note]));
     }
-    // 渲染集群标签
-    if (c.labels && c.labels.length) {
-      c.labels.forEach((label) => details.appendChild(renderLabel(label, groupKey, col)));
-    }
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
     } else {
-      c.hosts.forEach((h) => details.appendChild(hostRow(h, c, col)));
+      c.hosts.forEach((h) => details.appendChild(hostRow(h, c)));
     }
     return details;
   }
 
-  function hostRow(h, c, clusterColor) {
+  function hostRow(h, c) {
     const sys = h.system;
     const sysText = h.status === "planned"
       ? `${(h.meta && h.meta.gpu_model) || "GPU"} · 规划 ${h.gpu_count} 卡`
@@ -273,16 +252,7 @@ window.Views.overview = (function () {
     ]);
     if (h.last_error && h.status !== "planned") row.title = `${c.name}: ${h.last_error}`;
     if (h.note && h.status === "planned") row.title = h.note;
-    if (!h.labels || !h.labels.length) return row;
-    // 有主机标签时用 fragment 把「行 + 标签条」一起交出去：
-    // 标签挂在行下方独立成条，不能塞进 .host-row 的三列网格里（会挤掉卡阵）。
-    const frag = document.createDocumentFragment();
-    frag.appendChild(row);
-    const strip = el("div", { class: "host-labels" });
-    h.labels.forEach((label) =>
-      strip.appendChild(renderLabel(label, c.capacity_group, clusterColor)));
-    frag.appendChild(strip);
-    return frag;
+    return row;
   }
 
   function compareTable(ov, multi) {

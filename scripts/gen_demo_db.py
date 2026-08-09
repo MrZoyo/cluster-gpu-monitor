@@ -51,10 +51,10 @@ class Topology:
     """一份拓扑同时供 inventory YAML 与 DB 使用，保证两边 key 完全一致。"""
 
     def __init__(self, domains: list[dict], clusters: list[dict],
-                 labels: list[dict] | None = None):
+                 badge_library: list[dict] | None = None):
         self.domains = domains
         self.clusters = clusters
-        self.labels = labels or []
+        self.badge_library = badge_library or []
 
     @property
     def active_clusters(self) -> list[dict]:
@@ -83,15 +83,23 @@ class Topology:
                 "fallback_group_key": "misc",
                 "fallback_group_name": "散装算力域",
             },
-            # 标签库：算力域/集群/主机的 labels 字段按 key 引用这里的定义
-            "labels": [
-                {k: v for k, v in lb.items() if v is not None} for lb in self.labels
+            # 标签库：算力域/集群的 badges 里写字符串即按 key 引用这里的定义
+            "badge_library": [
+                {k: v for k, v in b.items() if v is not None} for b in self.badge_library
             ],
-            "capacity_groups": [
-                {k: v for k, v in d.items() if v is not None} for d in self.domains
-            ],
+            "capacity_groups": [self._domain_yaml(d) for d in self.domains],
             "clusters": [self._cluster_yaml(c) for c in self.clusters],
         }
+
+    @staticmethod
+    def _domain_yaml(d: dict) -> dict:
+        out = {k: v for k, v in d.items() if v is not None and k != "badges"}
+        if d.get("badges"):
+            out["badges"] = [
+                b if isinstance(b, str) else {k: v for k, v in b.items() if v is not None}
+                for b in d["badges"]
+            ]
+        return out
 
     @staticmethod
     def _cluster_yaml(c: dict) -> dict:
@@ -106,17 +114,17 @@ class Topology:
         if c.get("note"):
             out["note"] = c["note"]
         if c.get("badges"):
-            out["badges"] = [{k: v for k, v in b.items() if v is not None}
-                             for b in c["badges"]]
-        if c.get("labels"):
-            out["labels"] = list(c["labels"])
+            # 字符串 = 引用标签库；dict = 内联定义（去掉 None 保持 YAML 干净）
+            out["badges"] = [
+                b if isinstance(b, str) else {k: v for k, v in b.items() if v is not None}
+                for b in c["badges"]
+            ]
         out["hosts"] = [{
             "key": h["key"],
             # 演示库不真连 SSH，别名给个明显是假的值，避免有人照抄去连
             "ssh_alias": f"demo-{h['key']}",
             "display_name": h["name"],
             "gpu_count": c["gpus_per_host"],
-            **({"labels": list(h["labels"])} if h.get("labels") else {}),
             # 集群级 status 要落到每台机上：前端判"待接入占位卡"看的是
             # host.status（见 overview.js 的 hostRow），只标集群的话这些机器
             # 会显示成"已接入但一直离线"，而不是灰色占位卡。
@@ -494,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         domains, clusters = FX.DOMAINS, FX.CLUSTERS
     else:
         domains, clusters = FX.SMALL["domains"], FX.SMALL["clusters"]
-    topo = Topology(domains, clusters, FX.LABELS)
+    topo = Topology(domains, clusters, FX.BADGE_LIBRARY)
 
     n_hosts = len(topo.hosts(only_active=False))
     n_gpu_active = topo.gpu_total(only_active=True)

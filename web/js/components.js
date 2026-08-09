@@ -286,9 +286,10 @@ window.UI = (function () {
     return Math.floor(s / 86400) + " 天前";
   }
 
-  // 集群自定义标签：由 inventory 的 cluster.badges[] 驱动（configured_by 由后端合成为一枚）。
+  // 自定义标签：由 inventory 的 badges[] 驱动，算力域与集群共用同一套渲染
+  // （configured_by 由后端合成为一枚；库引用也在后端展开成完整定义）。
   // 与算力域家族色解耦——标签表达的是"谁装的/什么属性"，不是"哪个域"，所以走独立的 tone 语义色。
-  // 超过 MAX_BADGES 枚折叠成 "+N"，避免标签把集群条标题挤爆。
+  // 超过 MAX_BADGES 枚折叠成 "+N"，避免标签把标题挤爆。
   const MAX_BADGES = 3;
   const TONES = ["cyan", "gold", "green", "violet", "neutral"];
 
@@ -303,8 +304,9 @@ window.UI = (function () {
     ].filter(Boolean));
   }
 
-  function badgeRow(cluster) {
-    const list = (cluster && cluster.badges) || [];
+  // owner: 带 badges[] 的对象 —— 集群或算力域都行
+  function badgeRow(owner) {
+    const list = (owner && owner.badges) || [];
     if (!list.length) return null;
     const shown = list.slice(0, MAX_BADGES);
     const rest = list.slice(MAX_BADGES);

@@ -10,17 +10,6 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # inventory.yaml 结构
 # ---------------------------------------------------------------------------
-class LabelCfg(BaseModel):
-    """标签库定义 —— 集中管理可复用的说明标签。"""
-    key: str                       # 标签唯一标识，如 "best-gpu"
-    name: str                      # 显示名称，如 "顶级算力"
-    content: str                   # 标签正文内容
-    # 可选的自定义样式（未来扩展）
-    color: str | None = None       # 自定义颜色，留空则继承家族色
-    icon: str | None = None        # 前缀图标 emoji
-    type: str = "info"             # info / warning / success（控制视觉样式）
-
-
 class HostCfg(BaseModel):
     key: str                       # 稳定标识，历史按它关联
     ssh_alias: str                 # ~/.ssh/config 别名，采集用
@@ -32,7 +21,6 @@ class HostCfg(BaseModel):
     # 只有自动探测判错时才需要显式写 nvidia / amd。
     vendor: str | None = None
     meta: dict = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
 
 
 class BadgeCfg(BaseModel):
@@ -40,7 +28,11 @@ class BadgeCfg(BaseModel):
 
     tone 是预设的语义色名（cyan/gold/green/violet/neutral），不接受任意 CSS 色值——
     保证标签色不与利用率语义色、算力域家族色互相干扰。
+
+    key 只在「标签库」（Inventory.badge_library）里需要填：填了就能被算力域/集群
+    按名字引用，达到一处定义、多处复用。直接内联写在 badges 下的标签不用填 key。
     """
+    key: str | None = None
     text: str
     mark: str | None = None        # 前缀符号，如 "◆"；留空则不显示
     tooltip: str | None = None
@@ -55,7 +47,8 @@ class CapacityGroupCfg(BaseModel):
     # 色带名（lime/violet/azure/amber/rose/teal/indigo/slate）。
     # 留空则按 sort_order 自动轮转分配，不会撞成灰色。
     palette: str | None = None
-    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
+    # 算力域也能挂标签：写标签库的 key（复用），或内联一枚 {text:..., tone:...}
+    badges: list[str | BadgeCfg] = Field(default_factory=list)
 
 
 class ClusterCfg(BaseModel):
@@ -69,20 +62,39 @@ class ClusterCfg(BaseModel):
     jump: str | None = None        # 仅元数据
     # 兼容糖：填了等于加一枚 {mark:"◆", text:"<名字> 配置"} 标签。新配置建议直接写 badges。
     configured_by: str | None = None
-    badges: list[BadgeCfg] = Field(default_factory=list)
-    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
+    # 每项可以是标签库的 key（字符串，复用）或内联的完整定义
+    badges: list[str | BadgeCfg] = Field(default_factory=list)
     hosts: list[HostCfg] = Field(default_factory=list)
 
-    def resolved_badges(self) -> list[BadgeCfg]:
-        """badges + configured_by 合成的最终标签序列（configured_by 排在最前）。"""
+    def resolved_badges(self, library: dict[str, BadgeCfg] | None = None) -> list[BadgeCfg]:
+        """badges + configured_by 合成的最终标签序列（configured_by 排在最前）。
+
+        badges 里的字符串按标签库查表展开；查不到的 key 会被跳过（load_inventory
+        已经在启动时校验过，正常运行时不会出现）。
+        """
         out: list[BadgeCfg] = []
         if self.configured_by:
             out.append(BadgeCfg(
                 text=f"{self.configured_by} 配置", mark="◆", tone="cyan",
                 tooltip=f"由 {self.configured_by} 进行初始化配置",
             ))
-        out.extend(self.badges)
+        out.extend(_expand_badges(self.badges, library))
         return out
+
+
+def _expand_badges(items: list[str | BadgeCfg],
+                   library: dict[str, BadgeCfg] | None) -> list[BadgeCfg]:
+    """把 badges 列表里的「库 key 字符串」换成库里的定义，内联项原样保留。"""
+    lib = library or {}
+    out: list[BadgeCfg] = []
+    for it in items:
+        if isinstance(it, str):
+            found = lib.get(it)
+            if found is not None:
+                out.append(found)
+        else:
+            out.append(it)
+    return out
 
 
 class Defaults(BaseModel):
@@ -103,18 +115,21 @@ class Inventory(BaseModel):
     # 不预置任何机构名——没声明就由 resolved_groups() 兜一个中性的"未分组"。
     capacity_groups: list[CapacityGroupCfg] = Field(default_factory=list)
     clusters: list[ClusterCfg]
-    labels: list[LabelCfg] = Field(default_factory=list)  # 标签库
+    # 标签库：一处定义，算力域/集群按 key 引用。每项必须带 key。
+    badge_library: list[BadgeCfg] = Field(default_factory=list)
 
-    def get_label(self, key: str) -> LabelCfg | None:
-        """根据 key 查找标签定义。"""
-        for label in self.labels:
-            if label.key == key:
-                return label
-        return None
+    @property
+    def badges_by_key(self) -> dict[str, BadgeCfg]:
+        """标签库的 key → 定义索引。没写 key 的条目忽略（校验时已报错）。"""
+        return {b.key: b for b in self.badge_library if b.key}
 
-    def resolve_labels(self, label_keys: list[str]) -> list[LabelCfg]:
-        """将标签 key 列表展开为完整的标签对象列表（跳过不存在的 key）。"""
-        return [lb for key in label_keys if (lb := self.get_label(key))]
+    def group_badges(self, group: CapacityGroupCfg) -> list[BadgeCfg]:
+        """算力域的最终标签序列（库引用已展开）。"""
+        return _expand_badges(group.badges, self.badges_by_key)
+
+    def cluster_badges(self, cluster: ClusterCfg) -> list[BadgeCfg]:
+        """集群的最终标签序列（含 configured_by 合成的那枚，库引用已展开）。"""
+        return cluster.resolved_badges(self.badges_by_key)
 
     def group_key_of(self, cluster: ClusterCfg) -> str:
         """集群实际归属的算力域 key：没写或写了不存在的域，都落到兜底域。"""

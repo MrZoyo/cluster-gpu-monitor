@@ -30,7 +30,7 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
             "sort_order": g.sort_order,
             "description": g.description,
             "palette": g.palette,
-            "labels": [lb.model_dump() for lb in inv.resolve_labels(g.labels)],
+            "badges": [b.model_dump() for b in inv.group_badges(g)],
         }
         for g in inv.resolved_groups()
     }
@@ -45,8 +45,7 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
             "status": c.status,
             "note": c.note,
             "configured_by": c.configured_by,
-            "badges": [b.model_dump() for b in c.resolved_badges()],
-            "labels": [lb.model_dump() for lb in inv.resolve_labels(c.labels)],
+            "badges": [b.model_dump() for b in inv.cluster_badges(c)],
         }
         for h in c.hosts:
             hosts[h.key] = {
@@ -54,7 +53,6 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
                 "note": h.note,
                 "vendor": h.vendor,
                 "meta": h.meta,
-                "labels": [lb.model_dump() for lb in inv.resolve_labels(h.labels)],
             }
     groups_out = sorted(groups.values(), key=lambda g: (g["sort_order"], g["key"]))
     return groups_out, clusters, hosts
@@ -75,7 +73,6 @@ def _orphan_cluster_meta() -> dict:
         "note": None,
         "configured_by": None,
         "badges": [],
-        "labels": [],
     }
 
 
@@ -166,7 +163,7 @@ def topology():
         c.update(cluster_meta.get(c["key"], _orphan_cluster_meta()))
         for h in c["hosts"]:
             h.update(host_meta.get(h["key"],
-                                   {"status": "active", "note": None, "vendor": None, "meta": {}, "labels": []}))
+                                   {"status": "active", "note": None, "vendor": None, "meta": {}}))
     return {"capacity_groups": groups, "clusters": topo}
 
 
@@ -235,7 +232,6 @@ def overview(window: str = Query("24h")):
                 "id": h["id"],
                 "key": h["key"], "display_name": h["display_name"],
                 "status": h_meta["status"], "note": h_meta["note"], "meta": h_meta["meta"],
-                "labels": h_meta.get("labels", []),
                 "gpu_count": h["gpu_count"], "online": st.get("online", False),
                 "gpus_seen": st.get("gpus_seen"), "consec_fail": st.get("consec_fail", 0),
                 "last_error": st.get("last_error"),
@@ -400,7 +396,6 @@ def collector_status():
                 "status": h.status,
                 "note": h.note,
                 "meta": h.meta,
-                "labels": [lb.model_dump() for lb in inv.resolve_labels(h.labels)],
             })
     hosts = [h for h in hosts if h.get("status") != "retired"]  # 退役机器不进健康灯/状态列表
     return {"hosts": hosts}

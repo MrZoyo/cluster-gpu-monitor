@@ -20,10 +20,14 @@
 #               planned = 待接入占位（网页显示占位卡）；
 #               retired = 已退役（采集器不再探测、网页不再显示，DB 行与历史保留供对账）
 #   jump        仅元数据，记录该集群跳板机别名，供迁移参考
-#   badges      集群级自定义标签，可挂多枚，网页在集群卡片标题上显示。
-#               每枚：{ text（必填）, mark（前缀符号）, tooltip（悬停说明）,
-#                       tone（cyan/gold/green/violet/neutral，缺省 cyan） }
+#   badges      自定义标签，可挂多枚，网页显示在算力域标题与集群卡片标题上。
+#               两种写法可以混用：
+#                 - 写 badge_library 里的 key（字符串）→ 复用同一枚标签
+#                 - 内联 { text（必填）, mark（前缀符号）, tooltip（悬停说明）,
+#                          tone（cyan/gold/green/violet/neutral，缺省 cyan） }
 #               超过 3 枚会折叠成 "+N"，悬停展开
+#   badge_library  标签库：把「自建」「液冷」这类要在多处出现的标签定义一次，
+#               之后各处只写 key。改库里的文案/tooltip，所有引用处一起变。
 #   configured_by  兼容写法：等于加一枚 { mark: "◆", text: "<名字> 配置" } 标签
 #   meta        主机级自由元数据，透传到网页。约定字段：
 #                 gpu_model     卡型号，待接入占位卡上显示
@@ -37,6 +41,22 @@ defaults:
   fallback_group_key: default
   fallback_group_name: "未分组"
 
+# 标签库：这里定义一次，下面算力域/集群的 badges 写 key 就能复用。
+# 想改「自建」的说明文案？改这一处，所有挂了它的地方一起变。
+badge_library:
+  - key: self-built
+    text: "自建"
+    mark: "◆"
+    tone: cyan
+    tooltip: "本地自行装机，账号自助申请"
+  - key: infiniband
+    text: "InfiniBand"
+    tone: green
+  - key: liquid-cooling
+    text: "液冷"
+    tone: violet
+    tooltip: "水管走在天花板上，抬头请注意"
+
 # 算力域。palette 可选，指定该域的色系；留空则按 sort_order 自动轮转分配。
 # 内置色带：lime / violet / azure / amber / rose / teal / indigo / slate
 # 超过 8 个域时自动生成新色相，不会撞成灰色。
@@ -45,6 +65,7 @@ capacity_groups:
     name: "自有算力"
     sort_order: 1
     palette: lime
+    badges: [self-built]         # 算力域也能挂标签，写法与集群一致
   - key: rented
     name: "租用算力"
     sort_order: 2
@@ -60,9 +81,8 @@ clusters:
     sort_order: 1
     capacity_group: own
     jump: jump-a                 # 仅元数据；跨集群采集时该集群节点经此跳板
-    badges:
-      - { text: "自建", mark: "◆", tone: cyan, tooltip: "本地自行装机，账号自助申请" }
-      - { text: "InfiniBand", tone: green }
+    # 复用标签库里的两枚（推荐写法）
+    badges: [self-built, infiniband]
     hosts:
       - { key: a-1, ssh_alias: my-a-1, display_name: "A-1", meta: { gpu_model: "NVIDIA H200" } }
       - { key: a-2, ssh_alias: my-a-2, display_name: "A-2", meta: { gpu_model: "NVIDIA H200" } }
@@ -72,6 +92,7 @@ clusters:
     name: "B 集群（AMD 示例）"
     sort_order: 2
     capacity_group: own
+    # 只此一处用到的标签，直接内联，不必进库；库引用和内联可以混写
     badges:
       - { text: "ROCm", tone: gold, tooltip: "AMD Instinct，需用 ROCm 版框架" }
     hosts:

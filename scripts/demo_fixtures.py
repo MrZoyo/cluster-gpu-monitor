@@ -41,51 +41,39 @@ LARGE_GPUS = 256
 SMALL_GPUS = 48
 
 # ---------------------------------------------------------------------------
-# 标签库（可复用说明标签）。集中定义一次，算力域/集群/主机按 key 引用。
-# 演示站刻意覆盖三种 type、有无 icon、以及同一标签被多处引用的情况。
+# 标签库 —— 一处定义，算力域/集群按 key 引用，改一次全站生效。
+# 演示站刻意让「自建」「液冷」这类通用属性被多处复用，
+# 只在真正一次性的标签上才内联写（见 CLUSTERS 里的少数几处）。
 # ---------------------------------------------------------------------------
-LABEL_TYPES = ("info", "warning", "success")
-
-LABELS: list[dict] = [
-    {
-        "key": "book-ahead",
-        "name": "需预约",
-        "content": "长期满载，用之前先在群里喊一声。",
-        "type": "warning",
-    },
-    {
-        "key": "billed-hourly",
-        "name": "按小时计费",
-        "content": "跑完记得把进程杀干净，空占也算钱。",
-        "icon": "💸",
-        "type": "warning",
-    },
-    {
-        "key": "fresh-online",
-        "name": "新上线",
-        "content": "刚接入，配置还在调，遇到问题直接反馈。",
-        "icon": "✨",
-        "type": "success",
-    },
-    {
-        "key": "door-permit",
-        "name": "门禁报备",
-        "content": "进机房要提前三天报备，刷卡进不去。",
-        "type": "info",
-    },
-    {
-        "key": "under-maintenance",
-        "name": "维护中",
-        "content": "计划内维护，完事会在群里同步。",
-        "icon": "🔧",
-        "type": "warning",
-    },
+BADGE_LIBRARY: list[dict] = [
+    {"key": "self-built", "text": "自建", "mark": "◆", "tone": "cyan",
+     "tooltip": "自己装的机，账号找隔壁工位申请"},
+    {"key": "rented", "text": "租用", "mark": "◆", "tone": "gold",
+     "tooltip": "按小时计费，跑完记得把进程杀干净"},
+    {"key": "partner", "text": "合作方", "mark": "◆", "tone": "cyan",
+     "tooltip": "对方运维代管，报修走工单"},
+    {"key": "non-blocking", "text": "无阻塞网络", "mark": None, "tone": "green",
+     "tooltip": "跨机训练不掉速，理论上"},
+    {"key": "liquid-cooling", "text": "液冷", "mark": None, "tone": "violet",
+     "tooltip": "水管走在天花板上，抬头请注意"},
+    {"key": "legacy", "text": "祖传", "mark": "◆", "tone": "gold",
+     "tooltip": "上一任的上一任装的，驱动没人敢升"},
+    {"key": "summer-cap", "text": "夏季限功耗", "mark": "▲", "tone": "gold",
+     "tooltip": "空调压不住时自动降频，别以为是卡坏了"},
+    {"key": "no-mining", "text": "禁止挖矿", "mark": None, "tone": "neutral",
+     "tooltip": "写在墙上了，但还是有人试"},
+    {"key": "small-vram", "text": "显存偏小", "mark": None, "tone": "neutral",
+     "tooltip": "跑大模型会 OOM，跑小实验正好"},
+    {"key": "door-permit", "text": "门禁报备", "mark": None, "tone": "neutral",
+     "tooltip": "进机房要提前三天报备，刷卡进不去"},
+    {"key": "book-ahead", "text": "需预约", "mark": None, "tone": "gold",
+     "tooltip": "长期满载，用之前先在群里喊一声"},
 ]
 
 # ---------------------------------------------------------------------------
 # 算力域（第一层）。palette 全部显式指定，不走自动轮转 ——
 # 演示站的截图要稳定，自动轮转会随 sort_order 变动而换色。
-# labels 引用 LABELS 里的 key，验证「算力域级标签」渲染路径。
+# badges 引用 BADGE_LIBRARY 里的 key，验证「算力域也能挂标签」这条路径。
 # ---------------------------------------------------------------------------
 DOMAINS: list[dict] = [
     {
@@ -94,7 +82,7 @@ DOMAINS: list[dict] = [
         "palette": "lime",
         "sort_order": 1,
         "description": "自建机房。空调是去年双十一买的，夏天限功耗跑。",
-        "labels": ["book-ahead"],
+        "badges": ["self-built", "summer-cap"],
     },
     {
         "key": "awaimama",
@@ -102,7 +90,7 @@ DOMAINS: list[dict] = [
         "palette": "violet",
         "sort_order": 2,
         "description": "租的。按小时计费，月底账单一出全组集体沉默。",
-        "labels": ["billed-hourly"],
+        "badges": ["rented"],
     },
     {
         "key": "longguo-dianxin",
@@ -110,7 +98,7 @@ DOMAINS: list[dict] = [
         "palette": "azure",
         "sort_order": 3,
         "description": "合作方提供，带宽管够，进机房要提前三天报备。",
-        "labels": ["door-permit"],
+        "badges": ["partner", "door-permit"],
     },
     {
         "key": "caotai",
@@ -150,21 +138,10 @@ CLUSTERS: list[dict] = [
             {"key": "ys-h250-3", "name": "银山-03"},
             {"key": "ys-h250-4", "name": "银山-04（风扇最响）"},
         ],
-        "badges": [
-            {"text": "自建", "mark": "◆", "tone": "cyan",
-             "tooltip": "自己装的机，账号找隔壁工位申请"},
-            {"text": "无阻塞网络", "mark": None, "tone": "green",
-             "tooltip": "跨机训练不掉速，理论上"},
-            {"text": "液冷", "mark": None, "tone": "violet",
-             "tooltip": "水管走在天花板上，抬头请注意"},
-            {"text": "夏季限功耗", "mark": "▲", "tone": "gold",
-             "tooltip": "空调压不住时自动降频，别以为是卡坏了"},
-            {"text": "禁止挖矿", "mark": None, "tone": "neutral",
-             "tooltip": "写在墙上了，但还是有人试"},
-        ],
+        # 5 枚全部走库引用，验证 ">3 枚折叠成 +N" 同时验证复用
+        "badges": ["self-built", "non-blocking", "liquid-cooling",
+                   "summer-cap", "no-mining"],
         "note": "全域最好的卡，也是最抢不到的卡。",
-        # 与所在算力域引用同一枚 book-ahead —— 验证标签跨层级复用
-        "labels": ["book-ahead"],
     },
 
     # 银山 2/3：双机 16 卡整机，标签 0 枚（验证卡片标题无标签时的排版）
@@ -198,16 +175,9 @@ CLUSTERS: list[dict] = [
         "hosts": [
             {"key": "ys-zc-1", "name": "祖传-01"},
             {"key": "ys-zc-2", "name": "祖传-02"},
-            # 主机级标签：只这一台在维护，验证「标签挂到单台机器」的渲染
-            {"key": "ys-zc-3", "name": "祖传-03（重启大师）",
-             "labels": ["under-maintenance"]},
+            {"key": "ys-zc-3", "name": "祖传-03（重启大师）"},
         ],
-        "badges": [
-            {"text": "祖传", "mark": "◆", "tone": "gold",
-             "tooltip": "上一任的上一任装的，驱动没人敢升"},
-            {"text": "显存偏小", "mark": None, "tone": "neutral",
-             "tooltip": "跑大模型会 OOM，跑小实验正好"},
-        ],
+        "badges": ["legacy", "small-vram"],
         "note": "谁也说不清是哪年买的，但它一直在跑。",
     },
 
@@ -238,8 +208,8 @@ CLUSTERS: list[dict] = [
             {"key": "awm-a101-13", "name": "外婆家-13（计费最贵）"},
         ],
         "badges": [
-            {"text": "按小时计费", "mark": "¤", "tone": "gold",
-             "tooltip": "空占一晚等于一顿好的，请及时释放"},
+            "rented",
+            "book-ahead",
             {"text": "月底到期", "mark": None, "tone": "neutral",
              "tooltip": "续不续要等审批，别把长任务排到下月"},
         ],
@@ -261,9 +231,9 @@ CLUSTERS: list[dict] = [
             {"key": "lg-h250s-2", "name": "电信-02"},
         ],
         "badges": [
-            {"text": "合作方", "mark": "◆", "tone": "cyan",
-             "tooltip": "对方运维代管，报修走工单"},
-            {"text": "带宽管够", "mark": None, "tone": "green", "tooltip": None},
+            "partner",
+            "non-blocking",
+            "door-permit",
         ],
         "note": "机房在楼下，但门禁要提前三天报备。",
     },
@@ -281,15 +251,15 @@ CLUSTERS: list[dict] = [
         "hosts": [
             {"key": "lg-mi999-1", "name": "红队-01"},
         ],
+        # 混用：库引用 + 内联一次性标签（ROCm/试水 只此一处，不进库）
         "badges": [
+            "partner",
             {"text": "ROCm", "mark": None, "tone": "gold",
              "tooltip": "得装 ROCm 版框架，CUDA 代码搬过来要改"},
             {"text": "试水", "mark": None, "tone": "neutral",
              "tooltip": "先跑一台看看，好用再加"},
         ],
         "note": "全站唯一 AMD，采集走 rocm-smi 分支。",
-        # 两枚标签：验证多标签依次堆叠的排版
-        "labels": ["fresh-online", "door-permit"],
     },
 
     # 草台 1/3：4 卡野卡机，卡数不是 8 的整数倍，用来抓「默认 8 卡」的硬编码
@@ -512,16 +482,27 @@ def validate() -> None:
     # --- 算力域 ---
     dom_keys = [d["key"] for d in DOMAINS]
     assert len(dom_keys) == len(set(dom_keys)), f"算力域 key 重复: {dom_keys}"
-    # --- 标签库：key 唯一、字段合法；引用方的 key 必须在这里能查到 ---
-    label_keys: set[str] = set()
-    for lb in LABELS:
-        assert lb["key"] not in label_keys, f"标签 key 重复: {lb['key']}"
-        label_keys.add(lb["key"])
-        assert re.fullmatch(r"[a-z][a-z0-9-]*", lb["key"]), f"标签 key 非法: {lb['key']}"
-        assert lb["name"], f"标签 {lb['key']} 缺 name"
-        assert lb["content"], f"标签 {lb['key']} 缺 content"
-        assert lb["type"] in LABEL_TYPES, f"标签 {lb['key']} type 非法: {lb['type']}"
-        assert lb.get("icon") is None or isinstance(lb["icon"], str)
+    # --- 标签库：key 唯一、字段合法 ---
+    lib_keys: set[str] = set()
+    for b in BADGE_LIBRARY:
+        assert b["key"] not in lib_keys, f"标签库 key 重复: {b['key']}"
+        lib_keys.add(b["key"])
+        assert re.fullmatch(r"[a-z][a-z0-9-]*", b["key"]), f"标签 key 非法: {b['key']}"
+        assert b["text"], f"标签 {b['key']} 缺 text"
+        assert b["tone"] in TONES, f"标签 {b['key']} tone 非法: {b['tone']}"
+        assert b["mark"] is None or isinstance(b["mark"], str)
+        assert b["tooltip"] is None or isinstance(b["tooltip"], str)
+
+    def check_badges(items, where: str) -> None:
+        """badges 每项要么是库里的 key，要么是内联的完整定义。"""
+        for it in items:
+            if isinstance(it, str):
+                assert it in lib_keys, f"{where} 引用了不存在的标签 {it}"
+                continue
+            assert it["text"], f"{where} 有内联标签缺 text"
+            assert it["tone"] in TONES, f"{where} 内联标签 tone 非法: {it['tone']}"
+            assert it.get("mark") is None or isinstance(it["mark"], str)
+            assert it.get("tooltip") is None or isinstance(it["tooltip"], str)
 
     for d in DOMAINS:
         assert re.fullmatch(r"[a-z][a-z0-9-]*", d["key"]), f"域 key 非法: {d['key']}"
@@ -529,8 +510,7 @@ def validate() -> None:
         assert d["name"], f"域 {d['key']} 缺 name"
         assert isinstance(d["sort_order"], int), f"域 {d['key']} 的 sort_order 应为 int"
         assert d["description"] is None or isinstance(d["description"], str)
-        for k in d.get("labels", []):
-            assert k in label_keys, f"域 {d['key']} 引用了不存在的标签 {k}"
+        check_badges(d.get("badges", []), f"域 {d['key']}")
 
     # --- 集群 + 主机（主机 key 要求全局唯一，不只是集群内唯一）---
     cl_keys: set[str] = set()
@@ -546,20 +526,12 @@ def validate() -> None:
         assert isinstance(c["sort_order"], int)
         assert c["gpu_model"], f"集群 {c['key']} 缺 gpu_model"
         assert c["note"] is None or isinstance(c["note"], str)
-        for k in c.get("labels", []):
-            assert k in label_keys, f"集群 {c['key']} 引用了不存在的标签 {k}"
         for h in c["hosts"]:
             assert h["key"] not in host_keys, f"主机 key 全局重复: {h['key']}"
             host_keys.add(h["key"])
             assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", h["key"]), f"主机 key 非法: {h['key']}"
             assert h["name"], f"主机 {h['key']} 缺 name"
-            for k in h.get("labels", []):
-                assert k in label_keys, f"主机 {h['key']} 引用了不存在的标签 {k}"
-        for b in c["badges"]:
-            assert b["text"], f"集群 {c['key']} 有标签缺 text"
-            assert b["tone"] in TONES, f"集群 {c['key']} 标签 tone 非法: {b['tone']}"
-            assert b["mark"] is None or isinstance(b["mark"], str)
-            assert b["tooltip"] is None or isinstance(b["tooltip"], str)
+        check_badges(c["badges"], f"集群 {c['key']}")
 
     # --- 卡数总量：两个规模都必须精确命中 ---
     assert gpu_total(CLUSTERS) == LARGE_GPUS, \
@@ -582,15 +554,16 @@ def validate() -> None:
     assert any(len(c["badges"]) > 3 for c in CLUSTERS), "缺 >3 枚标签的集群（+N 折叠）"
     assert any(not c["badges"] for c in CLUSTERS), "缺 0 标签集群（无标签排版）"
 
-    # --- 标签库覆盖度：三个层级 + 多标签 + 跨层复用，都要在演示站上看得到 ---
-    assert any(d.get("labels") for d in DOMAINS), "缺挂标签的算力域"
-    assert any(c.get("labels") for c in CLUSTERS), "缺挂标签的集群"
-    assert any(h.get("labels") for c in CLUSTERS for h in c["hosts"]), "缺挂标签的主机"
-    assert any(len(c.get("labels", [])) > 1 for c in CLUSTERS), "缺多标签集群（堆叠排版）"
-    used = ([k for d in DOMAINS for k in d.get("labels", [])]
-            + [k for c in CLUSTERS for k in c.get("labels", [])]
-            + [k for c in CLUSTERS for h in c["hosts"] for k in h.get("labels", [])])
-    assert any(used.count(k) > 1 for k in set(used)), "缺被多处引用的标签（复用是这功能的重点）"
+    # --- 标签库覆盖度：复用是这功能的重点，演示站上要看得见 ---
+    assert any(d.get("badges") for d in DOMAINS), "缺挂标签的算力域"
+    refs = ([k for d in DOMAINS for k in d.get("badges", []) if isinstance(k, str)]
+            + [k for c in CLUSTERS for k in c["badges"] if isinstance(k, str)])
+    assert any(refs.count(k) > 1 for k in set(refs)), "缺被多处引用的标签（复用是重点）"
+    assert any(any(isinstance(k, str) for k in c["badges"])
+               and any(not isinstance(k, str) for k in c["badges"])
+               for c in CLUSTERS), "缺「库引用 + 内联」混用的集群"
+    unused = lib_keys - set(refs)
+    assert not unused, f"标签库里有没被引用的条目: {sorted(unused)}"
 
     # --- 用户 ---
     names = [u["name"] for u in USERS]

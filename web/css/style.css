@@ -546,8 +546,7 @@ a { color: var(--accent); text-decoration: none; }
 .mini-metric b { display: block; margin-top: 5px; font-size: 16px; font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; }
 .capacity-note,
 .cluster-note,
-.empty-state,
-.label-card {
+.empty-state {
   color: var(--muted);
   font-size: 12px;
   background: var(--surface-low);
@@ -563,41 +562,13 @@ a { color: var(--accent); text-decoration: none; }
 }
 /* 集群的 note 继承集群家族色（通过 JS inline style 注入 --note-accent），压暗 35% */
 
-/* 标签卡片样式 */
-.label-card {
+/* 算力域标题区：标签在域名下方另起一行，窄屏自然折行 */
+.capacity-title {
+  min-width: 0;
+}
+.capacity-title .badge-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  line-height: 1.4;
-}
-.label-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-.label-name {
-  font-weight: 600;
-  color: var(--ink);
-  flex-shrink: 0;
-}
-.label-content {
-  color: var(--muted);
-}
-.label-card.label-warning {
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-low));
-}
-.label-card.label-success {
-  background: color-mix(in srgb, #6EE7B7 8%, var(--surface-low));
-}
-
-/* 主机标签条：贴在 .host-row 下方，左右内边距与行对齐 */
-.host-labels {
-  padding: 0 14px 12px;
-}
-.host-labels .label-card {
-  margin-bottom: 0;
-}
-.host-labels .label-card + .label-card {
-  margin-top: 8px;
+  margin-top: 9px;
 }
 .cluster-block {
   margin-top: 12px;

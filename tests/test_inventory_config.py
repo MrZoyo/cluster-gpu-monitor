@@ -84,6 +84,98 @@ def test_no_badges_yields_empty_list():
     assert ClusterCfg(key="c1", name="c1").resolved_badges() == []
 
 
+# ---------------------------------------------------------------------------
+# 标签库：一处定义、多处引用。改库里的文案，所有引用处一起变 —— 这是该功能的重点。
+# ---------------------------------------------------------------------------
+def _inv_with_library(**kw) -> Inventory:
+    return Inventory(
+        badge_library=[
+            BadgeCfg(key="self-built", text="自建", mark="◆", tone="cyan",
+                     tooltip="自己装的机"),
+            BadgeCfg(key="liquid", text="液冷", tone="violet"),
+        ],
+        **kw,
+    )
+
+
+def test_cluster_badge_reference_expands_from_library():
+    inv = _inv_with_library(
+        clusters=[ClusterCfg(key="c1", name="c1", badges=["self-built", "liquid"],
+                             hosts=[_host("h1")])],
+    )
+    badges = inv.cluster_badges(inv.clusters[0])
+    assert [b.text for b in badges] == ["自建", "液冷"]
+    assert badges[0].mark == "◆"
+    assert badges[0].tooltip == "自己装的机"
+
+
+def test_same_badge_reused_across_domain_and_cluster():
+    """同一枚标签挂到算力域和集群上，两边拿到的是同一份定义。"""
+    inv = _inv_with_library(
+        capacity_groups=[CapacityGroupCfg(key="g", name="G", badges=["self-built"])],
+        clusters=[ClusterCfg(key="c1", name="c1", capacity_group="g",
+                             badges=["self-built"], hosts=[_host("h1")])],
+    )
+    from_group = inv.group_badges(inv.capacity_groups[0])
+    from_cluster = inv.cluster_badges(inv.clusters[0])
+    assert [b.text for b in from_group] == ["自建"]
+    assert from_group[0].model_dump() == from_cluster[0].model_dump()
+
+
+def test_library_reference_and_inline_can_mix():
+    inv = _inv_with_library(
+        clusters=[ClusterCfg(key="c1", name="c1", configured_by="运维组",
+                             badges=["self-built", BadgeCfg(text="ROCm", tone="gold")],
+                             hosts=[_host("h1")])],
+    )
+    assert [b.text for b in inv.cluster_badges(inv.clusters[0])] == \
+        ["运维组 配置", "自建", "ROCm"]
+
+
+def test_unknown_badge_reference_rejected():
+    """引用打错字要当场报错——静默跳过的话标签只是'不见了'，很难查。"""
+    from gpumon.config import _validate_unique_keys
+
+    inv = _inv_with_library(
+        clusters=[ClusterCfg(key="c1", name="c1", badges=["liqiud"], hosts=[_host("h1")])],
+    )
+    with pytest.raises(ValueError, match="不存在的标签"):
+        _validate_unique_keys(inv)
+
+
+def test_domain_badge_reference_also_validated():
+    from gpumon.config import _validate_unique_keys
+
+    inv = _inv_with_library(
+        capacity_groups=[CapacityGroupCfg(key="g", name="G", badges=["nope"])],
+        clusters=[ClusterCfg(key="c1", name="c1", capacity_group="g", hosts=[_host("h1")])],
+    )
+    with pytest.raises(ValueError, match="不存在的标签"):
+        _validate_unique_keys(inv)
+
+
+def test_library_entry_without_key_rejected():
+    from gpumon.config import _validate_unique_keys
+
+    inv = Inventory(
+        badge_library=[BadgeCfg(text="没 key 的标签")],
+        clusters=[ClusterCfg(key="c1", name="c1", hosts=[_host("h1")])],
+    )
+    with pytest.raises(ValueError, match="缺 key"):
+        _validate_unique_keys(inv)
+
+
+def test_duplicate_library_key_rejected():
+    from gpumon.config import _validate_unique_keys
+
+    inv = Inventory(
+        badge_library=[BadgeCfg(key="dup", text="一"), BadgeCfg(key="dup", text="二")],
+        clusters=[ClusterCfg(key="c1", name="c1", hosts=[_host("h1")])],
+    )
+    with pytest.raises(ValueError, match="重复的标签 key"):
+        _validate_unique_keys(inv)
+
+
 def test_unknown_palette_rejected():
     from gpumon.config import _validate_unique_keys
 

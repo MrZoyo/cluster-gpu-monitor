@@ -60,10 +60,41 @@ def db_path() -> Path:
     return p if p.is_absolute() else (ROOT / p)
 
 
+def _validate_badges(inv: Inventory) -> None:
+    """标签库：key 必填且唯一；引用方写的 key 必须在库里查得到。
+
+    引用错了要当场报错——静默跳过的话，网页上标签只是"不见了"，
+    排查起来得翻半天配置。
+    """
+    seen: set[str] = set()
+    for b in inv.badge_library:
+        if not b.key:
+            raise ValueError(f"标签库里有条目缺 key（text={b.text!r}）；库条目必须能被引用")
+        if b.key in seen:
+            raise ValueError(f"重复的标签 key: {b.key}")
+        seen.add(b.key)
+
+    def check(refs, where: str) -> None:
+        for r in refs:
+            if not isinstance(r, str) or r in seen:
+                continue
+            if not seen:
+                raise ValueError(
+                    f"{where} 引用了标签 {r!r}，但还没定义 badge_library")
+            raise ValueError(
+                f"{where} 引用了不存在的标签 {r!r}；标签库里有 {sorted(seen)}")
+
+    for g in inv.capacity_groups:
+        check(g.badges, f"算力域 {g.key}")
+    for c in inv.clusters:
+        check(c.badges, f"集群 {c.key}")
+
+
 def _validate_unique_keys(inv: Inventory) -> None:
     """集群 key、主机 key 全局唯一，否则历史关联会错乱。"""
     cluster_keys, host_keys = set(), set()
     group_keys = {g.key for g in inv.capacity_groups}
+    _validate_badges(inv)
     for g in inv.capacity_groups:
         if g.palette and g.palette not in PALETTES:
             raise ValueError(
