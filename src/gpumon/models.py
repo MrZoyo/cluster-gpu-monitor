@@ -10,6 +10,17 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # inventory.yaml 结构
 # ---------------------------------------------------------------------------
+class LabelCfg(BaseModel):
+    """标签库定义 —— 集中管理可复用的说明标签。"""
+    key: str                       # 标签唯一标识，如 "best-gpu"
+    name: str                      # 显示名称，如 "顶级算力"
+    content: str                   # 标签正文内容
+    # 可选的自定义样式（未来扩展）
+    color: str | None = None       # 自定义颜色，留空则继承家族色
+    icon: str | None = None        # 前缀图标 emoji
+    type: str = "info"             # info / warning / success（控制视觉样式）
+
+
 class HostCfg(BaseModel):
     key: str                       # 稳定标识，历史按它关联
     ssh_alias: str                 # ~/.ssh/config 别名，采集用
@@ -21,6 +32,7 @@ class HostCfg(BaseModel):
     # 只有自动探测判错时才需要显式写 nvidia / amd。
     vendor: str | None = None
     meta: dict = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
 
 
 class BadgeCfg(BaseModel):
@@ -43,6 +55,7 @@ class CapacityGroupCfg(BaseModel):
     # 色带名（lime/violet/azure/amber/rose/teal/indigo/slate）。
     # 留空则按 sort_order 自动轮转分配，不会撞成灰色。
     palette: str | None = None
+    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
 
 
 class ClusterCfg(BaseModel):
@@ -57,6 +70,7 @@ class ClusterCfg(BaseModel):
     # 兼容糖：填了等于加一枚 {mark:"◆", text:"<名字> 配置"} 标签。新配置建议直接写 badges。
     configured_by: str | None = None
     badges: list[BadgeCfg] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)  # 引用标签 key 列表
     hosts: list[HostCfg] = Field(default_factory=list)
 
     def resolved_badges(self) -> list[BadgeCfg]:
@@ -89,6 +103,18 @@ class Inventory(BaseModel):
     # 不预置任何机构名——没声明就由 resolved_groups() 兜一个中性的"未分组"。
     capacity_groups: list[CapacityGroupCfg] = Field(default_factory=list)
     clusters: list[ClusterCfg]
+    labels: list[LabelCfg] = Field(default_factory=list)  # 标签库
+
+    def get_label(self, key: str) -> LabelCfg | None:
+        """根据 key 查找标签定义。"""
+        for label in self.labels:
+            if label.key == key:
+                return label
+        return None
+
+    def resolve_labels(self, label_keys: list[str]) -> list[LabelCfg]:
+        """将标签 key 列表展开为完整的标签对象列表（跳过不存在的 key）。"""
+        return [lb for key in label_keys if (lb := self.get_label(key))]
 
     def group_key_of(self, cluster: ClusterCfg) -> str:
         """集群实际归属的算力域 key：没写或写了不存在的域，都落到兜底域。"""

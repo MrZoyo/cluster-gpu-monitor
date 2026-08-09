@@ -3,6 +3,21 @@ window.Views = window.Views || {};
 window.Views.overview = (function () {
   const { el, gpuCard, gpuPlaceholder, utilCell, fmtPct, fmtGB, Palette, ago, badgeRow } = UI;
 
+  function renderLabel(label, groupKey, clusterColor) {
+    // groupKey 用于算力域，clusterColor 用于集群
+    const baseColor = clusterColor || Palette.groupAccent(groupKey);
+    const accentColor = `color-mix(in srgb, ${baseColor} 65%, var(--bg))`;
+    const content = [];
+    if (label.icon) content.push(el("span", { class: "label-icon" }, [label.icon]));
+    content.push(el("span", { class: "label-name" }, [label.name]));
+    if (label.content) content.push(el("span", { class: "label-content" }, [label.content]));
+    return el("div", {
+      class: `label-card label-${label.type || "info"}`,
+      style: `--note-accent:${accentColor}`,
+      title: label.content,
+    }, content);
+  }
+
   function statsForClusters(clusters) {
     const hosts = clusters.flatMap((c) => c.hosts || []);
     const gpus = hosts.flatMap((h) => h.gpus || []);
@@ -155,6 +170,10 @@ window.Views.overview = (function () {
       ]),
     ]));
     if (group.description) section.appendChild(el("div", { class: "capacity-note" }, [group.description]));
+    // 渲染算力域标签
+    if (group.labels && group.labels.length) {
+      group.labels.forEach((label) => section.appendChild(renderLabel(label, group.key)));
+    }
     section.appendChild(el("div", { class: "cluster-tabs" },
       group.clusters.map((c, i) => clusterTab(c, i, group.key, nC))));
     group.clusters.forEach((c, i) => section.appendChild(clusterBlock(c, i, group.key, nC)));
@@ -220,6 +239,10 @@ window.Views.overview = (function () {
       const noteColor = `color-mix(in srgb, ${col} 65%, var(--bg))`;
       details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [c.note]));
     }
+    // 渲染集群标签
+    if (c.labels && c.labels.length) {
+      c.labels.forEach((label) => details.appendChild(renderLabel(label, groupKey, col)));
+    }
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
     } else {
@@ -250,6 +273,12 @@ window.Views.overview = (function () {
     ]);
     if (h.last_error && h.status !== "planned") row.title = `${c.name}: ${h.last_error}`;
     if (h.note && h.status === "planned") row.title = h.note;
+    // 渲染主机标签（在 host-row 后面独立显示）
+    if (h.labels && h.labels.length) {
+      const labelsContainer = el("div", { class: "host-labels" });
+      h.labels.forEach((label) => labelsContainer.appendChild(renderLabel(label, c.capacity_group)));
+      return el("div", { class: "host-with-labels" }, [row, labelsContainer]);
+    }
     return row;
   }
 
