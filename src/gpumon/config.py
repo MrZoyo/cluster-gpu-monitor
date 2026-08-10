@@ -16,6 +16,10 @@ import yaml
 
 from .models import PALETTES, Inventory, Settings
 
+# 代码/静态资源随 release 走；配置和数据根可由 GPUMON_ROOT 独立指定。
+# 这两个根不能混用，否则 current 原子切换后 web 仍会从旧的平铺目录发静态文件。
+CODE_ROOT = Path(__file__).resolve().parents[2]
+
 
 def find_root() -> Path:
     env = os.environ.get("GPUMON_ROOT")
@@ -42,13 +46,15 @@ def load_inventory() -> Inventory:
     return inv
 
 
-def _reject_removed_fields(data: dict) -> None:
+def _reject_removed_fields(data: object) -> None:
     """已删除的字段要显式报错，不能让 pydantic 静默忽略。
 
     configured_by 在 v0.3.0 removed —— 它原本会自动合成一枚"◆ XX 配置"标签。
     留着不管的话，升级后那枚标签会无声消失，用户只会觉得"网页少了个东西"。
     """
-    stale = [c.get("key", "?") for c in (data or {}).get("clusters", []) or []
+    if not isinstance(data, dict):
+        return
+    stale = [c.get("key", "?") for c in (data.get("clusters", []) or [])
              if isinstance(c, dict) and c.get("configured_by")]
     if not stale:
         return
@@ -67,11 +73,10 @@ def _reject_removed_fields(data: dict) -> None:
 def load_settings() -> Settings:
     path = ROOT / "config" / "settings.toml"
     if not path.exists():
-        # 没有 settings.toml 时用 example，再不行用全默认
-        example = ROOT / "config" / "settings.example.toml"
-        path = example if example.exists() else None
-    if path is None:
-        return Settings()
+        raise FileNotFoundError(
+            f"缺少必需配置文件: {path}。"
+            "请先复制 config/settings.example.toml 为 config/settings.toml 并核对内容。"
+        )
     with path.open("rb") as f:
         data = tomllib.load(f)
     return Settings.model_validate(data)

@@ -4,26 +4,72 @@
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+ConfigKey = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    ),
+]
+OptionalConfigKey = Annotated[
+    str,
+    StringConstraints(
+        max_length=128,
+        pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*)?$",
+    ),
+]
+SshAlias = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@%+-]*$",
+    ),
+]
+Status = Literal["active", "planned", "retired"]
+Vendor = Literal["nvidia", "amd"]
+BadgeTone = Literal["cyan", "gold", "green", "violet", "neutral"]
+Palette = Literal["lime", "violet", "azure", "amber", "rose", "teal", "indigo", "slate"]
+HardwareId = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+OptionalShortText = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+MAX_GPUS_PER_HOST = 1024
+MAX_PROCESSES_PER_HOST = 50_000
+
+
+class ConfigModel(BaseModel):
+    """配置模型统一拒绝未知字段，避免拼写错误被静默忽略。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SampleModel(BaseModel):
+    """远端探测数据不可信；字段赋值时也必须持续执行边界校验。"""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
 # ---------------------------------------------------------------------------
 # inventory.yaml 结构
 # ---------------------------------------------------------------------------
-class HostCfg(BaseModel):
-    key: str                       # 稳定标识，历史按它关联
-    ssh_alias: str                 # ~/.ssh/config 别名，采集用
-    display_name: str
-    gpu_count: int | None = None   # 缺省时取 cluster/defaults
-    status: str = "active"
-    note: str | None = None
+class HostCfg(ConfigModel):
+    key: ConfigKey                       # 稳定标识，历史按它关联
+    ssh_alias: SshAlias                  # ~/.ssh/config 别名，采集用
+    display_name: str = Field(min_length=1, max_length=256)
+    gpu_count: int | None = Field(default=None, ge=1, le=4096)  # 缺省时取 defaults
+    status: Status = "active"
+    note: str | None = Field(default=None, max_length=2048)
     # GPU 厂商：留空 = 远端自动探测（先 nvidia-smi 再 rocm-smi）。
     # 只有自动探测判错时才需要显式写 nvidia / amd。
-    vendor: str | None = None
-    meta: dict = Field(default_factory=dict)
+    vendor: Vendor | None = None
+    meta: dict[str, Any] = Field(default_factory=dict, max_length=128)
 
 
-class BadgeCfg(BaseModel):
+class BadgeCfg(ConfigModel):
     """集群卡片上的自定义标签，可挂多枚。text 必填，其余可选。
 
     tone 是预设的语义色名（cyan/gold/green/violet/neutral），不接受任意 CSS 色值——
@@ -32,36 +78,36 @@ class BadgeCfg(BaseModel):
     key 只在「标签库」（Inventory.badge_library）里需要填：填了就能被算力域/集群
     按名字引用，达到一处定义、多处复用。直接内联写在 badges 下的标签不用填 key。
     """
-    key: str | None = None
-    text: str
-    mark: str | None = None        # 前缀符号，如 "◆"；留空则不显示
-    tooltip: str | None = None
-    tone: str = "cyan"
+    key: ConfigKey | None = None
+    text: str = Field(min_length=1, max_length=128)
+    mark: str | None = Field(default=None, max_length=16)  # 前缀符号，如 "◆"
+    tooltip: str | None = Field(default=None, max_length=2048)
+    tone: BadgeTone = "cyan"
 
 
-class CapacityGroupCfg(BaseModel):
-    key: str
-    name: str
-    sort_order: int = 0
-    description: str | None = None
+class CapacityGroupCfg(ConfigModel):
+    key: ConfigKey
+    name: str = Field(min_length=1, max_length=256)
+    sort_order: int = Field(default=0, ge=-1_000_000, le=1_000_000)
+    description: str | None = Field(default=None, max_length=2048)
     # 色带名（lime/violet/azure/amber/rose/teal/indigo/slate）。
     # 留空则按 sort_order 自动轮转分配，不会撞成灰色。
-    palette: str | None = None
+    palette: Palette | None = None
     # 算力域也能挂标签：写标签库的 key（复用），或内联一枚 {text:..., tone:...}
-    badges: list[str | BadgeCfg] = Field(default_factory=list)
+    badges: list[ConfigKey | BadgeCfg] = Field(default_factory=list, max_length=64)
 
 
-class ClusterCfg(BaseModel):
-    key: str
-    name: str
-    sort_order: int = 0
+class ClusterCfg(ConfigModel):
+    key: ConfigKey
+    name: str = Field(min_length=1, max_length=256)
+    sort_order: int = Field(default=0, ge=-1_000_000, le=1_000_000)
     # 留空 = 落到 defaults.fallback_group_key
-    capacity_group: str = ""
-    status: str = "active"
-    note: str | None = None
+    capacity_group: OptionalConfigKey = ""
+    status: Status = "active"
+    note: str | None = Field(default=None, max_length=2048)
     # 每项可以是标签库的 key（字符串，复用）或内联的完整定义
-    badges: list[str | BadgeCfg] = Field(default_factory=list)
-    hosts: list[HostCfg] = Field(default_factory=list)
+    badges: list[ConfigKey | BadgeCfg] = Field(default_factory=list, max_length=64)
+    hosts: list[HostCfg] = Field(default_factory=list, max_length=4096)
 
     def resolved_badges(self, library: dict[str, BadgeCfg] | None = None) -> list[BadgeCfg]:
         """最终标签序列：badges 里的字符串按标签库查表展开，内联项原样保留。
@@ -71,7 +117,7 @@ class ClusterCfg(BaseModel):
         return _expand_badges(self.badges, library)
 
 
-def _expand_badges(items: list[str | BadgeCfg],
+def _expand_badges(items: list[ConfigKey | BadgeCfg],
                    library: dict[str, BadgeCfg] | None) -> list[BadgeCfg]:
     """把 badges 列表里的「库 key 字符串」换成库里的定义，内联项原样保留。"""
     lib = library or {}
@@ -86,26 +132,26 @@ def _expand_badges(items: list[str | BadgeCfg],
     return out
 
 
-class Defaults(BaseModel):
-    gpu_count: int = 8
-    poll_interval_s: int = 30
+class Defaults(ConfigModel):
+    gpu_count: int = Field(default=8, ge=1, le=4096)
+    poll_interval_s: int = Field(default=30, ge=1, le=86_400)
     # 集群未声明 capacity_group、或引用了不存在的域时兜底用的域。
-    fallback_group_key: str = "default"
-    fallback_group_name: str = "未分组"
+    fallback_group_key: ConfigKey = "default"
+    fallback_group_name: str = Field(default="未分组", min_length=1, max_length=256)
 
 
 # 内置色带名，顺序即自动轮转顺序。见 web/js/components.js 的 BANDS。
 PALETTES = ["lime", "violet", "azure", "amber", "rose", "teal", "indigo", "slate"]
 
 
-class Inventory(BaseModel):
-    version: int = 1
+class Inventory(ConfigModel):
+    version: Literal[1] = 1
     defaults: Defaults = Field(default_factory=Defaults)
     # 不预置任何机构名——没声明就由 resolved_groups() 兜一个中性的"未分组"。
-    capacity_groups: list[CapacityGroupCfg] = Field(default_factory=list)
-    clusters: list[ClusterCfg]
+    capacity_groups: list[CapacityGroupCfg] = Field(default_factory=list, max_length=4096)
+    clusters: list[ClusterCfg] = Field(max_length=4096)
     # 标签库：一处定义，算力域/集群按 key 引用。每项必须带 key。
-    badge_library: list[BadgeCfg] = Field(default_factory=list)
+    badge_library: list[BadgeCfg] = Field(default_factory=list, max_length=4096)
 
     @property
     def badges_by_key(self) -> dict[str, BadgeCfg]:
@@ -162,40 +208,46 @@ class Inventory(BaseModel):
 # ---------------------------------------------------------------------------
 # settings.toml 结构
 # ---------------------------------------------------------------------------
-class CollectorSettings(BaseModel):
-    poll_interval_s: int = 30
-    ssh_connect_timeout_s: int = 8
-    ssh_total_timeout_s: int = 20
-    max_concurrency: int = 8
-    cpu_sample_gap_s: int = 1
+class CollectorSettings(ConfigModel):
+    poll_interval_s: int = Field(default=30, ge=1, le=86_400)
+    ssh_connect_timeout_s: int = Field(default=8, ge=1, le=300)
+    ssh_total_timeout_s: int = Field(default=20, ge=1, le=3600)
+    max_concurrency: int = Field(default=8, ge=1, le=512)
+    cpu_sample_gap_s: int = Field(default=1, ge=1, le=60)
+    # stdout + stderr 共用这一预算；超限立即终止 ssh，防止异常目标耗尽本机内存。
+    ssh_output_limit_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        ge=64 * 1024,
+        le=64 * 1024 * 1024,
+    )
 
 
-class RetentionSettings(BaseModel):
-    raw_days: int = 14
-    rollup_5m_days: int = 30
-    rollup_1h_days: int = 400   # 1 小时聚合保留天数；须 > 最长时间窗(1m=30d)，留足余量
+class RetentionSettings(ConfigModel):
+    raw_days: int = Field(default=14, ge=1, le=36_500)
+    rollup_5m_days: int = Field(default=30, ge=1, le=36_500)
+    # 1 小时聚合保留天数；须 > 最长时间窗(1m=30d)，留足余量
+    rollup_1h_days: int = Field(default=400, ge=1, le=36_500)
 
 
-class DbSettings(BaseModel):
-    path: str = "data/gpumon.db"
+class DbSettings(ConfigModel):
+    path: str = Field(default="data/gpumon.db", min_length=1, max_length=4096)
 
 
-class WebSettings(BaseModel):
-    host: str = "127.0.0.1"
-    port: int = 8848
+class WebSettings(ConfigModel):
+    host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
+    port: int = Field(default=8848, ge=1, le=65_535)
 
 
-class PrivacySettings(BaseModel):
+class PrivacySettings(ConfigModel):
     mask_users: bool = False
 
 
-class BackupSettings(BaseModel):
+class BackupSettings(ConfigModel):
     enabled: bool = True          # 是否启用自动备份
-    keep_count: int = 3           # 保留备份数量
-    hour: int = 4                 # 每天几点备份（0-23）
+    keep_count: int = Field(default=3, ge=1, le=1000)  # 保留备份数量
 
 
-class Settings(BaseModel):
+class Settings(ConfigModel):
     collector: CollectorSettings = Field(default_factory=CollectorSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     db: DbSettings = Field(default_factory=DbSettings)
@@ -207,45 +259,58 @@ class Settings(BaseModel):
 # ---------------------------------------------------------------------------
 # 采集结果 DTO（采集器解析 remote_probe 输出后产出，再交给 store 写库）
 # ---------------------------------------------------------------------------
-class GpuSample(BaseModel):
-    index: int
-    uuid: str
-    name: str | None = None
-    vendor: str | None = None      # nvidia / amd，仅用于展示与排障，不参与历史关联
-    util_gpu: int | None = None
-    util_mem: int | None = None
-    mem_used_mib: int | None = None
-    mem_total_mib: int | None = None
-    temp_c: int | None = None
-    power_w: float | None = None
+class GpuSample(SampleModel):
+    index: int = Field(ge=0, le=4095)
+    uuid: HardwareId
+    name: OptionalShortText | None = None
+    vendor: Vendor | None = None   # nvidia / amd，仅用于展示与排障，不参与历史关联
+    util_gpu: int | None = Field(default=None, ge=0, le=100)
+    util_mem: int | None = Field(default=None, ge=0, le=100)
+    mem_used_mib: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    mem_total_mib: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    temp_c: int | None = Field(default=None, ge=-273, le=1000)
+    power_w: float | None = Field(
+        default=None, ge=0, le=1_000_000, allow_inf_nan=False
+    )
 
 
-class ProcSample(BaseModel):
-    gpu_uuid: str
-    pid: int
-    username: str | None = None
-    comm: str | None = None
-    mem_used_mib: int | None = None
+class ProcSample(SampleModel):
+    gpu_uuid: HardwareId
+    pid: int = Field(ge=1, le=2_147_483_647)
+    username: OptionalShortText | None = None
+    comm: str | None = Field(default=None, min_length=1, max_length=1024)
+    mem_used_mib: int | None = Field(default=None, ge=0, le=1_000_000_000)
 
 
-class HostSample(BaseModel):
-    ncpu: int | None = None
-    load1: float | None = None
-    load5: float | None = None
-    load15: float | None = None
-    cpu_util_pct: float | None = None
-    mem_total_mib: int | None = None
-    mem_avail_mib: int | None = None
-    mem_used_mib: int | None = None
+class HostSample(SampleModel):
+    ncpu: int | None = Field(default=None, ge=1, le=1_048_576)
+    load1: float | None = Field(default=None, ge=0, le=1_000_000_000, allow_inf_nan=False)
+    load5: float | None = Field(default=None, ge=0, le=1_000_000_000, allow_inf_nan=False)
+    load15: float | None = Field(default=None, ge=0, le=1_000_000_000, allow_inf_nan=False)
+    cpu_util_pct: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    mem_total_mib: int | None = Field(default=None, ge=0, le=1_000_000_000_000)
+    mem_avail_mib: int | None = Field(default=None, ge=0, le=1_000_000_000_000)
+    mem_used_mib: int | None = Field(default=None, ge=0, le=1_000_000_000_000)
 
 
-class ProbeResult(BaseModel):
+class ProbeResult(SampleModel):
     """一台机器一轮采集的完整结果。ok=False 表示该机本轮失败（超时/SSH错误）。"""
-    host_key: str
+    host_key: ConfigKey
     ok: bool
-    error: str | None = None
-    vendor: str | None = None      # 远端实际探测到的厂商（nvidia/amd/none）
-    remote_hostname: str | None = None
-    gpus: list[GpuSample] = Field(default_factory=list)
-    procs: list[ProcSample] = Field(default_factory=list)
+    error: str | None = Field(default=None, max_length=512)
+    vendor: Literal["nvidia", "amd", "none"] | None = None
+    remote_hostname: OptionalShortText | None = None
+    gpus: list[GpuSample] = Field(default_factory=list, max_length=MAX_GPUS_PER_HOST)
+    procs: list[ProcSample] = Field(default_factory=list, max_length=MAX_PROCESSES_PER_HOST)
     host: HostSample | None = None
+
+    @model_validator(mode="after")
+    def validate_gpu_identity(self) -> ProbeResult:
+        """同一轮的 GPU index/UUID 必须唯一，避免错误 upsert 和进程归属。"""
+        indices = [g.index for g in self.gpus]
+        uuids = [g.uuid for g in self.gpus]
+        if len(indices) != len(set(indices)):
+            raise ValueError("同一轮存在重复 GPU index")
+        if len(uuids) != len(set(uuids)):
+            raise ValueError("同一轮存在重复 GPU UUID")
+        return self

@@ -218,6 +218,7 @@ ssh_connect_timeout_s = 8   # SSH connection timeout
 ssh_total_timeout_s = 20    # Overall timeout per host per round (includes remote sleep)
 max_concurrency = 8         # How many simultaneous SSH connections. Increase for many machines, mind bastion capacity
 cpu_sample_gap_s = 1        # Interval between two /proc/stat reads on remote, for CPU utilization
+ssh_output_limit_bytes = 4194304 # Combined stdout+stderr budget per host; excess terminates SSH
 
 [retention]
 raw_days = 31               # Raw sample retention days
@@ -237,18 +238,23 @@ mask_users = false          # true shows users as a***e
 [backup]
 enabled = true              # Whether to enable automatic backup (systemd timer checks this switch)
 keep_count = 3              # Keep N most recent backups
-hour = 4                    # Daily backup hour (0-23, default 4 AM)
 ```
 
 ### Backup Configuration
 
-Database automatic backup is implemented via systemd timer, runs once daily at specified time.
+Automatic backups are scheduled only by the systemd timer, once daily at 04:00 by default.
 
-- `enabled`: Whether to enable automatic backup. Set to `false` to completely disable.
+- `enabled`: Whether scheduled backups are enabled. When `false`, the timer can still fire but
+  `gpumon backup --scheduled` exits successfully without creating a backup. Manual
+  `gpumon backup` commands are unaffected.
 - `keep_count`: Keep N most recent backup files. Default 3, i.e. can restore to 3 days ago max.
-- `hour`: Daily backup hour (0-23). Default 4 (4 AM).
 
-**After changing backup time**, need to update systemd timer:
+Each backup is written through the SQLite backup API to a temporary file. It must pass
+`quick_check`, is set to mode `0600`, and is fsynced before an atomic rename. Old backups
+are pruned only after the new file is published successfully.
+
+**To change the backup time**, edit the systemd timer. There is deliberately no separate
+settings value that could drift from the real schedule:
 
 ```bash
 # Edit timer (OnCalendar line)
@@ -261,8 +267,6 @@ sudo systemctl edit --full gpumon-backup.timer
 sudo systemctl daemon-reload
 sudo systemctl restart gpumon-backup.timer
 ```
-
-Or just change `hour` in `settings.toml`, backup script will read that value (but timer trigger time still needs manual change).
 
 Manual backup: `uv run gpumon backup` (backup once immediately, clean old backups per `keep_count`).
 

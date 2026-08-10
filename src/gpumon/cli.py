@@ -20,7 +20,7 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
 
     inv = load_inventory()
     st = load_settings()
-    print(f"项目根: {ROOT}")
+    print(f"配置/数据根: {ROOT}")
     print(f"数据库: {db_path()}")
     print(f"采集周期: {st.collector.poll_interval_s}s  并发: {st.collector.max_concurrency}")
     print(f"Web: {st.web.host}:{st.web.port}")
@@ -88,7 +88,12 @@ def _cmd_rollup_once(args: argparse.Namespace) -> int:
 
 
 def _cmd_backup(args: argparse.Namespace) -> int:
+    from .config import load_settings
     from .db.backup import backup_and_prune, list_backups
+
+    if args.scheduled and not load_settings().backup.enabled:
+        print("自动备份已在 settings.toml 中禁用，本次定时任务跳过。")
+        return 0
 
     new_backup, deleted = backup_and_prune()  # 从配置读取 keep_count
     print(f"备份完成: {new_backup.name}  ({new_backup.stat().st_size / (1024*1024):.1f} MB)")
@@ -128,7 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.set_defaults(func=_cmd_collect)
 
     sub.add_parser("rollup-once", help="手动聚合+清理").set_defaults(func=_cmd_rollup_once)
-    sub.add_parser("backup", help="备份数据库（保留最近 3 个）").set_defaults(func=_cmd_backup)
+    b = sub.add_parser("backup", help="备份数据库并按配置轮换")
+    b.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="由 systemd timer 调用；backup.enabled=false 时跳过",
+    )
+    b.set_defaults(func=_cmd_backup)
 
     w = sub.add_parser("web", help="启动网页服务")
     w.add_argument("--host", default=None)

@@ -39,7 +39,11 @@ async def _probe_all(host_filter: str | None = None) -> tuple[int, list[ProbeRes
         if isinstance(r, ProbeResult):
             clean.append(r)
         else:
-            clean.append(ProbeResult(host_key=key, ok=False, error=f"任务异常: {r}"))
+            clean.append(ProbeResult(
+                host_key=key,
+                ok=False,
+                error=f"任务异常: {r}"[:512],
+            ))
     return ts, clean
 
 

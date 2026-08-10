@@ -7,13 +7,13 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from ..config import ROOT
+from ..config import CODE_ROOT
 from .routes import router
 
 app = FastAPI(title="GPU 集群占用监控", version="0.1.0")
 app.include_router(router)
 
 # web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。
-_web_dir = ROOT / "web"
+_web_dir = CODE_ROOT / "web"
 if _web_dir.exists():
     app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="static")

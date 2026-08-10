@@ -7,6 +7,7 @@ ssh_connect_timeout_s = 8 # SSH 建连超时
 ssh_total_timeout_s = 20  # 单台机器一轮采集的整体超时（含 remote_probe 的 sleep 1）
 max_concurrency = 8       # 并发 SSH 的最大主机数
 cpu_sample_gap_s = 1      # remote_probe 内两次读 /proc/stat 的间隔，用于算 CPU 利用率
+ssh_output_limit_bytes = 4194304 # 单台单轮 stdout+stderr 总上限（4 MiB），超限终止 SSH
 
 [retention]
 raw_days = 31             # 原始 sample_* 保留天数；须 ≥ 最长时间窗(1m=30d)+余量，
@@ -27,4 +28,3 @@ mask_users = false        # true 时网页把使用人显示为 a***e
 [backup]
 enabled = true            # 是否启用自动备份（systemd timer 会检查此开关）
 keep_count = 3            # 保留最近几个备份
-hour = 4                  # 每天几点备份（0-23，默认凌晨 4 点）

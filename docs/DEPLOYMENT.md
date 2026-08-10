@@ -129,91 +129,113 @@ done
 
 ---
 
-## 3. 装应用
+## 3. 按 release 布局安装
 
-```bash
-sudo mkdir -p <ROOT> && sudo chown <USER>:<USER> <ROOT>
-# 拉代码（或用 rsync 从本地推）
-git clone <REPO_URL> <ROOT>
-cd <ROOT>
+生产环境不要把 git checkout、`.venv`、真实配置和数据库平铺在同一目录，也不要用
+`rsync --delete` 原地覆盖正在运行的代码。推荐布局：
 
-cp config/inventory.example.yaml config/inventory.yaml
-cp config/settings.example.toml  config/settings.toml
-
-uv sync                 # 建 .venv 并装依赖
-uv run gpumon config-check   # 校验配置，打印解析出的集群/主机/卡数
+```text
+<ROOT>/releases/<commit>/   # 该 commit 的源码及在本机新建的 .venv
+<ROOT>/current -> releases/<commit>
+<ROOT>/previous -> releases/<old-commit>
+<ROOT>/config/              # inventory.yaml / settings.toml，不随 release 切换
+<ROOT>/data/                # SQLite 与 backups/，不随 release 切换
 ```
 
-编辑 `config/inventory.yaml`，把示例集群换成你的真实机器 —— `ssh_alias` 必须和上一节
-`~/.ssh/config` 里的别名**一字不差**。字段含义在示例文件里逐条注释了，重点：
-
-- `key` 一旦上线**不要改**，它是历史数据的关联键
-- `gpu_count` 是期望卡数，用来做「断卡」检测
-- `vendor` 留空就自动探测（nvidia → amd），一般不用写
-
-`config/settings.toml` 里常调的：`poll_interval_s`（默认 30s）、
-`max_concurrency`（并发 SSH 数，节点多时调大）、保留天数、`[web]` 的监听地址和端口。
-
-建库 + 采一轮试试：
+首次安装可按下面方式从一个干净 checkout 建 release；真实配置只复制到独立目录：
 
 ```bash
-uv run gpumon initdb
-uv run gpumon collect --once     # 采一轮，打印每台成功/失败
+SRC=<CLEAN_CHECKOUT>
+ROOT=<ROOT>
+APP_USER=<USER>
+APP_GROUP=$(id -gn "$APP_USER")
+COMMIT=$(git -C "$SRC" rev-parse HEAD)
+
+sudo install -d -o root -g root "$ROOT/releases"
+sudo install -d -o "$APP_USER" -g "$APP_GROUP" \
+  "$ROOT/releases/$COMMIT" "$ROOT/config" "$ROOT/data"
+git -C "$SRC" archive "$COMMIT" \
+  | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
+sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
+sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R a-w "$ROOT/releases/$COMMIT"
+
+sudo cp -n "$ROOT/releases/$COMMIT/config/inventory.example.yaml" "$ROOT/config/inventory.yaml"
+sudo cp -n "$ROOT/releases/$COMMIT/config/settings.example.toml" "$ROOT/config/settings.toml"
+sudo chown "root:$APP_GROUP" "$ROOT/config/inventory.yaml" "$ROOT/config/settings.toml"
+sudo chmod 0640 "$ROOT/config/inventory.yaml" "$ROOT/config/settings.toml"
+# 现在编辑两份真实配置；ssh_alias 必须与服务账户 ~/.ssh/config 完全一致。
+
+sudo ln -s "releases/$COMMIT" "$ROOT/current"
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
+  "$ROOT/current/.venv/bin/gpumon" config-check
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
+  "$ROOT/current/.venv/bin/gpumon" initdb
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
+  "$ROOT/current/.venv/bin/gpumon" collect --once
 ```
 
-一轮采完看到「成功 N/N 机」就通了。单机排障用
-`uv run gpumon collect --once --host <host-key>`，看原始探测输出用
-`scripts/probe_one.sh <ssh-alias>`。
+后续升级也要先在 `releases/.staging-<commit>.*` 构建，依次完成严格配置校验、旁路 Web
+健康检查和 SQLite 在线备份；然后用“新建临时软链接 + `mv -T`”原子替换 `current`。
+先重启 collector 并确认新样本时间推进，再重启 web；失败时把 `current` 指回
+`previous` 并重启即可。不要从开发机同步 `.venv`，更不要把 `config/` 或 `data/`
+复制进 release。构建完成的 release 及其父目录应由 root 持有并保持只读，运行服务只能读取。
 
 ---
 
 ## 4. 装成 systemd 服务
 
-仓库里有四个 unit 模板，都用 `__ROOT__` / `__USER__` 占位符，用 `sed` 替换后落地：
+系统级 unit 都从 `<ROOT>/current` 执行代码，同时把 `GPUMON_ROOT` 指向稳定的
+`<ROOT>`。备份 timer 是唯一自动调度源，每天 04:00 触发一次：
 
 | 文件 | 类型 | 说明 |
 | --- | --- | --- |
-| `deploy/systemd/gpumon-collector.service` | 用户级 | 无 `User=`，跟着当前登录用户跑 |
-| `deploy/systemd/gpumon-web.service` | 用户级 | 同上 |
-| `deploy/systemd/system-gpumon-collector.service` | 系统级 | 带 `User=__USER__`，开机自启 |
-| `deploy/systemd/system-gpumon-web.service` | 系统级 | 同上 |
+| `system-gpumon-collector.service` | 系统级 | 采集器，跟随 `current` |
+| `system-gpumon-web.service` | 系统级 | Web，跟随 `current` |
+| `gpumon-backup.service` | 系统级 oneshot | 原子 SQLite 备份，不单独 enable |
+| `gpumon-backup.timer` | 系统级 timer | 每日 04:00 唯一触发源 |
+| `gpumon-collector.service` / `gpumon-web.service` | 用户级 | 开发机平铺 checkout 使用 |
 
 **系统级（服务器部署用这个）**：
 
 ```bash
 ROOT=<ROOT>
+APP_USER=<USER>
 for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g; s#__USER__#<USER>#g" \
-    "$ROOT/deploy/systemd/system-gpumon-$u.service" \
+  sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+    "$ROOT/current/deploy/systemd/system-gpumon-$u.service" \
     | sudo tee "/etc/systemd/system/gpumon-$u.service" >/dev/null
 done
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+  "$ROOT/current/deploy/systemd/gpumon-backup.service" \
+  | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
+sudo cp "$ROOT/current/deploy/systemd/gpumon-backup.timer" \
+  /etc/systemd/system/gpumon-backup.timer
+sudo systemd-analyze verify /etc/systemd/system/gpumon-{collector,web,backup}.service \
+  /etc/systemd/system/gpumon-backup.timer
 sudo systemctl daemon-reload
-sudo systemctl enable --now gpumon-collector gpumon-web
-systemctl status gpumon-collector gpumon-web --no-pager
+sudo systemctl enable --now gpumon-collector gpumon-web gpumon-backup.timer
 ```
 
-**用户级（自己机器上试用）**：不需要 sudo，但 SSH agent / 密钥就在你自己账户下，
-且默认**注销即停**。
+**用户级（自己机器上试用）**使用源码 checkout 的 `.venv`，并显式区分代码根和
+配置/数据根：
 
 ```bash
-ROOT=<ROOT>
+CODE_ROOT=<CLEAN_CHECKOUT>
+STATE_ROOT=<STATE_ROOT>
 mkdir -p ~/.config/systemd/user
 for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g" "$ROOT/deploy/systemd/gpumon-$u.service" \
+  sed "s#__CODE_ROOT__#$CODE_ROOT#g; s#__STATE_ROOT__#$STATE_ROOT#g" \
+    "$CODE_ROOT/deploy/systemd/gpumon-$u.service" \
     > ~/.config/systemd/user/gpumon-$u.service
 done
 systemctl --user daemon-reload
 systemctl --user enable --now gpumon-collector gpumon-web
-# 想让它注销后继续跑：
-sudo loginctl enable-linger $USER
+sudo loginctl enable-linger "$USER"  # 需要注销后继续运行时才开
 ```
 
-两者的区别就这么点：系统级用 `User=` 指定账户、`WantedBy=multi-user.target`、开机即起，
-不依赖登录会话；用户级归 `systemctl --user` 管，日志走 `journalctl --user`。
-**别两套同时启用** —— 两个采集器写同一个 SQLite 会互相抢写锁。
-
-`Environment=GPUMON_ROOT=<ROOT>` 是必须的：所有相对路径（数据库、config、web 静态文件）
-都按这个根解析。
+**不要同时启用系统级和用户级采集器**，否则两个进程会争写同一 SQLite。配置与数据
+按 `GPUMON_ROOT` 解析；Web 静态资源始终从当前代码 release 读取，二者有意分离。
 
 ---
 
@@ -765,9 +787,6 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
-
-
-
 
 
 

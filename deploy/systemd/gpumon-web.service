@@ -4,9 +4,9 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=__ROOT__
-Environment=GPUMON_ROOT=__ROOT__
-ExecStart=__ROOT__/.venv/bin/gpumon web
+WorkingDirectory=__CODE_ROOT__
+Environment=GPUMON_ROOT=__STATE_ROOT__
+ExecStart=__CODE_ROOT__/.venv/bin/gpumon web
 Restart=always
 RestartSec=5
 

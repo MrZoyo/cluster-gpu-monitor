@@ -121,19 +121,40 @@ Each line should return `GPU 0: NVIDIA ...`. `BatchMode=yes` is critical: disabl
 
 ---
 
-## 3. Install Application
+## 3. Install with a Release Layout
+
+Keep immutable code releases separate from live configuration and data:
+
+```text
+<ROOT>/releases/<commit>/
+<ROOT>/current -> releases/<commit>
+<ROOT>/previous -> releases/<old-commit>
+<ROOT>/config/
+<ROOT>/data/
+```
+
+Do not run `rsync --delete` over executing code or copy a development `.venv` to production.
 
 ```bash
-sudo mkdir -p <ROOT> && sudo chown <USER>:<USER> <ROOT>
-# Pull code (or rsync from local)
-git clone <REPO_URL> <ROOT>
-cd <ROOT>
-
-cp config/inventory.example.yaml config/inventory.yaml
-cp config/settings.example.toml  config/settings.toml
-
-uv sync                 # Create .venv and install dependencies
-uv run gpumon config-check   # Validate config, print parsed clusters/hosts/GPU counts
+SRC=<CLEAN_CHECKOUT>
+ROOT=<ROOT>
+APP_USER=<USER>
+APP_GROUP=$(id -gn "$APP_USER")
+COMMIT=$(git -C "$SRC" rev-parse HEAD)
+sudo install -d -o root -g root "$ROOT/releases"
+sudo install -d -o "$APP_USER" -g "$APP_GROUP" \
+  "$ROOT/releases/$COMMIT" "$ROOT/config" "$ROOT/data"
+git -C "$SRC" archive "$COMMIT" \
+  | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
+sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
+sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R a-w "$ROOT/releases/$COMMIT"
+sudo cp -n "$ROOT/releases/$COMMIT/config/inventory.example.yaml" "$ROOT/config/inventory.yaml"
+sudo cp -n "$ROOT/releases/$COMMIT/config/settings.example.toml" "$ROOT/config/settings.toml"
+sudo chown "root:$APP_GROUP" "$ROOT/config/inventory.yaml" "$ROOT/config/settings.toml"
+sudo chmod 0640 "$ROOT/config/inventory.yaml" "$ROOT/config/settings.toml"
+sudo ln -s "releases/$COMMIT" "$ROOT/current"
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" "$ROOT/current/.venv/bin/gpumon" config-check
 ```
 
 Edit `config/inventory.yaml`, replace example clusters with your real machines — `ssh_alias` must **exactly match** aliases in previous section's `~/.ssh/config`. Field meanings are commented line-by-line in example file, key points:
@@ -147,17 +168,22 @@ In `config/settings.toml`, commonly adjusted: `poll_interval_s` (default 30s), `
 Create DB + try one collection round:
 
 ```bash
-uv run gpumon initdb
-uv run gpumon collect --once     # One round, prints success/failure per host
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" "$ROOT/current/.venv/bin/gpumon" initdb
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" "$ROOT/current/.venv/bin/gpumon" collect --once
 ```
 
-If round completes showing "success N/N hosts" you're through. Single-host troubleshooting use `uv run gpumon collect --once --host <host-key>`, raw probe output use `scripts/probe_one.sh <ssh-alias>`.
+For upgrades, build under `releases/.staging-<commit>.*`, run strict config checks, a sidecar
+Web check, and an online SQLite backup before atomically replacing `current`. Restart collector
+first and require the latest sample timestamp to advance, then restart Web. Point `current` back
+to `previous` on any failure. Never place live `config/` or `data/` inside a release. Once built,
+the release and its parent directory should be root-owned and read-only to the runtime service.
 
 ---
 
-## 4. Install as systemd Service
+## 4. Install as systemd Services
 
-Repo has four unit templates, all use `__ROOT__` / `__USER__` placeholders, replace with `sed` then deploy:
+System units execute code from `<ROOT>/current` while `GPUMON_ROOT` remains the stable state root.
+The backup timer is the single automatic scheduler and runs daily at 04:00.
 
 | File | Type | Notes |
 | --- | --- | --- |
@@ -165,28 +191,37 @@ Repo has four unit templates, all use `__ROOT__` / `__USER__` placeholders, repl
 | `deploy/systemd/gpumon-web.service` | User-level | Same |
 | `deploy/systemd/system-gpumon-collector.service` | System-level | Has `User=__USER__`, auto-start on boot |
 | `deploy/systemd/system-gpumon-web.service` | System-level | Same |
+| `deploy/systemd/gpumon-backup.service` | System-level oneshot | Atomic backup; do not enable directly |
+| `deploy/systemd/gpumon-backup.timer` | System-level timer | Single daily 04:00 trigger |
 
 **System-level (use this for server deployment)**:
 
 ```bash
 ROOT=<ROOT>
+APP_USER=<USER>
 for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g; s#__USER__#<USER>#g" \
-    "$ROOT/deploy/systemd/system-gpumon-$u.service" \
+  sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+    "$ROOT/current/deploy/systemd/system-gpumon-$u.service" \
     | sudo tee "/etc/systemd/system/gpumon-$u.service" >/dev/null
 done
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+  "$ROOT/current/deploy/systemd/gpumon-backup.service" \
+  | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
+sudo cp "$ROOT/current/deploy/systemd/gpumon-backup.timer" \
+  /etc/systemd/system/gpumon-backup.timer
 sudo systemctl daemon-reload
-sudo systemctl enable --now gpumon-collector gpumon-web
-systemctl status gpumon-collector gpumon-web --no-pager
+sudo systemctl enable --now gpumon-collector gpumon-web gpumon-backup.timer
 ```
 
 **User-level (for trying on your own machine)**: No sudo needed, but SSH agent / keys are under your own account, and **stops on logout** by default.
 
 ```bash
-ROOT=<ROOT>
+CODE_ROOT=<CLEAN_CHECKOUT>
+STATE_ROOT=<STATE_ROOT>
 mkdir -p ~/.config/systemd/user
 for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g" "$ROOT/deploy/systemd/gpumon-$u.service" \
+  sed "s#__CODE_ROOT__#$CODE_ROOT#g; s#__STATE_ROOT__#$STATE_ROOT#g" \
+    "$CODE_ROOT/deploy/systemd/gpumon-$u.service" \
     > ~/.config/systemd/user/gpumon-$u.service
 done
 systemctl --user daemon-reload
@@ -197,7 +232,8 @@ sudo loginctl enable-linger $USER
 
 Difference: system-level uses `User=` to specify account, `WantedBy=multi-user.target`, starts on boot, doesn't depend on login session; user-level managed by `systemctl --user`, logs via `journalctl --user`. **Don't enable both** — two collectors writing same SQLite will fight for write lock.
 
-`Environment=GPUMON_ROOT=<ROOT>` is mandatory: all relative paths (database, config, web static files) resolve from this root.
+Configuration and data resolve from `GPUMON_ROOT`; Web assets resolve from the active code
+release. That separation is intentional and makes the `current` switch atomic.
 
 ---
 

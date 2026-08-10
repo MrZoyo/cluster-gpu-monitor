@@ -5,10 +5,25 @@
 """
 from __future__ import annotations
 
-from ..models import GpuSample, HostSample, ProbeResult, ProcSample
+from pydantic import ValidationError
+
+from ..models import (
+    MAX_GPUS_PER_HOST,
+    MAX_PROCESSES_PER_HOST,
+    GpuSample,
+    HostSample,
+    ProbeResult,
+    ProcSample,
+)
 from .parse_amd import parse_amd_sections
 
 _NA = {"", "[n/a]", "[not supported]", "[unknown error]", "n/a", "na"}
+MAX_PROBE_LINES = 50_000
+MAX_PROBE_TEXT_CHARS = 64 * 1024 * 1024
+
+
+class ProbeDataError(ValueError):
+    """远端探测结果违反结构/数量边界；消息只描述规则，不包含远端原值。"""
 
 
 def _to_int(s: str | None):
@@ -19,7 +34,7 @@ def _to_int(s: str | None):
         return None
     try:
         return int(float(s))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -31,11 +46,15 @@ def _to_float(s: str | None):
         return None
     try:
         return float(s)
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
 def _split_sections(raw: str) -> dict[str, list[str]]:
+    if len(raw) > MAX_PROBE_TEXT_CHARS:
+        raise ProbeDataError("输出文本超过解析上限")
+    if raw.count("\n") + 1 > MAX_PROBE_LINES:
+        raise ProbeDataError("输出行数超过解析上限")
     sections: dict[str, list[str]] = {}
     cur: str | None = None
     for line in raw.splitlines():
@@ -69,6 +88,8 @@ def _psmap(sec: dict[str, list[str]]) -> dict[int, tuple[str | None, str | None]
     """PSMAP 段 "pid user comm" → {pid: (user, comm)}。两条厂商路径共用。"""
     pid_map: dict[int, tuple[str | None, str | None]] = {}
     for line in sec.get("PSMAP", []):
+        if len(pid_map) >= MAX_PROCESSES_PER_HOST:
+            raise ProbeDataError("PSMAP 进程数超过单机上限")
         parts = line.split(None, 2)
         if len(parts) >= 2:
             pid = _to_int(parts[0])
@@ -92,6 +113,17 @@ def _fill_usernames(procs: list[ProcSample],
 
 
 def parse_probe(host_key: str, raw: str) -> ProbeResult:
+    """解析一轮远端输出；不可信字段只会得到失败结果，不把校验异常抛给采集循环。"""
+    try:
+        return _parse_probe(host_key, raw)
+    except ProbeDataError as exc:
+        return ProbeResult(host_key=host_key, ok=False, error=str(exc))
+    except (ValidationError, ValueError, TypeError, OverflowError, RecursionError):
+        # Pydantic 错误会携带原始 input_value；这里故意不回显远端内容。
+        return ProbeResult(host_key=host_key, ok=False, error="远端输出字段无效或超出允许范围")
+
+
+def _parse_probe(host_key: str, raw: str) -> ProbeResult:
     sec = _split_sections(raw)
     if "END" not in sec:
         return ProbeResult(host_key=host_key, ok=False,
@@ -149,11 +181,16 @@ def parse_probe(host_key: str, raw: str) -> ProbeResult:
     for line in sec.get("GPU", []):
         if not line.strip():
             continue
+        if len(gpus) >= MAX_GPUS_PER_HOST:
+            raise ProbeDataError("GPU 数超过单机上限")
         f = [x.strip() for x in line.split(",")]
         if len(f) < 9:
             continue
+        index = _to_int(f[0])
+        if index is None:
+            raise ProbeDataError("GPU index 缺失或无效")
         gpus.append(GpuSample(
-            index=_to_int(f[0]) or 0, uuid=f[1], name=f[2] or None, vendor="nvidia",
+            index=index, uuid=f[1], name=f[2] or None, vendor="nvidia",
             util_gpu=_to_int(f[3]), util_mem=_to_int(f[4]),
             mem_used_mib=_to_int(f[5]), mem_total_mib=_to_int(f[6]),
             temp_c=_to_int(f[7]), power_w=_to_float(f[8]),
@@ -166,6 +203,8 @@ def parse_probe(host_key: str, raw: str) -> ProbeResult:
     for line in sec.get("APPS", []):
         if not line.strip():
             continue
+        if len(procs) >= MAX_PROCESSES_PER_HOST:
+            raise ProbeDataError("GPU 进程数超过单机上限")
         f = [x.strip() for x in line.split(",")]
         if len(f) < 3:
             continue

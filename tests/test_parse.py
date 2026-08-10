@@ -1,6 +1,7 @@
 """解析层测试：覆盖正常字段、[N/A]、进程映射、CPU 差分、截断输出。"""
 from pathlib import Path
 
+from gpumon.collector import parse as parse_module
 from gpumon.collector.parse import parse_probe
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "probe_sample.txt").read_text()
@@ -64,3 +65,43 @@ def test_parse_empty_apps():
         "12345 alice python\n", "")
     r = parse_probe("hx", raw)
     assert r.ok is True and len(r.procs) == 0 and len(r.gpus) == 2
+
+
+def test_duplicate_or_empty_gpu_identity_rejects_whole_round():
+    duplicate_uuid = FIXTURE.replace("GPU-bbb, NVIDIA H800", "GPU-aaa, NVIDIA H800")
+    r = parse_probe("hx", duplicate_uuid)
+    assert not r.ok and "无效" in r.error
+
+    duplicate_index = FIXTURE.replace("1, GPU-bbb", "0, GPU-bbb")
+    r = parse_probe("hx", duplicate_index)
+    assert not r.ok and "无效" in r.error
+
+    empty_uuid = FIXTURE.replace("GPU-aaa, NVIDIA H800", ", NVIDIA H800")
+    r = parse_probe("hx", empty_uuid)
+    assert not r.ok and "无效" in r.error
+
+
+def test_remote_numeric_and_string_bounds_reject_whole_round():
+    over_util = FIXTURE.replace("NVIDIA H800, 100, 40", "NVIDIA H800, 101, 40", 1)
+    assert not parse_probe("hx", over_util).ok
+
+    long_hostname = FIXTURE.replace("node-test", "n" * 257)
+    assert not parse_probe("hx", long_hostname).ok
+
+    long_username = FIXTURE.replace("12345 alice python", f"12345 {'u' * 257} python")
+    assert not parse_probe("hx", long_username).ok
+
+
+def test_gpu_process_and_line_count_limits(monkeypatch):
+    monkeypatch.setattr(parse_module, "MAX_GPUS_PER_HOST", 1)
+    r = parse_probe("hx", FIXTURE)
+    assert not r.ok and "GPU 数" in r.error
+
+    monkeypatch.setattr(parse_module, "MAX_GPUS_PER_HOST", 1024)
+    monkeypatch.setattr(parse_module, "MAX_PROCESSES_PER_HOST", 0)
+    r = parse_probe("hx", FIXTURE)
+    assert not r.ok and "进程数" in r.error
+
+    monkeypatch.setattr(parse_module, "MAX_PROBE_LINES", 5)
+    r = parse_probe("hx", FIXTURE)
+    assert not r.ok and "行数" in r.error

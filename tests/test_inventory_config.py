@@ -5,9 +5,23 @@
 """
 from __future__ import annotations
 
-import pytest
+import tomllib
+from pathlib import Path
 
-from gpumon.models import PALETTES, BadgeCfg, CapacityGroupCfg, ClusterCfg, Defaults, HostCfg, Inventory
+import pytest
+import yaml
+from pydantic import ValidationError
+
+from gpumon.models import (
+    PALETTES,
+    BadgeCfg,
+    CapacityGroupCfg,
+    ClusterCfg,
+    Defaults,
+    HostCfg,
+    Inventory,
+    Settings,
+)
 
 
 def _host(key: str) -> HostCfg:
@@ -134,11 +148,10 @@ def test_library_reference_and_inline_can_mix():
         ["ROCm", "自建", "液冷"]
 
 
-def test_configured_by_is_gone():
-    """configured_by 已移除：老配置里残留这个字段不该被静默当成标签。"""
-    c = ClusterCfg.model_validate({"key": "c1", "name": "c1", "configured_by": "运维组"})
-    assert not hasattr(c, "configured_by")
-    assert c.resolved_badges() == []
+def test_configured_by_is_rejected_by_model():
+    """即使绕过 YAML 专用迁移提示，模型本身也不能吞掉旧字段。"""
+    with pytest.raises(ValidationError, match="configured_by"):
+        ClusterCfg.model_validate({"key": "c1", "name": "c1", "configured_by": "运维组"})
 
 
 def test_stale_configured_by_in_yaml_is_rejected():
@@ -203,14 +216,8 @@ def test_duplicate_library_key_rejected():
 
 
 def test_unknown_palette_rejected():
-    from gpumon.config import _validate_unique_keys
-
-    inv = Inventory(
-        capacity_groups=[CapacityGroupCfg(key="g", name="g", palette="chartreuse")],
-        clusters=[ClusterCfg(key="c1", name="c1", capacity_group="g", hosts=[_host("h1")])],
-    )
-    with pytest.raises(ValueError, match="不是内置色带"):
-        _validate_unique_keys(inv)
+    with pytest.raises(ValidationError, match="palette"):
+        CapacityGroupCfg(key="g", name="g", palette="chartreuse")
 
 
 def test_typo_in_declared_group_still_rejected():
@@ -223,3 +230,89 @@ def test_typo_in_declared_group_still_rejected():
     )
     with pytest.raises(ValueError, match="不存在的算力域"):
         _validate_unique_keys(inv)
+
+
+# ---------------------------------------------------------------------------
+# 严格配置边界：拼写错误、危险 SSH 位置参数和无意义数值必须在启动前失败。
+# ---------------------------------------------------------------------------
+def test_unknown_nested_config_field_is_rejected():
+    with pytest.raises(ValidationError, match="poll_intervl_s"):
+        Settings.model_validate({"collector": {"poll_intervl_s": 30}})
+
+    with pytest.raises(ValidationError, match="unexpected"):
+        Inventory.model_validate({
+            "clusters": [{
+                "key": "c1",
+                "name": "c1",
+                "hosts": [{
+                    "key": "h1",
+                    "ssh_alias": "host-1",
+                    "display_name": "H1",
+                    "unexpected": True,
+                }],
+            }],
+        })
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"collector": {"poll_interval_s": 0}},
+        {"collector": {"max_concurrency": 0}},
+        {"retention": {"raw_days": -1}},
+        {"web": {"port": 70_000}},
+        {"backup": {"keep_count": 0}},
+        {"backup": {"hour": 99}},
+    ],
+)
+def test_invalid_settings_ranges_are_rejected(data):
+    with pytest.raises(ValidationError):
+        Settings.model_validate(data)
+
+
+def test_inventory_enums_and_identifiers_are_strict():
+    with pytest.raises(ValidationError, match="ssh_alias"):
+        HostCfg(key="h1", ssh_alias="-oProxyCommand=bad", display_name="H1")
+    with pytest.raises(ValidationError, match="key"):
+        HostCfg(key="", ssh_alias="host-1", display_name="H1")
+    with pytest.raises(ValidationError, match="gpu_count"):
+        HostCfg(key="h1", ssh_alias="host-1", display_name="H1", gpu_count=-1)
+    with pytest.raises(ValidationError, match="status"):
+        HostCfg(key="h1", ssh_alias="host-1", display_name="H1", status="online")
+    with pytest.raises(ValidationError, match="vendor"):
+        HostCfg(key="h1", ssh_alias="host-1", display_name="H1", vendor="intel")
+    with pytest.raises(ValidationError, match="tone"):
+        BadgeCfg(text="bad", tone="red")
+
+
+def test_public_example_configs_pass_strict_models():
+    root = Path(__file__).resolve().parents[1]
+    inventory_data = yaml.safe_load(
+        (root / "config" / "inventory.example.yaml").read_text(encoding="utf-8")
+    )
+    settings_data = tomllib.loads(
+        (root / "config" / "settings.example.toml").read_text(encoding="utf-8")
+    )
+
+    inv = Inventory.model_validate(inventory_data)
+    Settings.model_validate(settings_data)
+    from gpumon.config import _validate_unique_keys
+    _validate_unique_keys(inv)
+
+
+def test_load_settings_requires_real_settings_file(tmp_path, monkeypatch):
+    """example 只能用于复制，生产/开发启动都不能把它静默当成真实配置。"""
+    from gpumon import config
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "settings.example.toml").write_text(
+        "[web]\nport = 9999\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    config.load_settings.cache_clear()
+    try:
+        with pytest.raises(FileNotFoundError, match="settings.toml"):
+            config.load_settings()
+    finally:
+        config.load_settings.cache_clear()

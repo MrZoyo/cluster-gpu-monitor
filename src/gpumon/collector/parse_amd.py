@@ -19,7 +19,7 @@ import json
 import re
 from typing import Any
 
-from ..models import GpuSample, ProcSample
+from ..models import MAX_GPUS_PER_HOST, MAX_PROCESSES_PER_HOST, GpuSample, ProcSample
 
 _NA = {"", "n/a", "na", "none", "null", "[n/a]", "[not supported]", "unknown"}
 
@@ -203,6 +203,8 @@ def parse_amdsmi(host_key: str, static: Any, metric: Any, process: Any) -> tuple
     gpus: list[GpuSample] = []
     st_list = static if isinstance(static, list) else ([static] if static else [])
     me_list = metric if isinstance(metric, list) else ([metric] if metric else [])
+    if len(st_list) > MAX_GPUS_PER_HOST or len(me_list) > MAX_GPUS_PER_HOST:
+        raise ValueError("AMD GPU 数超过单机上限")
 
     # 以 metric 为主表（每卡一条），static 按 gpu index 对齐补型号/uuid
     st_by_idx = {_gpu_index(e, i): e for i, e in enumerate(st_list)}
@@ -249,6 +251,8 @@ def _parse_amdsmi_process(process: Any, gpus: list[GpuSample]) -> list[ProcSampl
     if not process:
         return out
     entries = process if isinstance(process, list) else [process]
+    if len(entries) > MAX_GPUS_PER_HOST:
+        raise ValueError("AMD 进程分组数超过单机 GPU 上限")
     uuid_by_idx = {g.index: g.uuid for g in gpus}
     for i, entry in enumerate(entries):
         idx = _gpu_index(entry, i)
@@ -260,7 +264,11 @@ def _parse_amdsmi_process(process: Any, gpus: list[GpuSample]) -> list[ProcSampl
             continue
         if isinstance(plist, dict):
             plist = [plist]
+        if not isinstance(plist, list):
+            continue
         for p in plist:
+            if len(out) >= MAX_PROCESSES_PER_HOST:
+                raise ValueError("AMD GPU 进程数超过单机上限")
             # 有的版本再包一层 {"process_info": {...}}
             info = p.get("process_info") if isinstance(p, dict) and "process_info" in p else p
             pid = _num(_find(info, ("pid", "process_id")))
@@ -291,7 +299,12 @@ def parse_rocmsmi(host_key: str, data: Any, pids: Any,
         m = re.search(r"(\d+)", k)
         return int(m.group(1)) if m else 0
 
-    for key in sorted((k for k in data if str(k).lower().startswith("card")), key=card_no):
+    card_keys = sorted(
+        (k for k in data if str(k).lower().startswith("card")), key=card_no
+    )
+    if len(card_keys) > MAX_GPUS_PER_HOST:
+        raise ValueError("ROCm GPU 数超过单机上限")
+    for key in card_keys:
         entry = data[key]
         if not isinstance(entry, dict):
             continue
@@ -352,6 +365,8 @@ def _parse_rocmsmi_pids(pids: Any, pidgpus_lines: list[str] | None,
         idxs = [int(x) for x in re.findall(r"\b(\d+)\b", ln[m.end():])]
         if idxs:
             pid2gpus[pid] = idxs
+            if len(pid2gpus) > MAX_PROCESSES_PER_HOST:
+                raise ValueError("ROCm PID 映射数超过单机上限")
 
     # 收集 pid 与其显存占用
     collected: dict[int, tuple[str | None, Any]] = {}
@@ -370,6 +385,8 @@ def _parse_rocmsmi_pids(pids: Any, pidgpus_lines: list[str] | None,
                         (lambda n: str(n).strip() if n else None)(_find(v, ("process name", "name"))),
                         _find(v, ("vram used", "memory used", "vram_used")),
                     )
+            if len(collected) > MAX_PROCESSES_PER_HOST:
+                raise ValueError("ROCm GPU 进程数超过单机上限")
 
     single = gpus[0].uuid if len(gpus) == 1 else None
     for pid, (comm, mem) in collected.items():
@@ -378,9 +395,13 @@ def _parse_rocmsmi_pids(pids: Any, pidgpus_lines: list[str] | None,
             for gi in targets:
                 uuid = uuid_by_idx.get(gi)
                 if uuid:
+                    if len(out) >= MAX_PROCESSES_PER_HOST:
+                        raise ValueError("ROCm GPU 进程数超过单机上限")
                     out.append(ProcSample(gpu_uuid=uuid, pid=pid, username=None,
                                           comm=comm, mem_used_mib=_to_mib(mem)))
         elif single:
+            if len(out) >= MAX_PROCESSES_PER_HOST:
+                raise ValueError("ROCm GPU 进程数超过单机上限")
             out.append(ProcSample(gpu_uuid=single, pid=pid, username=None,
                                   comm=comm, mem_used_mib=_to_mib(mem)))
         # 多卡且无映射 → 跳过，见 docstring

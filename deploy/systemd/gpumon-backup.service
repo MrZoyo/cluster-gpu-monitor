@@ -1,13 +1,20 @@
 [Unit]
-Description=gpumon database backup (daily at 4am)
+Description=gpumon database backup
 After=gpumon-collector.service
 
 [Service]
 Type=oneshot
-User=gpumon
-WorkingDirectory=/opt/gpu-monitor
-Environment="GPUMON_ROOT=/opt/gpu-monitor"
-ExecStart=/opt/gpu-monitor/.venv/bin/gpumon backup
-
-[Install]
-WantedBy=multi-user.target
+User=__USER__
+WorkingDirectory=__ROOT__/current
+Environment=GPUMON_ROOT=__ROOT__
+ExecStart=__ROOT__/current/.venv/bin/gpumon backup --scheduled
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ReadWritePaths=__ROOT__/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
