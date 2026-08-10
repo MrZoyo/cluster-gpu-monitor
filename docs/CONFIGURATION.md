@@ -100,9 +100,8 @@ clusters:
     name: "A 集群"            # 显示名，随时可改
     sort_order: 1
     capacity_group: own       # 引用上面的域 key；留空 = 兜底域
-    status: active            # active / planned / retired
-    note: "备注，显示在集群条下方"
-    jump: bastion-a           # 仅元数据，记录该集群走哪个跳板，不参与逻辑
+    status: active            # active（默认） / planned / retired
+    note: "备注，仅在 status: planned 时显示（网页悬停 tooltip）"
     badges: [...]             # 见下节
     hosts: [...]
 ```
@@ -162,18 +161,42 @@ clusters:
         ssh_alias: my-node-1           # ~/.ssh/config 里的别名
         display_name: "节点 1"         # 显示名，随时可改
         gpu_count: 8                   # 期望卡数，缺省取 defaults
-        status: active                 # active / planned / retired
-        vendor: amd                    # 可选，留空=自动探测
-        note: "备注"
+        status: active                 # active（默认） / planned / retired
+        vendor: amd                    # 可选，留空=自动探测（nvidia-smi → rocm-smi）
+        note: "备注，仅在 status: planned 时显示（网页悬停 tooltip）"
         meta:
           gpu_model: "AMD Instinct MI300X"   # 待接入占位卡上显示的型号
 ```
+
+**必填字段**：`key`、`ssh_alias`、`display_name`。其余都有默认值。
 
 `key` 和 `ssh_alias` 的分工很关键：
 
 - **`key` 是历史的锚点**，库里所有采样都挂在它上面，**永远不要改**。
 - **`ssh_alias` 是怎么连上去**，可以随时改。换部署机、加跳板、改 IP，
   只改 ssh config 和这个字段，`key` 不动 → **历史曲线连续不断**。
+
+**跨网段 / 内网机器怎么接**：在部署机的 `~/.ssh/config` 里用 `ProxyJump` 声明跳板，
+`inventory.yaml` 只写内网机器的别名。采集器执行 `ssh <别名>` 时 ssh 会自动走跳板。
+
+```sshconfig
+# ~/.ssh/config（部署机上，采集器用户的配置）
+Host my-bastion
+  HostName 1.2.3.4
+  User root
+
+Host my-node-1
+  HostName 10.0.1.100         # 内网地址
+  User ubuntu
+  ProxyJump my-bastion        # ← 真正的跳板声明在这里
+```
+
+然后 `inventory.yaml` 里直接写 `ssh_alias: my-node-1`，不需要额外字段。
+
+**`meta.gpu_model` 什么时候需要写**：只在 `status: planned` 待接入占位时需要——
+因为机器还连不上、采不到数据，占位卡要显示"8 张 NVIDIA H100"就得从 `meta` 读。
+正常在线机器的型号来自采集（`nvidia-smi -L` / `rocm-smi --showproductname`），
+存进数据库后就算 `meta` 没写、机器离线了，网页照样显示型号——只要它活着时被采集过至少一次。
 
 ### status 的三个值
 

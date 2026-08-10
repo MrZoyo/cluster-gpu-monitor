@@ -59,7 +59,6 @@ class ClusterCfg(BaseModel):
     capacity_group: str = ""
     status: str = "active"
     note: str | None = None
-    jump: str | None = None        # 仅元数据
     # 每项可以是标签库的 key（字符串，复用）或内联的完整定义
     badges: list[str | BadgeCfg] = Field(default_factory=list)
     hosts: list[HostCfg] = Field(default_factory=list)

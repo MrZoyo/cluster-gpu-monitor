@@ -37,7 +37,7 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
     for c in sorted(inv.clusters, key=lambda x: x.sort_order):
         gk = inv.group_key_of(c)
         group_name = group_names.get(gk, gk)
-        print(f"\n[{c.key}] {c.name}  ({group_name}, status={c.status}, jump={c.jump})")
+        print(f"\n[{c.key}] {c.name}  ({group_name}, status={c.status})")
         if c.note:
             print(f"  note: {c.note}")
         badges = c.resolved_badges()
