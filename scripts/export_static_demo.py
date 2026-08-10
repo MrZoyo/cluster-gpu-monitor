@@ -207,9 +207,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 _BANNER_HTML = """  <div class="demo-banner">
-    <b>演示站点</b>
-    <span>数据为虚构示例（算力域 / 集群 / 用户名均为编造），时间冻结于导出时刻。</span>
-    <a href="https://github.com/MrZoyo/cluster-gpu-monitor">源码与部署说明 →</a>
+    <b id="demo-banner-title">演示站点</b>
+    <span id="demo-banner-text">数据为虚构示例（算力域 / 集群 / 用户名均为编造），时间冻结于导出时刻。</span>
+    <a id="demo-banner-link" href="https://github.com/MrZoyo/cluster-gpu-monitor">源码与部署说明 →</a>
   </div>"""
 
 

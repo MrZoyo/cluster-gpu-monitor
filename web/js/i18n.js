@@ -167,6 +167,11 @@ window.I18n = {
       'ranking_detail_collapsed': '明细 · 按算力域 / 集群汇总（GPU·小时）',
       'ranking_collapsed_note': '机器较多（{n} 台），已按集群合并列以免横向溢出；点右上角可展开到单机。',
       'ranking_other': '其他',
+
+      // Demo Banner
+      'demo_banner_title': '演示站点',
+      'demo_banner_text': '数据为虚构示例（算力域 / 集群 / 用户名均为编造），时间冻结于导出时刻。',
+      'demo_banner_link': '源码与部署说明 →',
     },
 
     en: {
@@ -333,6 +338,11 @@ window.I18n = {
       'ranking_detail_collapsed': 'Detail · Aggregated by Capacity / Cluster (GPU·hours)',
       'ranking_collapsed_note': 'Many machines ({n} hosts), collapsed by cluster to avoid overflow. Click button above to expand to per-host.',
       'ranking_other': 'Other',
+
+      // Demo Banner
+      'demo_banner_title': 'Demo Site',
+      'demo_banner_text': 'Data is fictitious (capacity groups / clusters / usernames are made up), time frozen at export.',
+      'demo_banner_link': 'Source & Deployment Guide →',
     }
   },
 
@@ -354,6 +364,7 @@ window.I18n = {
       if (GM.buildLangSwitch) GM.buildLangSwitch();
       if (GM.buildThemeSwitch) GM.buildThemeSwitch();
       if (GM.buildWinSwitch) GM.buildWinSwitch();
+      if (GM.updateDemoBanner) GM.updateDemoBanner();
       // 更新 navRank 文字
       const navRankText = document.getElementById("navRankText");
       if (navRankText) navRankText.textContent = this.t('user_ranking');

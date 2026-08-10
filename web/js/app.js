@@ -56,6 +56,15 @@ window.GM = (function () {
   function onResize(chart) { charts.push(chart); }
   function disposeCharts() { charts.forEach((c) => { try { c.dispose(); } catch (e) {} }); charts = []; }
 
+  function updateDemoBanner() {
+    const title = document.getElementById("demo-banner-title");
+    const text = document.getElementById("demo-banner-text");
+    const link = document.getElementById("demo-banner-link");
+    if (title) title.textContent = I18n.t('demo_banner_title');
+    if (text) text.textContent = I18n.t('demo_banner_text');
+    if (link) link.textContent = I18n.t('demo_banner_link');
+  }
+
   function applyTheme() {
     document.body.dataset.theme = state.theme === "light" ? "light" : "dark";
   }
@@ -177,6 +186,7 @@ window.GM = (function () {
     buildLangSwitch();
     buildThemeSwitch();
     buildWinSwitch();
+    updateDemoBanner();
     // 设置 navRank 文字
     document.getElementById("navRankText").textContent = I18n.t('user_ranking');
     window.addEventListener("hashchange", render);
@@ -189,7 +199,7 @@ window.GM = (function () {
     setInterval(pollHealth, 15000);
   }
 
-  return { state, go, crumb, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, render, init };
+  return { state, go, crumb, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, updateDemoBanner, init };
 })();
 
 document.addEventListener("DOMContentLoaded", GM.init);
