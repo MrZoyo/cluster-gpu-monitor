@@ -56,6 +56,11 @@ def pick_table(window_seconds: int) -> tuple[str, int]:
     return "rollup_gpu_1h", 3600
 
 
+def current_sample_max_age_s() -> int:
+    """实时视图允许的最大样本年龄；至少容忍四轮采集或两分钟。"""
+    return max(120, load_settings().collector.poll_interval_s * 4)
+
+
 class Store:
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else db_path()
@@ -244,18 +249,13 @@ class Store:
                 if row is not None:
                     hosts[hid] = dict(row)
 
-            # 进程：同一卡在最后一个 ts 上可能有多个 pid，故先取该卡的 MAX(ts)（同样走
-            # 主键尾部 seek）再取该 ts 的全部行，语义与旧 GROUP BY 版完全一致。
+            # 进程必须属于该卡最新 GPU 样本的同一轮。没有进程的轮次不会写 sample_proc；
+            # 若独立取 sample_proc 的 MAX(ts)，任务退出后就会把上一轮进程永久当成当前进程。
             procs_by_gpu: dict[int, list] = {}
-            for gid in gpu_ids:
-                mt = conn.execute(
-                    "SELECT ts FROM sample_proc WHERE gpu_id=? ORDER BY ts DESC LIMIT 1", (gid,)
-                ).fetchone()
-                if mt is None:
-                    continue
+            for gid, gpu_sample in gpus.items():
                 rows = conn.execute(
                     "SELECT gpu_id, pid, username, comm, mem_used_mib FROM sample_proc "
-                    "WHERE gpu_id=? AND ts=?", (gid, mt[0])
+                    "WHERE gpu_id=? AND ts=?", (gid, gpu_sample["ts"])
                 ).fetchall()
                 if rows:
                     procs_by_gpu[gid] = [dict(r) for r in rows]
@@ -406,24 +406,32 @@ class Store:
         win = WINDOWS.get(window, WINDOWS["24h"])
         since = now - win
         interval = load_settings().collector.poll_interval_s
-        # 每条 proc 样本 ≈ 占用 interval 秒的「1 卡」；gpu_hours = 样本数 * interval / 3600
+        # 同一用户可能在同一卡同一轮出现多个 PID；GPU·小时按用户/卡/轮次去重。
+        # 不同用户共享同一卡时仍各计完整时长，是否分摊属于独立的产品口径。
         order = "gpu_hours DESC" if by == "gpu_hours" else "mem_gb_peak DESC"
         join = filt = ""
-        params: list = [interval, since, now]
+        params: list = [since, now]
         if cluster_key:    # 按集群过滤（集群视图用）
             join = ("JOIN gpu_card g ON g.id=p.gpu_id JOIN host h ON h.id=g.host_id "
                     "JOIN cluster c ON c.id=h.cluster_id")
             filt = "AND c.key = ?"
             params.append(cluster_key)
-        params.append(limit)
+        params.extend([interval, limit])
         sql = f"""
-            SELECT p.username AS username,
+            WITH occupied AS (
+                SELECT p.username AS username, p.gpu_id AS gpu_id, p.ts AS ts,
+                       MAX(p.mem_used_mib) AS mem_used_mib
+                FROM sample_proc p {join}
+                WHERE p.ts >= ? AND p.ts < ? AND p.username IS NOT NULL
+                      AND p.mem_used_mib > 0 {filt}
+                GROUP BY p.username, p.gpu_id, p.ts
+            )
+            SELECT username,
                    COUNT(*) * ? / 3600.0 AS gpu_hours,
-                   COUNT(DISTINCT p.gpu_id) AS distinct_gpus,
-                   MAX(p.mem_used_mib)/1024.0 AS mem_gb_peak
-            FROM sample_proc p {join}
-            WHERE p.ts >= ? AND p.ts < ? AND p.username IS NOT NULL {filt}
-            GROUP BY p.username ORDER BY {order} LIMIT ?
+                   COUNT(DISTINCT gpu_id) AS distinct_gpus,
+                   MAX(mem_used_mib)/1024.0 AS mem_gb_peak
+            FROM occupied
+            GROUP BY username ORDER BY {order} LIMIT ?
         """
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -431,11 +439,19 @@ class Store:
                  "distinct_gpus": r["distinct_gpus"], "mem_gb_peak": round(r["mem_gb_peak"] or 0, 1)}
                 for r in rows]
 
-    def get_users_current(self, now: int | None = None) -> list[dict]:
+    def get_users_current(self, now: int | None = None,
+                          freshness_s: int | None = None) -> list[dict]:
+        now = int(now or time.time())
+        freshness_s = freshness_s if freshness_s is not None else current_sample_max_age_s()
         snap = self.get_snapshot()
         agg: dict[str, dict] = {}
         for gpu_id, procs in snap["procs"].items():
+            gpu_sample = snap["gpus"].get(gpu_id)
+            if gpu_sample is None or now - gpu_sample["ts"] > freshness_s:
+                continue
             for p in procs:
+                if (p["mem_used_mib"] or 0) <= 0:
+                    continue
                 u = p["username"] or "?"
                 a = agg.setdefault(u, {"username": u, "gpus": set(), "mem_mib": 0})
                 a["gpus"].add(gpu_id)
@@ -453,17 +469,24 @@ class Store:
         since = now - win
         interval = load_settings().collector.poll_interval_s
         sql = """
-            SELECT p.username AS username, h.key AS host_key,
+            WITH occupied AS (
+                SELECT p.username AS username, p.gpu_id AS gpu_id, p.ts AS ts,
+                       h.id AS host_id, h.key AS host_key
+                FROM sample_proc p
+                JOIN gpu_card g ON g.id=p.gpu_id
+                JOIN host h ON h.id=g.host_id
+                WHERE p.ts >= ? AND p.ts < ? AND p.username IS NOT NULL
+                      AND p.mem_used_mib > 0
+                GROUP BY p.username, p.gpu_id, p.ts, h.id, h.key
+            )
+            SELECT username, host_key,
                    COUNT(*) * ? / 3600.0 AS gpu_hours,
-                   COUNT(DISTINCT p.gpu_id) AS distinct_gpus
-            FROM sample_proc p
-            JOIN gpu_card g ON g.id=p.gpu_id
-            JOIN host h ON h.id=g.host_id
-            WHERE p.ts >= ? AND p.ts < ? AND p.username IS NOT NULL
-            GROUP BY p.username, h.id
+                   COUNT(DISTINCT gpu_id) AS distinct_gpus
+            FROM occupied
+            GROUP BY username, host_id, host_key
         """
         with self.connect() as conn:
-            rows = conn.execute(sql, (interval, since, now)).fetchall()
+            rows = conn.execute(sql, (since, now, interval)).fetchall()
             machines = [{"key": r["key"], "name": r["display_name"], "cluster_key": r["cluster_key"]}
                         for r in conn.execute(
                             """SELECT h.key, h.display_name, c.key as cluster_key

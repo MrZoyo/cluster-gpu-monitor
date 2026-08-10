@@ -38,6 +38,7 @@ jobs:
       - name: Syntax-check frontend JS
         run: |
           for f in web/js/*.js; do node --check "$f"; done
+          node tests/frontend_security.js
 
       - name: Shell script syntax
         run: |

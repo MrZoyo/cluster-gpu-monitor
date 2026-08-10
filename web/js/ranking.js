@@ -2,7 +2,7 @@
 // 配色按算力域分色系（色带由 inventory 的 capacity_groups[].palette 指定），同集群内用相近色（拉明度）。
 window.Views = window.Views || {};
 window.Views.ranking = (function () {
-  const { el, Palette } = UI;
+  const { el, escapeHtml, Palette } = UI;
 
   // 依 topology 生成有序机器列 + 每台机器颜色 + 算力域分组信息。
   // 配色统一走 UI.Palette（与总览/cluster 页同一套家族色逻辑）。
@@ -94,6 +94,7 @@ window.Views.ranking = (function () {
   // 变成 32 行（其中大半是 0），高过屏幕。这里只留有占用的机器、降序、最多 10 行，
   // 其余折成一行合计。
   const TOOLTIP_ROWS = 10;
+  const TOOLTIP_COLOR = /^(?:#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%+-]+\))$/i;
 
   function rankTooltip(params) {
     if (!params || !params.length) return "";
@@ -106,17 +107,22 @@ window.Views.ranking = (function () {
       }))
       .sort((a, b) => b.v - a.v);
     const total = items.reduce((a, x) => a + x.v, 0);
-    const head = `<b>${params[0].axisValueLabel || params[0].name}</b>` +
-      `<span style="float:right;margin-left:16px">${total.toFixed(1)} ${I18n.t('ranking_gpu_hours')}</span>`;
-    if (!items.length) return head + "<br/>" + I18n.t('ranking_no_usage');
+    const label = escapeHtml(params[0].axisValueLabel || params[0].name);
+    const unit = escapeHtml(I18n.t('ranking_gpu_hours'));
+    const head = `<b>${label}</b>` +
+      `<span style="float:right;margin-left:16px">${total.toFixed(1)} ${unit}</span>`;
+    if (!items.length) return head + "<br/>" + escapeHtml(I18n.t('ranking_no_usage'));
 
-    const dot = (c) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
+    const dot = (color) => {
+      const safeColor = TOOLTIP_COLOR.test(String(color || "")) ? String(color) : "currentColor";
+      return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${safeColor};margin-right:6px"></span>`;
+    };
     const rows = items.slice(0, TOOLTIP_ROWS).map((x) =>
-      `${dot(x.color)}${x.name}<span style="float:right;margin-left:16px">${x.v.toFixed(1)}</span>`);
+      `${dot(x.color)}${escapeHtml(x.name)}<span style="float:right;margin-left:16px">${x.v.toFixed(1)}</span>`);
     const rest = items.slice(TOOLTIP_ROWS);
     if (rest.length) {
       const sum = rest.reduce((a, x) => a + x.v, 0);
-      rows.push(`<span style="opacity:.7">${I18n.t('ranking_others_sum', { n: rest.length })}` +
+      rows.push(`<span style="opacity:.7">${escapeHtml(I18n.t('ranking_others_sum', { n: rest.length }))}` +
         `<span style="float:right;margin-left:16px">${sum.toFixed(1)}</span></span>`);
     }
     return head + "<br/>" + rows.join("<br/>");

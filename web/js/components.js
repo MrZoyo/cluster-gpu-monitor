@@ -17,6 +17,11 @@ window.UI = (function () {
   const fmtGB = (mib) => (mib == null ? "—" : (mib / 1024).toFixed(0) + "G");
   const clusterVar = (i) => `var(--c${i % 6})`;
 
+  function escapeHtml(value) {
+    const escaped = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+    return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => escaped[char]);
+  }
+
   // ── 全站配色体系 ─────────────────────────────────────────────
   // 两类颜色，目标不同、策略相反：
   //  1) 身份/归属色（Palette.*）：表达"这是哪个算力域/集群/机器"。
@@ -321,5 +326,5 @@ window.UI = (function () {
     return el("span", { class: "badge-row" }, kids);
   }
 
-  return { utilColor, fmtPct, fmtGB, clusterVar, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
+  return { utilColor, fmtPct, fmtGB, clusterVar, escapeHtml, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
 })();

@@ -10,7 +10,7 @@ import time
 from fastapi import APIRouter, Query
 
 from ..config import load_inventory, load_settings
-from ..db.store import WINDOWS
+from ..db.store import WINDOWS, current_sample_max_age_s
 from .deps import get_store, mask_username, valid_window
 
 router = APIRouter(prefix="/api")
@@ -177,6 +177,7 @@ def overview(window: str = Query("24h")):
     avg_by_gpu = {a["gpu_id"]: a for a in avg_list}
     recent_by_gpu = store.get_util_recent(now=now)   # 卡片大字/底色用的近期(10min)平滑值
     status_by_host = {s["key"]: s for s in store.get_collector_status(now=now)}
+    sample_max_age_s = current_sample_max_age_s()
 
     util_now_vals, util_avg_vals = [], []
     cards_total = cards_busy = 0
@@ -194,9 +195,11 @@ def overview(window: str = Query("24h")):
                 # 主机离线时，快照里的最后一条样本已陈旧，不能当作实时值下发。
                 # 否则会误导"卡还在被占用"，并污染下面的当前均值/满载数/热点榜。
                 now_row = snap["gpus"].get(gid) if host_online else None
+                if now_row and now - now_row["ts"] > sample_max_age_s:
+                    now_row = None
                 util_now = now_row["util_gpu"] if now_row else None
                 # 近期(10min)平滑值：卡片大字/底色的实际显示值；离线同 now 一样置空。
-                util_recent = recent_by_gpu.get(gid) if host_online else None
+                util_recent = recent_by_gpu.get(gid) if now_row else None
                 a = avg_by_gpu.get(gid, {})
                 # 使用人同样来自快照，离线时一并置空，避免离线卡仍显示"使用人"。
                 # 只保留真正占用了显存的进程：used_memory 为 N/A(None) 或 <=0 的进程
@@ -204,7 +207,7 @@ def overview(window: str = Query("24h")):
                 users = [
                     {"username": mask_username(p["username"]), "comm": p["comm"],
                      "mem_used_mib": p["mem_used_mib"]}
-                    for p in (snap["procs"].get(gid, []) if host_online else [])
+                    for p in (snap["procs"].get(gid, []) if now_row else [])
                     if (p["mem_used_mib"] or 0) > 0
                 ]
                 cards_total += 1

@@ -97,7 +97,11 @@ window.GM = (function () {
     try {
       await Views[route.view].render(root, route.params);
     } catch (e) {
-      root.innerHTML = `<div class="panel"><h3>${I18n.t('load_failed')}</h3><div class="note">${e.message}</div></div>`;
+      root.innerHTML = "";
+      root.appendChild(UI.el("div", { class: "panel" }, [
+        UI.el("h3", {}, [I18n.t('load_failed')]),
+        UI.el("div", { class: "note" }, [e && e.message ? e.message : String(e)]),
+      ]));
       console.error(e);
     }
     scheduleRefresh(route.view);
