@@ -30,8 +30,21 @@ window.I18n = {
 
       // KPI 指标
       'instant_util': '瞬时利用率',
+      'instant_util_short': '瞬时',
       'window_avg': '{window} 平均',
+      'window_avg_short': '窗口均值',
+      'recent_util_10min': '近期利用率(10分钟)',
       'accumulating': '积累中',
+      'data_accumulating': '积累中',
+      'memory': '显存',
+      'temperature': '温度',
+      'power': '功耗',
+      'coverage': '覆盖 {pct}%',
+      'usage_idle': '空闲',
+      'usage_held': '空占显存：{names}',
+      'usage_active': '使用人：{names}',
+      'unknown_user': '未知',
+      'and_n_more': '等 {n} 人',
       'gpu_busy_discovered': 'GPU 在用 / 已发现',
       'coverage_hint': '接入覆盖 {discovered} / {expected}',
       'online_hosts': '在线主机',
@@ -64,12 +77,12 @@ window.I18n = {
 
       // 主机行
       'host_system_info': 'CPU {cpu} · load {load} · 内存 {mem_used}/{mem_total}',
-      'host_planned_info': '{gpu_model} · 规划 {count} 卡',
+      'host_planned_info': '{gpu_model} · 规划 {count} GPU',
       'no_system_data': '无系统数据',
-      'cards_seen': '{seen}/{expected} 卡',
+      'cards_seen': '{seen}/{expected} GPU',
 
       // 集群视图
-      'cluster_index_machines': '{n} 集群 · {m} 卡',
+      'cluster_index_machines': '{n} 集群 · {m} GPU',
       'view_cluster_detail': '查看 {name} 详情页（各主机卡阵 · 利用率时序 · 使用人 Top）',
 
       // 算力域
@@ -92,7 +105,7 @@ window.I18n = {
       'health_online': '在线 {online}/{total} · 数据 {time}',
       'health_host_online': '在线',
       'health_host_offline': '离线',
-      'health_cards': '{seen}/{expected}卡',
+      'health_cards': '{seen}/{expected} GPU',
 
       // 集群视图
       'cluster_not_found': '未找到集群',
@@ -116,7 +129,7 @@ window.I18n = {
       'host_gpu_util_chart': '各卡 GPU 利用率 · 近 {window}',
       'host_current_users_title': '当前使用人',
       'host_no_processes': '当前无 GPU 进程',
-      'table_card': '卡',
+      'table_card': 'GPU',
       'table_user': '使用人',
       'table_process': '进程',
       'table_memory': '显存',
@@ -183,8 +196,21 @@ window.I18n = {
 
       // KPI Metrics
       'instant_util': 'Instant Util',
+      'instant_util_short': 'Instant',
       'window_avg': '{window} Avg',
+      'window_avg_short': 'Window Avg',
+      'recent_util_10min': 'Recent Util (10min)',
       'accumulating': 'Accumulating',
+      'data_accumulating': 'Accumulating',
+      'memory': 'Memory',
+      'temperature': 'Temperature',
+      'power': 'Power',
+      'coverage': 'Coverage {pct}%',
+      'usage_idle': 'Idle',
+      'usage_held': 'Memory held: {names}',
+      'usage_active': 'Users: {names}',
+      'unknown_user': 'Unknown',
+      'and_n_more': '+ {n} more',
       'gpu_busy_discovered': 'GPU Busy / Discovered',
       'coverage_hint': 'Coverage {discovered} / {expected}',
       'online_hosts': 'Online Hosts',
@@ -217,12 +243,12 @@ window.I18n = {
 
       // Host Row
       'host_system_info': 'CPU {cpu} · load {load} · Memory {mem_used}/{mem_total}',
-      'host_planned_info': '{gpu_model} · Planned {count} cards',
+      'host_planned_info': '{gpu_model} · Planned {count} GPUs',
       'no_system_data': 'No System Data',
-      'cards_seen': '{seen}/{expected} cards',
+      'cards_seen': '{seen}/{expected} GPUs',
 
       // Cluster View
-      'cluster_index_machines': '{n} clusters · {m} cards',
+      'cluster_index_machines': '{n} clusters · {m} GPUs',
       'view_cluster_detail': 'View {name} details (host arrays · utilization trends · top users)',
 
       // Capacity Domain
@@ -245,7 +271,7 @@ window.I18n = {
       'health_online': 'Online {online}/{total} · Data {time}',
       'health_host_online': 'online',
       'health_host_offline': 'offline',
-      'health_cards': '{seen}/{expected} cards',
+      'health_cards': '{seen}/{expected} GPUs',
 
       // Cluster View
       'cluster_not_found': 'Cluster Not Found',
@@ -264,12 +290,12 @@ window.I18n = {
       'host_status': 'Status',
       'host_offline_n': 'Offline ({n} fails)',
       'host_last_error': 'Last error: ',
-      'host_gpu_title': 'GPUs (click for per-card trends)',
+      'host_gpu_title': 'GPUs (click for per-GPU trends)',
       'host_planned_note': 'This device is reserved. Data collection will start once SSH/root access is ready.',
-      'host_gpu_util_chart': 'Per-Card GPU Util · Last {window}',
+      'host_gpu_util_chart': 'Per-GPU GPU Util · Last {window}',
       'host_current_users_title': 'Current Users',
       'host_no_processes': 'No GPU processes currently',
-      'table_card': 'Card',
+      'table_card': 'GPU',
       'table_user': 'User',
       'table_process': 'Process',
       'table_memory': 'Memory',
