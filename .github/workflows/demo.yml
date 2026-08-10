@@ -54,6 +54,7 @@ jobs:
         run: |
           uv run python scripts/export_static_demo.py \
             --db data/demo.db --inventory config/inventory.demo.yaml \
+            --settings config/settings.example.toml \
             --out dist/demo --force
 
       - name: Report size

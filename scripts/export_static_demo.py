@@ -19,6 +19,7 @@ import argparse
 import json
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
         description="把演示库导出为可直接托管的静态站点（GitHub Pages 等）")
     ap.add_argument("--db", required=True, help="演示数据库（gen_demo_db.py 产出）")
     ap.add_argument("--inventory", required=True, help="配套 inventory YAML")
+    ap.add_argument(
+        "--settings",
+        default=str(_ROOT / "config" / "settings.example.toml"),
+        help="配套 settings TOML（默认使用公开示例配置）",
+    )
     ap.add_argument("--out", default="dist/demo", help="输出目录")
     ap.add_argument("--force", action="store_true", help="清空已存在的输出目录")
     args = ap.parse_args(argv)
@@ -67,17 +73,22 @@ def main(argv: list[str] | None = None) -> int:
 
     db = Path(args.db).resolve()
     inv = Path(args.inventory).resolve()
+    settings = Path(args.settings).resolve()
 
     cfg.load_inventory.cache_clear()
     cfg.load_settings.cache_clear()
-    _orig_inv = cfg.load_inventory.__wrapped__
-
     def _inv():
         import yaml
         from gpumon.models import Inventory
         return Inventory.model_validate(yaml.safe_load(inv.read_text(encoding="utf-8")))
 
+    def _settings():
+        from gpumon.models import Settings
+        with settings.open("rb") as handle:
+            return Settings.model_validate(tomllib.load(handle))
+
     cfg.load_inventory = _inv                      # type: ignore[assignment]
+    cfg.load_settings = _settings                  # type: ignore[assignment]
     cfg.db_path = lambda: db                       # type: ignore[assignment]
 
     # routes/deps 在 import 时就绑定了 config 的名字，故要在改完之后再 import
@@ -104,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import gpumon.api.routes as routes
     routes.load_inventory = _inv                   # type: ignore[assignment]
+    routes.load_settings = _settings               # type: ignore[assignment]
     routes.get_store = lambda: store               # type: ignore[assignment]
 
     written: list[tuple[str, int]] = []

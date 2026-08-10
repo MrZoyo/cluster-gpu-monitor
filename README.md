@@ -134,7 +134,8 @@ uv run gpumon web
 
 # 或者导出成静态站点，随便什么静态服务器都能托管
 uv run python scripts/export_static_demo.py \
-    --db data/demo.db --inventory config/inventory.demo.yaml --out dist/demo
+    --db data/demo.db --inventory config/inventory.demo.yaml \
+    --settings config/settings.example.toml --out dist/demo
 cd dist/demo && python3 -m http.server 8080
 ```
 
