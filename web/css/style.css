@@ -222,7 +222,7 @@ a { color: var(--accent); text-decoration: none; }
   font-weight: 700;
 }
 .navlink { display: flex; align-items: center; gap: 6px; }
-.navlink-icon { width: 14px; height: 14px; opacity: 0.85; }
+.navlink-icon { width: 14px; height: 14px; opacity: 0.85; filter: invert(1); }
 .topbar-icon { width: 14px; height: 14px; opacity: 0.7; filter: invert(1); }
 .lang-switch { position: relative; }
 .lang-btn {

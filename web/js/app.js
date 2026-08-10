@@ -178,7 +178,7 @@ window.GM = (function () {
     setInterval(pollHealth, 15000);
   }
 
-  return { state, go, crumb, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, init };
+  return { state, go, crumb, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, render, init };
 })();
 
 document.addEventListener("DOMContentLoaded", GM.init);
