@@ -158,6 +158,7 @@ git -C "$SRC" archive "$COMMIT" \
   | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
 sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
 sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
 sudo chmod -R a-w "$ROOT/releases/$COMMIT"
 
 sudo cp -n "$ROOT/releases/$COMMIT/config/inventory.example.yaml" "$ROOT/config/inventory.yaml"
@@ -787,7 +788,6 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
-
 
 
 

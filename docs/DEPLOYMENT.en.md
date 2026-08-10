@@ -148,6 +148,7 @@ git -C "$SRC" archive "$COMMIT" \
   | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
 sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
 sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
 sudo chmod -R a-w "$ROOT/releases/$COMMIT"
 sudo cp -n "$ROOT/releases/$COMMIT/config/inventory.example.yaml" "$ROOT/config/inventory.yaml"
 sudo cp -n "$ROOT/releases/$COMMIT/config/settings.example.toml" "$ROOT/config/settings.toml"
