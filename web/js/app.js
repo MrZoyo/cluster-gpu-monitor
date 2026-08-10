@@ -109,7 +109,12 @@ window.GM = (function () {
     state.meta.windows.forEach((w) => {
       const b = UI.el("button", {
         class: w === state.window ? "active" : "",
-        onclick: () => { state.window = w; buildWinSwitch(); render(); },
+        onclick: () => {
+          state.window = w;
+          localStorage.setItem("gpumon.window", w);
+          buildWinSwitch();
+          render();
+        },
       }, [w]);
       box.appendChild(b);
     });
@@ -162,7 +167,13 @@ window.GM = (function () {
     try { state.meta = await API.meta(); } catch (e) {}
     // 把"算力域 → 色带"映射交给 Palette，之后所有身份色都按 inventory 配置走
     UI.Palette.setGroups(state.meta.capacity_groups);
-    if (!state.meta.windows.includes(state.window)) state.window = state.meta.windows[1] || state.meta.windows[0];
+    // 恢复保存的时间窗，默认 24h
+    const savedWindow = localStorage.getItem("gpumon.window");
+    if (savedWindow && state.meta.windows.includes(savedWindow)) {
+      state.window = savedWindow;
+    } else if (!state.meta.windows.includes(state.window)) {
+      state.window = state.meta.windows[1] || state.meta.windows[0];
+    }
     buildLangSwitch();
     buildThemeSwitch();
     buildWinSwitch();
