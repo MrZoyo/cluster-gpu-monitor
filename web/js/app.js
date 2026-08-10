@@ -6,6 +6,53 @@ window.GM = (function () {
 
   function go(path) { location.hash = "#" + path; }
   function crumb(text) { document.getElementById("crumb").textContent = text; }
+
+  function buildLangSwitch() {
+    const box = document.getElementById("langSwitch");
+    if (!box) return;
+    box.innerHTML = "";
+    const btn = UI.el("button", {
+      class: "lang-btn",
+      title: I18n.getLocale() === 'zh' ? '切换语言 / Switch Language' : 'Switch Language / 切换语言',
+      onclick: () => {
+        const dropdown = box.querySelector(".lang-dropdown");
+        if (dropdown) {
+          dropdown.remove();
+        } else {
+          showLangDropdown(box);
+        }
+      },
+    }, []);
+    const icon = document.createElement("img");
+    icon.src = "/icons/globe.svg";
+    icon.className = "topbar-icon";
+    btn.appendChild(icon);
+    box.appendChild(btn);
+  }
+
+  function showLangDropdown(container) {
+    const dropdown = UI.el("div", { class: "lang-dropdown" }, [
+      UI.el("div", {
+        class: "lang-option" + (I18n.getLocale() === 'zh' ? ' active' : ''),
+        onclick: () => { I18n.setLocale('zh'); dropdown.remove(); },
+      }, ["中文"]),
+      UI.el("div", {
+        class: "lang-option" + (I18n.getLocale() === 'en' ? ' active' : ''),
+        onclick: () => { I18n.setLocale('en'); dropdown.remove(); },
+      }, ["English"]),
+    ]);
+    container.appendChild(dropdown);
+    // 点击外部关闭
+    setTimeout(() => {
+      const close = (e) => {
+        if (!container.contains(e.target)) {
+          dropdown.remove();
+          document.removeEventListener("click", close);
+        }
+      };
+      document.addEventListener("click", close);
+    }, 0);
+  }
   function onResize(chart) { charts.push(chart); }
   function disposeCharts() { charts.forEach((c) => { try { c.dispose(); } catch (e) {} }); charts = []; }
 
@@ -41,7 +88,7 @@ window.GM = (function () {
     try {
       await Views[route.view].render(root, route.params);
     } catch (e) {
-      root.innerHTML = `<div class="panel"><h3>加载失败</h3><div class="note">${e.message}</div></div>`;
+      root.innerHTML = `<div class="panel"><h3>${I18n.t('load_failed')}</h3><div class="note">${e.message}</div></div>`;
       console.error(e);
     }
     scheduleRefresh(route.view);
@@ -72,11 +119,16 @@ window.GM = (function () {
     const box = document.getElementById("themeSwitch");
     if (!box) return;
     box.innerHTML = "";
-    [["dark", "夜间"], ["light", "日间"]].forEach(([key, label]) => {
+    [["dark", "moon.svg"], ["light", "sun.svg"]].forEach(([key, icon]) => {
       const b = UI.el("button", {
         class: key === state.theme ? "active" : "",
+        title: I18n.t('theme_' + key),
         onclick: () => setTheme(key),
-      }, [label]);
+      }, []);
+      const img = document.createElement("img");
+      img.src = "/icons/" + icon;
+      img.className = "topbar-icon";
+      b.appendChild(img);
       box.appendChild(b);
     });
   }
@@ -94,24 +146,28 @@ window.GM = (function () {
       if (online === 0 || age == null) cls = "red";
       else if (online < total || (age != null && age > 90)) cls = "yellow";
       dot.className = "dot " + cls;
-      txt.textContent = `在线 ${online}/${total} · 数据 ${UI.ago(hl.last_sample_ts)}`;
+      txt.textContent = I18n.t('health_online', {online, total, time: UI.ago(hl.last_sample_ts)});
       dot.parentElement.title = activeHosts.map((h) =>
-        `${h.display_name}: ${h.online ? "在线" : "离线"} ${h.gpus_seen ?? 0}/${h.gpus_expected}卡` +
+        `${h.display_name}: ${h.online ? I18n.t('health_host_online') : I18n.t('health_host_offline')} ${I18n.t('health_cards', {seen: h.gpus_seen ?? 0, expected: h.gpus_expected})}` +
         (h.last_error ? " (" + h.last_error + ")" : "")).join("\n");
     } catch (e) {
-      dot.className = "dot red"; txt.textContent = "服务不可达";
+      dot.className = "dot red"; txt.textContent = I18n.t('service_unreachable');
     }
   }
 
   async function init() {
+    I18n.init();
     state.theme = localStorage.getItem("gpumon.theme") === "light" ? "light" : "dark";
     applyTheme();
     try { state.meta = await API.meta(); } catch (e) {}
     // 把"算力域 → 色带"映射交给 Palette，之后所有身份色都按 inventory 配置走
     UI.Palette.setGroups(state.meta.capacity_groups);
     if (!state.meta.windows.includes(state.window)) state.window = state.meta.windows[1] || state.meta.windows[0];
+    buildLangSwitch();
     buildThemeSwitch();
     buildWinSwitch();
+    // 设置 navRank 文字
+    document.getElementById("navRankText").textContent = I18n.t('user_ranking');
     window.addEventListener("hashchange", render);
     window.addEventListener("resize", () => charts.forEach((c) => { try { c.resize(); } catch (e) {} }));
     document.getElementById("title").onclick = () => go("/");
@@ -122,7 +178,7 @@ window.GM = (function () {
     setInterval(pollHealth, 15000);
   }
 
-  return { state, go, crumb, onResize, init };
+  return { state, go, crumb, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, init };
 })();
 
 document.addEventListener("DOMContentLoaded", GM.init);

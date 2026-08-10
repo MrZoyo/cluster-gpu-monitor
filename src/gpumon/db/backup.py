@@ -1,8 +1,8 @@
 """数据库自动备份。
 
 职责：
-- 每天凌晨 4 点备份数据库
-- 最多保留 3 个备份（最多恢复到 3 天前）
+- 每天指定时间备份数据库（默认凌晨 4 点）
+- 保留指定数量的备份（默认 3 个）
 - 使用 SQLite backup API（在线备份，不阻塞写入）
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from ..config import db_path
+from ..config import db_path, load_settings
 
 
 def backup_dir() -> Path:
@@ -52,8 +52,13 @@ def list_backups() -> list[Path]:
     return backups
 
 
-def prune_old_backups(keep: int = 3) -> list[Path]:
-    """删除超过 keep 数量的旧备份，返回被删除的文件列表。"""
+def prune_old_backups(keep: int | None = None) -> list[Path]:
+    """删除超过 keep 数量的旧备份，返回被删除的文件列表。
+
+    keep 为 None 时从配置读取，默认 3。
+    """
+    if keep is None:
+        keep = load_settings().backup.keep_count
     backups = list_backups()
     to_delete = backups[keep:]
     for f in to_delete:
@@ -61,8 +66,11 @@ def prune_old_backups(keep: int = 3) -> list[Path]:
     return to_delete
 
 
-def backup_and_prune(keep: int = 3) -> tuple[Path, list[Path]]:
-    """备份 + 清理旧备份，返回 (新备份路径, 被删除的备份列表)。"""
+def backup_and_prune(keep: int | None = None) -> tuple[Path, list[Path]]:
+    """备份 + 清理旧备份，返回 (新备份路径, 被删除的备份列表)。
+
+    keep 为 None 时从配置读取，默认 3。
+    """
     new_backup = backup_now()
     deleted = prune_old_backups(keep)
     return new_backup, deleted

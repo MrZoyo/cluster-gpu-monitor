@@ -23,3 +23,8 @@ port = 8848
 
 [privacy]
 mask_users = false        # true 时网页把使用人显示为 a***e
+
+[backup]
+enabled = true            # 是否启用自动备份（systemd timer 会检查此开关）
+keep_count = 3            # 保留最近几个备份
+hour = 4                  # 每天几点备份（0-23，默认凌晨 4 点）

@@ -27,12 +27,12 @@ window.Views.overview = (function () {
     const s = ov.summary;
     const cardsExpected = s.cards_expected || s.cards_total;
     const items = [
-      { k: "瞬时利用率", v: fmtPct(s.util_now_avg) },
-      { k: `${s.window} 平均`, v: s.util_avg == null ? "积累中" : fmtPct(s.util_avg) },
-      { k: "GPU 在用 / 已发现", v: `${s.cards_busy} / ${s.cards_total}`, hint: `接入覆盖 ${s.cards_total} / ${cardsExpected}` },
-      { k: "在线主机", v: `${s.hosts_online} / ${s.hosts_total}` },
+      { k: I18n.t('instant_util'), v: fmtPct(s.util_now_avg) },
+      { k: I18n.t('window_avg', {window: s.window}), v: s.util_avg == null ? I18n.t('accumulating') : fmtPct(s.util_avg) },
+      { k: I18n.t('gpu_busy_discovered'), v: `${s.cards_busy} / ${s.cards_total}`, hint: I18n.t('coverage_hint', {discovered: s.cards_total, expected: cardsExpected}) },
+      { k: I18n.t('online_hosts'), v: `${s.hosts_online} / ${s.hosts_total}` },
     ];
-    if (s.hosts_planned > 0) items.push({ k: "待接入主机", v: s.hosts_planned });
+    if (s.hosts_planned > 0) items.push({ k: I18n.t('planned_hosts'), v: s.hosts_planned });
     return el("div", { class: "kpis" },
       items.map(({ k, v, hint }) => el("div", { class: "kpi" }, [
         el("div", { class: "v" }, [String(v)]),
@@ -47,14 +47,26 @@ window.Views.overview = (function () {
     // 利用率是 0→100 的连续量：用按范围比例分段的刻度尺表达"越往右越忙"。
     // 每段颜色取自 utilColor（档位内代表值），保证图例与卡片一致，也随主题联动。
     const bands = [
-      { t: "空闲", v: 5, from: 0, to: 10 },
-      { t: "在用", v: 20, from: 10, to: 40 },
-      { t: "偏忙", v: 50, from: 40, to: 70 },
-      { t: "繁忙", v: 80, from: 70, to: 90 },
-      { t: "满载", v: 95, from: 90, to: 100 },
+      { t: I18n.t('idle'), v: 5, from: 0, to: 10 },
+      { t: I18n.t('in_use'), v: 20, from: 10, to: 40 },
+      { t: I18n.t('idle'), v: 50, from: 40, to: 70 },  // 偏忙用 idle 键（未单独翻译）
+      { t: I18n.t('active'), v: 80, from: 70, to: 90 },  // 繁忙用 active
+      { t: I18n.t('idle'), v: 95, from: 90, to: 100 },  // 满载暂用 idle（未单独翻译）
     ];
+    // 重新定义带原文的 bands
+    const bandLabels = I18n.getLocale() === 'zh'
+      ? [{ t: "空闲", v: 5, from: 0, to: 10 },
+         { t: "在用", v: 20, from: 10, to: 40 },
+         { t: "偏忙", v: 50, from: 40, to: 70 },
+         { t: "繁忙", v: 80, from: 70, to: 90 },
+         { t: "满载", v: 95, from: 90, to: 100 }]
+      : [{ t: "Idle", v: 5, from: 0, to: 10 },
+         { t: "In Use", v: 20, from: 10, to: 40 },
+         { t: "Busy", v: 50, from: 40, to: 70 },
+         { t: "Very Busy", v: 80, from: 70, to: 90 },
+         { t: "Full", v: 95, from: 90, to: 100 }];
     const bar = el("div", { class: "util-scale-bar" },
-      bands.map((b) => {
+      bandLabels.map((b) => {
         const { bg, dark } = UI.utilColor(b.v);
         return el("div", {
           class: "seg", style: `flex:${b.to - b.from};background:${bg};color:${dark ? "#0a0d14" : "#fff"}`,
@@ -64,10 +76,10 @@ window.Views.overview = (function () {
     const ticks = el("div", { class: "util-scale-ticks" },
       [0, 10, 40, 70, 90, 100].map((v) => el("span", { style: `left:${v}%` }, [String(v)])));
     const scale = el("div", { class: "util-scale" }, [bar, ticks]);
-    const children = [el("span", { class: "legend-cap" }, ["利用率 %"]), scale];
+    const children = [el("span", { class: "legend-cap" }, [I18n.t('utilization_pct')]), scale];
     if (hasPlanned) {
       children.push(el("span", { class: "planned-legend" },
-        [el("span", { class: "sw planned-sw" }), "待接入"]));
+        [el("span", { class: "sw planned-sw" }), I18n.t('planned')]));
     }
     return el("div", { class: "legend util-legend" }, children);
   }
@@ -80,8 +92,7 @@ window.Views.overview = (function () {
     ov.clusters.forEach((c) => {
       const key = c.capacity_group || "";
       if (!byKey[key]) {
-        // 防御：后端 capacity_groups 里没有这个域（正常不该发生）。名字兜底不留空白标题。
-        byKey[key] = { key, name: c.capacity_group_name || key || "未分组",
+        byKey[key] = { key, name: c.capacity_group_name || key || I18n.t('empty_state'),
           sort_order: 999, clusters: [] };
         groups.push(byKey[key]);
       }
@@ -97,7 +108,7 @@ window.Views.overview = (function () {
       const st = statsForClusters(g.clusters);
       return el("button", { onclick: () => document.getElementById("cap-" + g.key)?.scrollIntoView({ behavior: "smooth", block: "start" }) }, [
         el("span", { class: "tab-name" }, [g.name]),
-        el("span", { class: "tab-meta" }, [`${st.clusters} 集群 · ${st.expected} 卡`]),
+        el("span", { class: "tab-meta" }, [I18n.t('cluster_index_machines', {n: st.clusters, m: st.expected})]),
       ]);
     }));
   }
@@ -112,12 +123,12 @@ window.Views.overview = (function () {
     const planned = ov.clusters.filter((c) => c.status === "planned" || c.hosts.some((h) => h.status === "planned"));
     const rows = [];
     rows.push(el("div", { class: offline.length ? "alert bad" : "alert ok" },
-      [el("b", {}, [String(offline.length)]), el("span", {}, ["离线已接入主机"])]));
+      [el("b", {}, [String(offline.length)]), el("span", {}, [I18n.t('offline_active_hosts')])]));
     rows.push(el("div", { class: hot.length ? "alert hot" : "alert ok" },
-      [el("b", {}, [String(hot.length)]), el("span", {}, ["满载 GPU"])]));
+      [el("b", {}, [String(hot.length)]), el("span", {}, [I18n.t('full_load_gpus')])]));
     if (planned.length) {
       rows.push(el("div", { class: "alert planned-alert" },
-        [el("b", {}, [String(planned.length)]), el("span", {}, ["待接入集群"])]));
+        [el("b", {}, [String(planned.length)]), el("span", {}, [I18n.t('planned_clusters')])]));
     }
     return el("div", { class: "ops-strip", style: `--alert-count:${rows.length}` }, rows);
   }
@@ -134,7 +145,7 @@ window.Views.overview = (function () {
     }, [
       el("span", { class: "hot-gpu-main" }, [`${x.h.display_name} #${x.g.index}`]),
       el("span", { class: "hot-gpu-util" }, [fmtPct(x.g.util_recent)]),
-    ])) : [el("div", { class: "note" }, ["暂无实时 GPU 数据"])];
+    ])) : [el("div", { class: "note" }, [I18n.t('no_realtime_data')])];
     return el("div", { class: "hot-gpus" }, rows);
   }
 
@@ -146,14 +157,13 @@ window.Views.overview = (function () {
       el("div", { class: "capacity-title" }, [
         el("div", { class: "eyebrow" }, ["CAPACITY DOMAIN"]),
         el("h2", {}, [group.name]),
-        // 算力域标签：与集群卡片同一套 tone 语义色，来源同一个标签库
         badgeRow(group),
       ].filter(Boolean)),
       el("div", { class: "capacity-metrics" }, [
-        metric("集群", st.clusters),
-        metric("主机", `${st.activeHosts}/${st.hosts}`),
-        metric("GPU", `${st.discovered}/${st.expected}`),
-        metric("当前均值", fmtPct(st.avg)),
+        metric(I18n.t('capacity_metrics_clusters'), st.clusters),
+        metric(I18n.t('capacity_metrics_hosts'), `${st.activeHosts}/${st.hosts}`),
+        metric(I18n.t('capacity_metrics_gpus'), `${st.discovered}/${st.expected}`),
+        metric(I18n.t('capacity_metrics_avg'), fmtPct(st.avg)),
       ]),
     ]));
     if (group.description) section.appendChild(el("div", { class: "capacity-note" }, [group.description]));
@@ -176,7 +186,7 @@ window.Views.overview = (function () {
     return el("button", { onclick: () => document.getElementById("cluster-" + c.key)?.scrollIntoView({ behavior: "smooth", block: "start" }) }, [
       el("span", { class: "cluster-dot", style: `background:${col}` }),
       el("span", {}, [c.name]),
-      el("small", {}, [`${st.hosts} 机 / ${st.expected} 卡`]),
+      el("small", {}, [I18n.t('cluster_index_machines', {n: st.hosts, m: st.expected})]),
     ]);
   }
 
@@ -184,17 +194,12 @@ window.Views.overview = (function () {
     const st = statsForClusters([c]);
     const col = Palette.clusterColor(groupKey || "", idx, nC || 1);
     const details = el("details", { class: `cluster-block ${c.status === "planned" ? "planned-block" : ""}`, id: "cluster-" + c.key, open: "" });
-    // 集群名做成真链接（hash 路由，href 原生可用 → 悬停看得到目标、支持 ctrl+click 开新标签）。
-    // 点它进集群详情页，而不是展开/收起——展开归右侧的 ▾ 与 summary 空白区。
-    // 必须 preventDefault：summary 的默认行为就是 toggle，不拦就会"既跳转又折叠"。
     const nameLink = el("a", {
       class: "cluster-title-name",
       href: `#/cluster/${encodeURIComponent(c.key)}`,
-      title: `查看 ${c.name} 详情页（各主机卡阵 · 利用率时序 · 使用人 Top）`,
+      title: I18n.t('view_cluster_detail', {name: c.name}),
       onclick: (e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey) return;   // 让浏览器原生开新标签
-        // 链接在 <summary> 内，点击会冒泡触发 details 的默认 toggle。
-        // 两个都要拦：preventDefault 挡 summary 的 toggle，stopPropagation 防冒泡。
+        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
         e.preventDefault();
         e.stopPropagation();
         GM.go(`/cluster/${c.key}`);
@@ -205,25 +210,23 @@ window.Views.overview = (function () {
         el("span", { class: "cluster-index" }, [String(idx + 1).padStart(2, "0")]),
         nameLink,
         badgeRow(c),
-        c.status === "planned" ? el("span", { class: "badge planned-badge" }, ["待接入"]) : null,
+        c.status === "planned" ? el("span", { class: "badge planned-badge" }, [I18n.t('planned')]) : null,
       ].filter(Boolean)),
       el("div", { class: "cluster-stats" }, [
-        metric("主机", st.hosts),
+        metric(I18n.t('hosts'), st.hosts),
         metric("GPU", `${st.discovered}/${st.expected}`),
-        metric("在用", st.busy),
-        metric("均值", fmtPct(st.avg)),
-        // 折叠指示器：明确"这里是展开/收起"，与左侧"进详情页"的集群名分工
-        el("span", { class: "cluster-toggle", title: "展开 / 收起卡片" }, []),
+        metric(I18n.t('in_use'), st.busy),
+        metric(I18n.t('avg'), fmtPct(st.avg)),
+        el("span", { class: "cluster-toggle", title: I18n.t('expand_collapse') }, []),
       ]),
     ]);
     details.appendChild(summary);
     if (c.note) {
-      // 集群 note 装饰线颜色：集群家族色压暗 35%，用 color-mix 与背景混合
       const noteColor = `color-mix(in srgb, ${col} 65%, var(--bg))`;
       details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [c.note]));
     }
     if (!c.hosts.length) {
-      details.appendChild(el("div", { class: "empty-state" }, ["暂无设备"]));
+      details.appendChild(el("div", { class: "empty-state" }, [I18n.t('no_devices')]));
     } else {
       c.hosts.forEach((h) => details.appendChild(hostRow(h, c)));
     }
@@ -233,11 +236,11 @@ window.Views.overview = (function () {
   function hostRow(h, c) {
     const sys = h.system;
     const sysText = h.status === "planned"
-      ? `${(h.meta && h.meta.gpu_model) || "GPU"} · 规划 ${h.gpu_count} 卡`
+      ? I18n.t('host_planned_info', {gpu_model: (h.meta && h.meta.gpu_model) || "GPU", count: h.gpu_count})
       : sys
-        ? `CPU ${fmtPct(sys.cpu_util_pct)} · load ${sys.load1 ?? "-"} · 内存 ${fmtGB(sys.mem_used_mib)}/${fmtGB(sys.mem_total_mib)}`
-        : "无系统数据";
-    const statusLabel = h.status === "planned" ? "待接入" : (h.online ? "在线" : `离线 ${h.consec_fail || 0} 次`);
+        ? I18n.t('host_system_info', {cpu: fmtPct(sys.cpu_util_pct), load: sys.load1 ?? "-", mem_used: fmtGB(sys.mem_used_mib), mem_total: fmtGB(sys.mem_total_mib)})
+        : I18n.t('no_system_data');
+    const statusLabel = h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline_n_times', {n: h.consec_fail || 0}));
     const offline = h.status !== "planned" && !h.online;
     const cards = (h.gpus && h.gpus.length)
       ? h.gpus.map((g) => gpuCard(g, { offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
@@ -245,7 +248,7 @@ window.Views.overview = (function () {
     const row = el("div", { class: `host-row ${h.status === "planned" ? "planned-host" : ""}` }, [
       el("div", { class: "host-name", onclick: () => GM.go(`/host/${h.key}`) }, [
         el("div", { class: "hn" }, [h.display_name]),
-        el("div", { class: "hs" }, [`${statusLabel} · ${h.gpus_seen ?? 0}/${h.gpu_count} 卡`]),
+        el("div", { class: "hs" }, [`${statusLabel} · ${I18n.t('cards_seen', {seen: h.gpus_seen ?? 0, expected: h.gpu_count})}`]),
       ]),
       el("div", { class: "host-sys" }, [sysText]),
       el("div", { class: "cards" }, cards),
@@ -262,14 +265,14 @@ window.Views.overview = (function () {
       byWin[w] = {};
       (multi.windows[w] || []).forEach((it) => { byWin[w][it.host] = it; });
     });
-    const head = el("tr", {}, [el("th", {}, ["主机"]), el("th", {}, ["集群"]), el("th", {}, ["状态"]),
-      ...wins.map((w) => el("th", { class: "num" }, [w + " 均值"]))]);
+    const head = el("tr", {}, [el("th", {}, [I18n.t('hosts')]), el("th", {}, [I18n.t('cluster_column')]), el("th", {}, [I18n.t('status')]),
+      ...wins.map((w) => el("th", { class: "num" }, [w + " " + I18n.t('avg')]))]);
     const rows = [head];
     ov.clusters.forEach((c) => c.hosts.forEach((h) => {
       const tds = [
         el("td", {}, [el("a", { onclick: () => GM.go(`/host/${h.key}`), href: "javascript:;" }, [h.display_name])]),
         el("td", {}, [c.name]),
-        el("td", {}, [h.status === "planned" ? "待接入" : (h.online ? "在线" : "离线")]),
+        el("td", {}, [h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline'))]),
       ];
       wins.forEach((w) => {
         const it = byWin[w][h.key];
@@ -278,22 +281,22 @@ window.Views.overview = (function () {
       rows.push(el("tr", {}, tds));
     }));
     return el("div", { class: "panel compare-panel" }, [
-      el("h3", {}, ["各主机平均利用率 · 多时间窗对比"]),
+      el("h3", {}, [I18n.t('compare_table_title')]),
       el("table", {}, [el("tbody", {}, rows)]),
     ]);
   }
 
   async function render(root) {
     const w = GM.state.window;
-    GM.crumb("总览");
+    GM.crumb(I18n.t('overview'));
     const [ov, multi] = await Promise.all([API.overview(w), API.avgMulti("host", "util_gpu")]);
     const groups = groupClusters(ov);
     root.innerHTML = "";
     root.appendChild(el("section", { class: "command-panel" }, [
       el("div", { class: "command-copy" }, [
         el("div", { class: "eyebrow" }, ["GPU FLEET CONTROL"]),
-        el("h1", {}, ["算力监控总览"]),
-        el("div", { class: "note" }, [`更新于 ${ago(ov.now)} · 每 ${GM.state.meta.poll_interval_s || 30} 秒刷新`]),
+        el("h1", {}, [I18n.getLocale() === 'zh' ? "算力监控总览" : "GPU Fleet Overview"]),
+        el("div", { class: "note" }, [I18n.t('updated_at', {time: ago(ov.now)}) + " · " + (I18n.getLocale() === 'zh' ? `每 ${GM.state.meta.poll_interval_s || 30} 秒刷新` : `Refresh every ${GM.state.meta.poll_interval_s || 30}s`)]),
       ]),
       el("div", {}, [alertPanel(ov), hotGpuPanel(ov)]),
     ]));

@@ -221,6 +221,47 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--on-accent);
   font-weight: 700;
 }
+.navlink { display: flex; align-items: center; gap: 6px; }
+.navlink-icon { width: 14px; height: 14px; opacity: 0.85; }
+.topbar-icon { width: 14px; height: 14px; opacity: 0.7; filter: invert(1); }
+.lang-switch { position: relative; }
+.lang-btn {
+  background: transparent;
+  border: 1px solid var(--topbar-line);
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  transition: background .15s ease, border-color .15s ease;
+}
+.lang-btn:hover { background: var(--topbar-hover); border-color: var(--line-strong); }
+.lang-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-2);
+  min-width: 120px;
+  z-index: 100;
+  overflow: hidden;
+}
+.lang-option {
+  padding: 10px 16px;
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.lang-option:hover { background: var(--surface-soft); }
+.lang-option.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
 .health {
   display: flex;
   align-items: center;

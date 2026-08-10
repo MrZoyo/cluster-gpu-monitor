@@ -90,7 +90,7 @@ def _cmd_rollup_once(args: argparse.Namespace) -> int:
 def _cmd_backup(args: argparse.Namespace) -> int:
     from .db.backup import backup_and_prune, list_backups
 
-    new_backup, deleted = backup_and_prune(keep=3)
+    new_backup, deleted = backup_and_prune()  # 从配置读取 keep_count
     print(f"备份完成: {new_backup.name}  ({new_backup.stat().st_size / (1024*1024):.1f} MB)")
     if deleted:
         print(f"已删除 {len(deleted)} 个旧备份: {', '.join(f.name for f in deleted)}")

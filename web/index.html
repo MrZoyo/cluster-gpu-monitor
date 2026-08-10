@@ -11,10 +11,13 @@
     <span class="title" id="title">GPU Monitor</span>
     <span class="crumb" id="crumb">总览</span>
     <span class="spacer"></span>
-    <span class="navlink" id="navRank">用户排行</span>
-    <span class="topbar-label">外观：</span>
+    <span class="navlink" id="navRank">
+      <img src="/icons/rocket.svg" class="navlink-icon" alt="">
+      <span id="navRankText">用户排行</span>
+    </span>
+    <div class="lang-switch" id="langSwitch"></div>
     <div class="theme-switch" id="themeSwitch"></div>
-    <span class="topbar-label">时间窗：</span>
+    <img src="/icons/clock.svg" class="topbar-icon" alt="">
     <div class="win-switch" id="winSwitch"></div>
     <div class="health" title="">
       <span class="dot" id="hdot"></span>
@@ -24,6 +27,7 @@
   <div class="wrap"><div id="view"></div></div>
 
   <script src="/vendor/echarts.min.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/overview.js"></script>

@@ -189,12 +189,19 @@ class PrivacySettings(BaseModel):
     mask_users: bool = False
 
 
+class BackupSettings(BaseModel):
+    enabled: bool = True          # 是否启用自动备份
+    keep_count: int = 3           # 保留备份数量
+    hour: int = 4                 # 每天几点备份（0-23）
+
+
 class Settings(BaseModel):
     collector: CollectorSettings = Field(default_factory=CollectorSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     db: DbSettings = Field(default_factory=DbSettings)
     web: WebSettings = Field(default_factory=WebSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
+    backup: BackupSettings = Field(default_factory=BackupSettings)
 
 
 # ---------------------------------------------------------------------------

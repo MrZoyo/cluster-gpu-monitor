@@ -173,19 +173,19 @@ window.UI = (function () {
     const held = !offline && usageState(g) === "held";
     const cls = "card" + (bg == null ? " nodata" : "") +
       (offline ? " offline" : "") + (held ? " held" : "");
-    const nowText = offline ? "离线" : (util == null ? "—" : Math.round(util));
+    const nowText = offline ? I18n.t('offline') : (util == null ? "—" : Math.round(util));
     // 满载 100 是利用率唯一的 3 位数，18px 下会撞上左上角 #index 与右上角状态点 → 收窄一档。
     const nowCls = "now" + (String(nowText).length >= 3 ? " now-wide" : "");
     const node = el("div", {
       class: cls,
       style: bg ? `--util-color:${bg};--util-pct:${pct}%` : "",
-      title: offline ? `GPU #${g.index}${g.name ? " " + g.name : ""}\n主机离线，无实时数据` : tooltipFor(g),
+      title: offline ? I18n.t('gpu_offline', {index: g.index, name: g.name ? " " + g.name : ""}) : tooltipFor(g),
       onclick: () => opts.onClick && opts.onClick(g),
     }, [
       el("span", { class: "idx" }, ["#" + g.index]),
       el("span", { class: nowCls }, [nowText]),
-      held ? el("span", { class: "held-mark", title: "空占：占用显存但 GPU 空闲" }, []) : (bg ? el("span", { class: "signal" }) : null),
-      !offline && g.avg != null ? el("span", { class: "avg" }, ["均 " + Math.round(g.avg)]) : null,
+      held ? el("span", { class: "held-mark", title: I18n.t('held_tooltip') }, []) : (bg ? el("span", { class: "signal" }) : null),
+      !offline && g.avg != null ? el("span", { class: "avg" }, [I18n.t('avg') + " " + Math.round(g.avg)]) : null,
     ]);
     return node;
   }
@@ -193,11 +193,11 @@ window.UI = (function () {
   function gpuPlaceholder(index, label) {
     return el("div", {
       class: "card planned",
-      title: `${label || "待接入 GPU"} #${index}`,
+      title: `${label || I18n.t('planned_gpu')} #${index}`,
     }, [
       el("span", { class: "idx" }, ["#" + index]),
       el("span", { class: "now" }, ["--"]),
-      el("span", { class: "avg" }, ["planned"]),
+      el("span", { class: "avg" }, [I18n.t('planned')]),
     ]);
   }
 
@@ -208,26 +208,26 @@ window.UI = (function () {
   function tooltipFor(g) {
     const n = g.now || {};
     // 占显存的进程 ps 可能解析不到用户名（进程刚退出/无权限），显示"未知"而非留空；去重避免多个"未知"重复。
-    const uniq = [...new Set((g.users || []).map((u) => u.username || "未知"))];
+    const uniq = [...new Set((g.users || []).map((u) => u.username || I18n.t('unknown_user')))];
     const names = uniq.slice(0, MAX_TOOLTIP_USERS).join(", ") +
-      (uniq.length > MAX_TOOLTIP_USERS ? ` …等 ${uniq.length} 人` : "");
+      (uniq.length > MAX_TOOLTIP_USERS ? ` ${I18n.t('and_n_more', {n: uniq.length})}` : "");
     const state = usageState(g);
-    const usageLine = state === "idle" ? "空闲"
-      : (state === "held" ? `空占（占显存未计算）: ${names}` : `使用人: ${names}`);
+    const usageLine = state === "idle" ? I18n.t('usage_idle')
+      : (state === "held" ? I18n.t('usage_held', {names}) : I18n.t('usage_active', {names}));
     return [
       `GPU #${g.index} ${g.name || ""}`,
-      `近期利用率(10分): ${fmtPct(g.util_recent)}`,
-      `瞬时利用率: ${fmtPct(n.util_gpu)}`,
-      g.avg != null ? `窗口均值: ${Math.round(g.avg)}% (覆盖 ${Math.round((g.coverage || 0) * 100)}%)` : "窗口均值: 数据积累中",
-      `显存: ${fmtGB(n.mem_used_mib)}/${fmtGB(g.mem_total_mib)}`,
-      n.temp_c != null ? `温度: ${n.temp_c}℃  功耗: ${n.power_w != null ? Math.round(n.power_w) + "W" : "—"}` : "",
+      `${I18n.t('recent_util_10min')}: ${fmtPct(g.util_recent)}`,
+      `${I18n.t('instant_util_short')}: ${fmtPct(n.util_gpu)}`,
+      g.avg != null ? `${I18n.t('window_avg_short')}: ${Math.round(g.avg)}% (${I18n.t('coverage', {pct: Math.round((g.coverage || 0) * 100)})})` : `${I18n.t('window_avg_short')}: ${I18n.t('data_accumulating')}`,
+      `${I18n.t('memory')}: ${fmtGB(n.mem_used_mib)}/${fmtGB(g.mem_total_mib)}`,
+      n.temp_c != null ? `${I18n.t('temperature')}: ${n.temp_c}℃  ${I18n.t('power')}: ${n.power_w != null ? Math.round(n.power_w) + "W" : "—"}` : "",
       usageLine,
     ].filter(Boolean).join("\n");
   }
 
   // 表格单元格：带背景色条的数值
   function utilCell(v, cov) {
-    if (v == null) return el("td", { class: "num", title: "数据积累中" }, ["—"]);
+    if (v == null) return el("td", { class: "num", title: I18n.t('data_accumulating') }, ["—"]);
     const { bg } = utilColor(v);
     const txt = Math.round(v) + "%";
     const pct = Math.max(0, Math.min(100, Math.round(v)));
@@ -235,7 +235,7 @@ window.UI = (function () {
       class: "cellbar",
       style: `--util-color:${bg};--util-pct:${pct}%`,
     }, [txt]);
-    const td = el("td", { class: "num", title: cov != null ? `覆盖 ${Math.round(cov * 100)}%` : "" }, [span]);
+    const td = el("td", { class: "num", title: cov != null ? I18n.t('coverage', {pct: Math.round(cov * 100)}) : "" }, [span]);
     return td;
   }
 
@@ -278,12 +278,12 @@ window.UI = (function () {
   }
 
   function ago(ts) {
-    if (!ts) return "从未";
+    if (!ts) return I18n.t('never');
     const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
-    if (s < 60) return s + " 秒前";
-    if (s < 3600) return Math.floor(s / 60) + " 分钟前";
-    if (s < 86400) return Math.floor(s / 3600) + " 小时前";
-    return Math.floor(s / 86400) + " 天前";
+    if (s < 60) return I18n.t('ago_seconds', {n: s});
+    if (s < 3600) return I18n.t('ago_minutes', {n: Math.floor(s / 60)});
+    if (s < 86400) return I18n.t('ago_hours', {n: Math.floor(s / 3600)});
+    return I18n.t('ago_days', {n: Math.floor(s / 86400)});
   }
 
   // 自定义标签：由 inventory 的 badges[] 驱动，算力域与集群共用同一套渲染

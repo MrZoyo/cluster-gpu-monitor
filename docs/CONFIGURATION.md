@@ -256,7 +256,38 @@ port = 8848
 
 [privacy]
 mask_users = false          # true 时使用人显示成 a***e
+
+[backup]
+enabled = true              # 是否启用自动备份（systemd timer 会检查此开关）
+keep_count = 3              # 保留最近几个备份
+hour = 4                    # 每天几点备份（0-23，默认凌晨 4 点）
 ```
+
+### 备份配置
+
+数据库自动备份通过 systemd timer 实现，每天在指定时间运行一次。
+
+- `enabled`: 是否启用自动备份。设为 `false` 可以完全关闭自动备份。
+- `keep_count`: 保留最近几个备份文件。默认 3 个，即最多恢复到 3 天前。
+- `hour`: 每天几点备份（0-23）。默认 4 点（凌晨 4 点）。
+
+**修改备份时间后**，需要更新 systemd timer：
+
+```bash
+# 编辑 timer（OnCalendar 一行）
+sudo systemctl edit --full gpumon-backup.timer
+
+# 示例：改成每天早上 8 点
+# OnCalendar=*-*-* 08:00:00
+
+# 重新加载并重启 timer
+sudo systemctl daemon-reload
+sudo systemctl restart gpumon-backup.timer
+```
+
+或者直接在 `settings.toml` 里改 `hour`，备份脚本会读取该值（但 timer 的触发时间仍需手动改）。
+
+手动备份：`uv run gpumon backup`（立即备份一次，按 `keep_count` 清理旧备份）。
 
 ### 保留天数怎么定（有个坑）
 
