@@ -69,15 +69,15 @@ def test_more_domains_than_builtin_palettes_still_resolves():
     assert all(g.palette for g in groups)
 
 
-def test_badges_and_configured_by_compose():
-    """configured_by 合成的标签排在自定义 badges 之前，两种写法可共存。"""
-    c = ClusterCfg(key="c1", name="c1", configured_by="运维组",
-                   badges=[BadgeCfg(text="ROCm", tone="gold"),
+def test_inline_badges_keep_declared_order():
+    """内联标签按声明顺序原样输出，字段不被改写。"""
+    c = ClusterCfg(key="c1", name="c1",
+                   badges=[BadgeCfg(text="ROCm", tone="gold", mark="◆"),
                            BadgeCfg(text="IB", tone="green")])
     badges = c.resolved_badges()
-    assert [b.text for b in badges] == ["运维组 配置", "ROCm", "IB"]
+    assert [b.text for b in badges] == ["ROCm", "IB"]
     assert badges[0].mark == "◆"
-    assert badges[0].tone == "cyan"
+    assert badges[0].tone == "gold"
 
 
 def test_no_badges_yields_empty_list():
@@ -123,13 +123,39 @@ def test_same_badge_reused_across_domain_and_cluster():
 
 
 def test_library_reference_and_inline_can_mix():
+    """库引用与内联混写时，顺序按声明顺序，不因来源不同而重排。"""
     inv = _inv_with_library(
-        clusters=[ClusterCfg(key="c1", name="c1", configured_by="运维组",
-                             badges=["self-built", BadgeCfg(text="ROCm", tone="gold")],
+        clusters=[ClusterCfg(key="c1", name="c1",
+                             badges=[BadgeCfg(text="ROCm", tone="gold"),
+                                     "self-built", "liquid"],
                              hosts=[_host("h1")])],
     )
     assert [b.text for b in inv.cluster_badges(inv.clusters[0])] == \
-        ["运维组 配置", "自建", "ROCm"]
+        ["ROCm", "自建", "液冷"]
+
+
+def test_configured_by_is_gone():
+    """configured_by 已移除：老配置里残留这个字段不该被静默当成标签。"""
+    c = ClusterCfg.model_validate({"key": "c1", "name": "c1", "configured_by": "运维组"})
+    assert not hasattr(c, "configured_by")
+    assert c.resolved_badges() == []
+
+
+def test_stale_configured_by_in_yaml_is_rejected():
+    """老配置直接跑要报错并给出迁移写法，不能让那枚标签无声消失。"""
+    from gpumon.config import _reject_removed_fields
+
+    data = {"clusters": [{"key": "c1", "name": "c1", "configured_by": "运维组"}]}
+    with pytest.raises(ValueError, match="已移除的 configured_by"):
+        _reject_removed_fields(data)
+
+
+def test_clean_yaml_passes_removed_field_check():
+    from gpumon.config import _reject_removed_fields
+
+    _reject_removed_fields({"clusters": [{"key": "c1", "badges": ["x"]}]})
+    _reject_removed_fields({})
+    _reject_removed_fields({"clusters": None})
 
 
 def test_unknown_badge_reference_rejected():

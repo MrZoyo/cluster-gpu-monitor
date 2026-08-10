@@ -36,9 +36,31 @@ ROOT = find_root()
 def load_inventory() -> Inventory:
     path = ROOT / "config" / "inventory.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    _reject_removed_fields(data)
     inv = Inventory.model_validate(data)
     _validate_unique_keys(inv)
     return inv
+
+
+def _reject_removed_fields(data: dict) -> None:
+    """已删除的字段要显式报错，不能让 pydantic 静默忽略。
+
+    configured_by 在 v0.3.0 removed —— 它原本会自动合成一枚"◆ XX 配置"标签。
+    留着不管的话，升级后那枚标签会无声消失，用户只会觉得"网页少了个东西"。
+    """
+    stale = [c.get("key", "?") for c in (data or {}).get("clusters", []) or []
+             if isinstance(c, dict) and c.get("configured_by")]
+    if not stale:
+        return
+    raise ValueError(
+        f"集群 {stale} 还在用已移除的 configured_by。改成标签库引用：\n"
+        f"  badge_library:\n"
+        f"    - key: configured-by-xx\n"
+        f'      text: "XX 配置"\n'
+        f'      mark: "◆"\n'
+        f"      tone: cyan\n"
+        f'      tooltip: "由 XX 进行初始化配置"\n'
+        f"  然后在这些集群下写 badges: [configured-by-xx]")
 
 
 @lru_cache(maxsize=1)

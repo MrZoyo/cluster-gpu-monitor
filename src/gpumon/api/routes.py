@@ -44,7 +44,6 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
             "capacity_group_sort": groups[gk]["sort_order"],
             "status": c.status,
             "note": c.note,
-            "configured_by": c.configured_by,
             "badges": [b.model_dump() for b in inv.cluster_badges(c)],
         }
         for h in c.hosts:
@@ -71,7 +70,6 @@ def _orphan_cluster_meta() -> dict:
         "capacity_group_sort": 999,
         "status": "active",
         "note": None,
-        "configured_by": None,
         "badges": [],
     }
 

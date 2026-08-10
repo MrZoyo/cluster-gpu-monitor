@@ -28,7 +28,6 @@
 #               超过 3 枚会折叠成 "+N"，悬停展开
 #   badge_library  标签库：把「自建」「液冷」这类要在多处出现的标签定义一次，
 #               之后各处只写 key。改库里的文案/tooltip，所有引用处一起变。
-#   configured_by  兼容写法：等于加一枚 { mark: "◆", text: "<名字> 配置" } 标签
 #   meta        主机级自由元数据，透传到网页。约定字段：
 #                 gpu_model     卡型号，待接入占位卡上显示
 # ============================================================================
@@ -56,6 +55,11 @@ badge_library:
     text: "液冷"
     tone: violet
     tooltip: "水管走在天花板上，抬头请注意"
+  - key: configured-by-ops
+    text: "运维组 配置"
+    mark: "◆"
+    tone: cyan
+    tooltip: "由运维组进行初始化配置"
 
 # 算力域。palette 可选，指定该域的色系；留空则按 sort_order 自动轮转分配。
 # 内置色带：lime / violet / azure / amber / rose / teal / indigo / slate
@@ -99,13 +103,13 @@ clusters:
       - { key: b-1, ssh_alias: my-b-1, display_name: "B-1", vendor: amd,
           meta: { gpu_model: "AMD Instinct MI300X" } }
 
-  # configured_by 兼容示例：网页卡片会打"◆ <名字> 配置"标签
+  # "谁装的机"也是一枚普通标签：定义进库，各集群引用
   - key: cluster-c
     name: "C 集群（租用单机示例）"
     sort_order: 3
     capacity_group: rented
     jump: jump-c
-    configured_by: "运维组"
+    badges: [configured-by-ops]
     hosts:
       - { key: c-1, ssh_alias: my-c-1, display_name: "C-1", meta: { gpu_model: "NVIDIA H800" } }
 

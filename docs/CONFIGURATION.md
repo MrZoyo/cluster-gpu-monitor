@@ -72,6 +72,7 @@ capacity_groups:
     sort_order: 1             # 排序，小的在前
     palette: lime             # 可选：指定色系
     description: "自购自管"   # 可选：显示在域标题下
+    badges: [self-built]      # 可选：域级标签，见下面 badges 一节
 ```
 
 **palette 可以不写。** 不写就按 `sort_order` 从内置色带里轮转分配，
@@ -108,24 +109,50 @@ clusters:
 
 ### badges（自定义标签）
 
-挂在集群标题上的小胶囊，用来标注任何你想强调的属性：
+小胶囊标签，用来标注任何你想强调的属性。**算力域和集群都能挂**，写法完全一样
+（主机不支持）。
+
+推荐做法：把标签定义在顶层的 `badge_library` 里，各处只写 key 引用。这样
+「自建」这类会出现在多个地方的标签只定义一次，改文案/tooltip 时所有引用处一起变。
+
+```yaml
+badge_library:
+  - key: self-built
+    text: "自建"                       # 必填
+    mark: "◆"                          # 可选：前缀符号
+    tone: cyan                         # 可选：cyan/gold/green/violet/neutral
+    tooltip: "本地装机，账号自助申请"    # 可选：悬停说明
+  - key: infiniband
+    text: "InfiniBand"
+    tone: green
+
+capacity_groups:
+  - key: own
+    name: "自有算力"
+    badges: [self-built]               # 算力域挂标签
+
+clusters:
+  - key: cluster-a
+    name: "A 集群"
+    badges: [self-built, infiniband]   # 集群引用同样两枚，取到的是同一份定义
+```
+
+只在一处用到的标签不必进库，直接内联；两种写法可以混着写，顺序按声明顺序：
 
 ```yaml
     badges:
-      - text: "自建"                     # 必填
-        mark: "◆"                        # 可选：前缀符号
-        tone: cyan                       # 可选：cyan/gold/green/violet/neutral
-        tooltip: "本地装机，账号自助申请"  # 可选：悬停说明
-      - { text: "InfiniBand", tone: green }
-      - { text: "ROCm", tone: gold, tooltip: "需要 ROCm 版框架" }
+      - self-built                                    # 库引用
+      - { text: "ROCm", tone: gold, tooltip: "需要 ROCm 版框架" }   # 内联
 ```
 
-- 一个集群可挂任意多枚，**超过 3 枚自动折叠成 `+N`**，悬停展开完整列表。
+- 一个域/集群可挂任意多枚，**超过 3 枚自动折叠成 `+N`**，悬停展开完整列表。
 - `tone` 只接受这五个预设名，不接受任意 CSS 色值——这是有意的，防止标签色和
   利用率语义色/算力域家族色撞在一起。
+- 引用了库里没有的 key 会在启动时报错并列出可选值，不会静默把标签丢掉。
 
-**兼容写法** `configured_by: "运维组"` 等价于加一枚 `{ mark: "◆", text: "运维组 配置" }`，
-老配置不用改也能跑。两种写法可以共存，`configured_by` 合成的那枚排最前。
+> **从 v0.3.0 前的配置升级**：`configured_by: "运维组"` 已移除。它原本自动合成一枚
+> `◆ 运维组 配置`。改成库里定义一枚、集群 `badges` 引用它即可；老字段留着会在启动时
+> 报错并提示改法（不静默忽略，否则那枚标签会无声消失）。
 
 ### hosts（服务器）
 

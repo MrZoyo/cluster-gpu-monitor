@@ -60,26 +60,16 @@ class ClusterCfg(BaseModel):
     status: str = "active"
     note: str | None = None
     jump: str | None = None        # 仅元数据
-    # 兼容糖：填了等于加一枚 {mark:"◆", text:"<名字> 配置"} 标签。新配置建议直接写 badges。
-    configured_by: str | None = None
     # 每项可以是标签库的 key（字符串，复用）或内联的完整定义
     badges: list[str | BadgeCfg] = Field(default_factory=list)
     hosts: list[HostCfg] = Field(default_factory=list)
 
     def resolved_badges(self, library: dict[str, BadgeCfg] | None = None) -> list[BadgeCfg]:
-        """badges + configured_by 合成的最终标签序列（configured_by 排在最前）。
+        """最终标签序列：badges 里的字符串按标签库查表展开，内联项原样保留。
 
-        badges 里的字符串按标签库查表展开；查不到的 key 会被跳过（load_inventory
-        已经在启动时校验过，正常运行时不会出现）。
+        查不到的 key 会被跳过（load_inventory 已在启动时校验过，正常运行不会出现）。
         """
-        out: list[BadgeCfg] = []
-        if self.configured_by:
-            out.append(BadgeCfg(
-                text=f"{self.configured_by} 配置", mark="◆", tone="cyan",
-                tooltip=f"由 {self.configured_by} 进行初始化配置",
-            ))
-        out.extend(_expand_badges(self.badges, library))
-        return out
+        return _expand_badges(self.badges, library)
 
 
 def _expand_badges(items: list[str | BadgeCfg],
@@ -128,7 +118,7 @@ class Inventory(BaseModel):
         return _expand_badges(group.badges, self.badges_by_key)
 
     def cluster_badges(self, cluster: ClusterCfg) -> list[BadgeCfg]:
-        """集群的最终标签序列（含 configured_by 合成的那枚，库引用已展开）。"""
+        """集群的最终标签序列（库引用已展开）。"""
         return cluster.resolved_badges(self.badges_by_key)
 
     def group_key_of(self, cluster: ClusterCfg) -> str:
