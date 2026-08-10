@@ -9,7 +9,9 @@ from ..db.store import WINDOWS, Store
 
 @lru_cache(maxsize=1)
 def get_store() -> Store:
-    return Store()
+    # Web/API 进程只负责查询。mode=ro + query_only 让代码路径本身也无法修改数据库，
+    # 不把安全性只寄托在部署机的文件权限上。
+    return Store(read_only=True)
 
 
 def mask_username(name: str | None) -> str | None:

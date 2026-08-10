@@ -11,6 +11,7 @@ Environment=GPUMON_ROOT=__ROOT__
 ExecStart=__ROOT__/current/.venv/bin/gpumon collect
 Restart=always
 RestartSec=5
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target

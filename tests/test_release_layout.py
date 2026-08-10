@@ -33,3 +33,25 @@ def test_backup_timer_has_exactly_one_schedule_and_no_eager_service_dependency()
     assert "OnCalendar=*-*-* 04:00:00" in text
     assert "OnCalendar=daily" not in text
     assert "Requires=gpumon-backup.service" not in text
+
+
+def test_system_web_unit_is_a_separate_read_only_sandbox():
+    text = (
+        ROOT / "deploy" / "systemd" / "system-gpumon-web.service"
+    ).read_text(encoding="utf-8")
+
+    assert "User=__WEB_USER__" in text
+    assert "Group=__GROUP__" in text
+    assert "User=__USER__" not in text
+    for setting in (
+        "NoNewPrivileges=true",
+        "PrivateTmp=true",
+        "PrivateDevices=true",
+        "ProtectSystem=strict",
+        "ProtectHome=true",
+        "ReadOnlyPaths=__ROOT__",
+        "IPAddressAllow=localhost",
+        "IPAddressDeny=any",
+    ):
+        assert setting in text
+    assert "ReadWritePaths=" not in text

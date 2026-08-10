@@ -10,7 +10,8 @@
 | `<SERVER_IP>` | 监控机的 IP（内网或公网） |
 | `<YOUR_DOMAIN>` | 你的域名，例如 `gpu.example.com` |
 | `<ROOT>` | 代码目录，示例用 `/opt/gpu-monitor` |
-| `<USER>` | 跑服务的系统账户，示例用 `gpumon` |
+| `<USER>` | 跑采集器和备份的系统账户，示例用 `gpumon`，持有 SSH 配置和数据库写权限 |
+| `<WEB_USER>` | 只跑 Web 的无登录账户，示例用 `gpumon-web`，只能读配置和数据库 |
 | `<BASTION>` | 跳板机的 SSH 别名 |
 | `<YOUR_SUBNET>` | 允许访问的内网段，例如 `10.10.0.0` |
 
@@ -187,12 +188,14 @@ sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
 ## 4. 装成 systemd 服务
 
 系统级 unit 都从 `<ROOT>/current` 执行代码，同时把 `GPUMON_ROOT` 指向稳定的
-`<ROOT>`。备份 timer 是唯一自动调度源，每天 04:00 触发一次：
+`<ROOT>`。采集器与 Web 必须使用不同账户：Web 不持有 SSH home/key，代码会用 SQLite
+`mode=ro` + `query_only` 强制只读，systemd 也把整个应用根挂成只读。备份 timer 是唯一
+自动调度源，每天 04:00 触发一次：
 
 | 文件 | 类型 | 说明 |
 | --- | --- | --- |
 | `system-gpumon-collector.service` | 系统级 | 采集器，跟随 `current` |
-| `system-gpumon-web.service` | 系统级 | Web，跟随 `current` |
+| `system-gpumon-web.service` | 系统级 | 独立无登录账户运行的只读 Web，跟随 `current` |
 | `gpumon-backup.service` | 系统级 oneshot | 原子 SQLite 备份，不单独 enable |
 | `gpumon-backup.timer` | 系统级 timer | 每日 04:00 唯一触发源 |
 | `gpumon-collector.service` / `gpumon-web.service` | 用户级 | 开发机平铺 checkout 使用 |
@@ -202,11 +205,28 @@ sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
 ```bash
 ROOT=<ROOT>
 APP_USER=<USER>
-for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
-    "$ROOT/current/deploy/systemd/system-gpumon-$u.service" \
-    | sudo tee "/etc/systemd/system/gpumon-$u.service" >/dev/null
-done
+WEB_USER=<WEB_USER>
+APP_GROUP=$(id -gn "$APP_USER")
+
+# Web 账户没有可登录 shell、home 或 SSH key，只通过共享组读取运行所需文件。
+id -u "$WEB_USER" >/dev/null 2>&1 || \
+  sudo useradd --system --user-group --no-create-home \
+    --home-dir /nonexistent --shell /usr/sbin/nologin "$WEB_USER"
+sudo usermod -a -G "$APP_GROUP" "$WEB_USER"
+sudo chmod 0700 "$(getent passwd "$APP_USER" | cut -d: -f6)"
+sudo chown root:"$APP_GROUP" "$ROOT/config"
+sudo chown "$APP_USER:$APP_GROUP" "$ROOT/data"
+sudo chmod 0750 "$ROOT/config" "$ROOT/data"
+sudo find "$ROOT/config" -maxdepth 1 -type f -exec chmod 0640 {} +
+sudo find "$ROOT/data" -maxdepth 1 -type f -name 'gpumon.db*' \
+  -exec chown "$APP_USER:$APP_GROUP" {} + -exec chmod 0640 {} +
+
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+  "$ROOT/current/deploy/systemd/system-gpumon-collector.service" \
+  | sudo tee /etc/systemd/system/gpumon-collector.service >/dev/null
+sed "s#__ROOT__#$ROOT#g; s#__WEB_USER__#$WEB_USER#g; s#__GROUP__#$APP_GROUP#g" \
+  "$ROOT/current/deploy/systemd/system-gpumon-web.service" \
+  | sudo tee /etc/systemd/system/gpumon-web.service >/dev/null
 sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
   "$ROOT/current/deploy/systemd/gpumon-backup.service" \
   | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
@@ -788,7 +808,6 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
-
 
 
 

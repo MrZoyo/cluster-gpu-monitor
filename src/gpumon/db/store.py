@@ -62,17 +62,28 @@ def current_sample_max_age_s() -> int:
 
 
 class Store:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(self, path: str | Path | None = None, *, read_only: bool = False):
         self.path = Path(path) if path else db_path()
+        self.read_only = read_only
         self._write_conn: sqlite3.Connection | None = None
         self._host_id: dict[str, int] = {}   # host.key -> host.id 缓存
 
     # ---- 连接 ---------------------------------------------------------------
     def _new_conn(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=15)
+        if self.read_only:
+            # mode=ro 是 SQLite 文件层面的强制只读；as_uri() 会安全转义路径里的
+            # 空格、问号等 URI 特殊字符。只读进程不得顺手创建目录或空数据库。
+            uri = f"{self.path.resolve().as_uri()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=15)
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(self.path, timeout=15)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        if self.read_only:
+            # 即使以后连接构造方式被误改，query_only 仍会拦住该连接上的 SQL 写入。
+            conn.execute("PRAGMA query_only=ON")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=10000")
         # 查询是「每次开新连接」，私有 page cache 每次都是冷的。mmap 让读走 OS page
@@ -82,13 +93,19 @@ class Store:
         return conn
 
     def write_conn(self) -> sqlite3.Connection:
+        if self.read_only:
+            raise RuntimeError("只读 Store 不允许获取写连接")
         if self._write_conn is None:
             self._write_conn = self._new_conn()
             self._write_conn.execute("PRAGMA synchronous=NORMAL")  # WAL 下足够安全且更快
         return self._write_conn
 
     def connect(self) -> sqlite3.Connection:
-        """只读用途的新连接（调用方负责 close，或用 with）。"""
+        """查询用途的新连接（调用方负责 close，或用 with）。
+
+        只有以 ``read_only=True`` 构造的 Store 才会由 SQLite 强制只读；采集器的
+        普通 Store 仍允许在同一数据库上完成读写事务。
+        """
         return self._new_conn()
 
     # ---- 建库与拓扑 ---------------------------------------------------------

@@ -9,7 +9,8 @@ Placeholders in this guide, replace per your environment:
 | `<SERVER_IP>` | Monitor host IP (internal or public) |
 | `<YOUR_DOMAIN>` | Your domain, e.g. `gpu.example.com` |
 | `<ROOT>` | Code directory, examples use `/opt/gpu-monitor` |
-| `<USER>` | System account running the service, examples use `gpumon` |
+| `<USER>` | Collector/backup account, e.g. `gpumon`; owns SSH config and DB write access |
+| `<WEB_USER>` | Non-login Web account, e.g. `gpumon-web`; can only read config and DB |
 | `<BASTION>` | SSH alias of bastion host |
 | `<YOUR_SUBNET>` | Allowed access subnet, e.g. `10.10.0.0` |
 
@@ -184,6 +185,8 @@ the release and its parent directory should be root-owned and read-only to the r
 ## 4. Install as systemd Services
 
 System units execute code from `<ROOT>/current` while `GPUMON_ROOT` remains the stable state root.
+Run the collector and Web as separate accounts. The Web account has no SSH home/key; SQLite is
+forced read-only with `mode=ro` plus `query_only`, and systemd mounts the application root read-only.
 The backup timer is the single automatic scheduler and runs daily at 04:00.
 
 | File | Type | Notes |
@@ -191,7 +194,7 @@ The backup timer is the single automatic scheduler and runs daily at 04:00.
 | `deploy/systemd/gpumon-collector.service` | User-level | No `User=`, runs as current login user |
 | `deploy/systemd/gpumon-web.service` | User-level | Same |
 | `deploy/systemd/system-gpumon-collector.service` | System-level | Has `User=__USER__`, auto-start on boot |
-| `deploy/systemd/system-gpumon-web.service` | System-level | Same |
+| `deploy/systemd/system-gpumon-web.service` | System-level | Read-only Web under a separate non-login account |
 | `deploy/systemd/gpumon-backup.service` | System-level oneshot | Atomic backup; do not enable directly |
 | `deploy/systemd/gpumon-backup.timer` | System-level timer | Single daily 04:00 trigger |
 
@@ -200,11 +203,27 @@ The backup timer is the single automatic scheduler and runs daily at 04:00.
 ```bash
 ROOT=<ROOT>
 APP_USER=<USER>
-for u in collector web; do
-  sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
-    "$ROOT/current/deploy/systemd/system-gpumon-$u.service" \
-    | sudo tee "/etc/systemd/system/gpumon-$u.service" >/dev/null
-done
+WEB_USER=<WEB_USER>
+APP_GROUP=$(id -gn "$APP_USER")
+
+id -u "$WEB_USER" >/dev/null 2>&1 || \
+  sudo useradd --system --user-group --no-create-home \
+    --home-dir /nonexistent --shell /usr/sbin/nologin "$WEB_USER"
+sudo usermod -a -G "$APP_GROUP" "$WEB_USER"
+sudo chmod 0700 "$(getent passwd "$APP_USER" | cut -d: -f6)"
+sudo chown root:"$APP_GROUP" "$ROOT/config"
+sudo chown "$APP_USER:$APP_GROUP" "$ROOT/data"
+sudo chmod 0750 "$ROOT/config" "$ROOT/data"
+sudo find "$ROOT/config" -maxdepth 1 -type f -exec chmod 0640 {} +
+sudo find "$ROOT/data" -maxdepth 1 -type f -name 'gpumon.db*' \
+  -exec chown "$APP_USER:$APP_GROUP" {} + -exec chmod 0640 {} +
+
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+  "$ROOT/current/deploy/systemd/system-gpumon-collector.service" \
+  | sudo tee /etc/systemd/system/gpumon-collector.service >/dev/null
+sed "s#__ROOT__#$ROOT#g; s#__WEB_USER__#$WEB_USER#g; s#__GROUP__#$APP_GROUP#g" \
+  "$ROOT/current/deploy/systemd/system-gpumon-web.service" \
+  | sudo tee /etc/systemd/system/gpumon-web.service >/dev/null
 sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
   "$ROOT/current/deploy/systemd/gpumon-backup.service" \
   | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
