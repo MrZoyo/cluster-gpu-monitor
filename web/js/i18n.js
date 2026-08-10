@@ -202,8 +202,14 @@ window.I18n = {
     this.locale = locale;
     localStorage.setItem('gpumon.locale', locale);
     // 触发重新渲染
-    if (window.GM && GM.render) {
-      GM.render();
+    if (window.GM) {
+      if (GM.buildLangSwitch) GM.buildLangSwitch();
+      if (GM.buildThemeSwitch) GM.buildThemeSwitch();
+      if (GM.buildWinSwitch) GM.buildWinSwitch();
+      // 更新 navRank 文字
+      const navRankText = document.getElementById("navRankText");
+      if (navRankText) navRankText.textContent = this.t('user_ranking');
+      if (GM.render) GM.render();
     }
   },
 

@@ -169,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 前端：整份 web/ 拷过去，再注入静态 shim
     print("拷贝前端并注入静态 shim…")
-    for item in ("css", "js", "vendor", "index.html"):
+    for item in ("css", "js", "vendor", "icons", "index.html"):
         src = _ROOT / "web" / item
         dst = out / item
         if src.is_dir():
@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
                       '  <script src="js/api.js"></script>')
     # 绝对路径改相对，才能放在 <user>.github.io/<repo>/ 这种子路径下
     idx = idx.replace('href="/css/', 'href="css/').replace('src="/js/', 'src="js/') \
-             .replace('src="/vendor/', 'src="vendor/')
+             .replace('src="/vendor/', 'src="vendor/').replace('src="/icons/', 'src="icons/')
     idx = idx.replace("<title>GPU 集群占用监控</title>",
                       "<title>GPU 集群占用监控 · 在线演示（数据为虚构示例）</title>")
     idx = idx.replace('<div class="wrap">', _BANNER_HTML + '\n  <div class="wrap">')

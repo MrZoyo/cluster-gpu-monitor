@@ -24,7 +24,7 @@ window.GM = (function () {
       },
     }, []);
     const icon = document.createElement("img");
-    icon.src = "/icons/globe.svg";
+    icon.src = "icons/globe.svg";
     icon.className = "topbar-icon";
     btn.appendChild(icon);
     box.appendChild(btn);
@@ -126,7 +126,7 @@ window.GM = (function () {
         onclick: () => setTheme(key),
       }, []);
       const img = document.createElement("img");
-      img.src = "/icons/" + icon;
+      img.src = "icons/" + icon;
       img.className = "topbar-icon";
       b.appendChild(img);
       box.appendChild(b);
