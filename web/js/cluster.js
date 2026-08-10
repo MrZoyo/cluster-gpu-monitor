@@ -16,22 +16,22 @@ window.Views.cluster = (function () {
     const ov = await API.overview(w);
     const idx = ov.clusters.findIndex((c) => c.key === params.key);
     const c = ov.clusters[idx];
-    if (!c) { root.innerHTML = "<p class='note'>未找到集群</p>"; return; }
+    if (!c) { root.innerHTML = `<p class='note'>${I18n.t('cluster_not_found')}</p>`; return; }
     const accent = clusterColorFor(ov, c).color;
-    GM.crumb(`总览 › ${c.name}`);
+    GM.crumb(`${I18n.t('overview')} › ${c.name}`);
     root.innerHTML = "";
-    root.appendChild(el("span", { class: "back", onclick: () => GM.go("/") }, ["‹ 返回总览"]));
+    root.appendChild(el("span", { class: "back", onclick: () => GM.go("/") }, [I18n.t('back_to_overview')]));
 
     // 各主机一行迷你卡 + 系统
     const hostsPanel = el("div", { class: "panel", style: `border-left:5px solid ${accent}` },
-      [el("h3", { class: "panel-head" }, [el("span", {}, [c.name + " · 各主机"]), badgeRow(c)].filter(Boolean))]);
+      [el("h3", { class: "panel-head" }, [el("span", {}, [c.name + " · " + I18n.t('cluster_hosts_title')]), badgeRow(c)].filter(Boolean))]);
     if (c.note) hostsPanel.appendChild(el("div", { class: "note" }, [c.note]));
     c.hosts.forEach((h) => {
       const sys = h.system;
       const sysText = h.status === "planned"
-        ? `${(h.meta && h.meta.gpu_model) || "GPU"} · 规划 ${h.gpu_count} 卡`
-        : sys ? `CPU ${fmtPct(sys.cpu_util_pct)} · load ${sys.load1 ?? "—"} · 内存 ${fmtGB(sys.mem_used_mib)}/${fmtGB(sys.mem_total_mib)}` : "无系统数据";
-      const statusText = h.status === "planned" ? "待接入" : (h.online ? "在线" : "离线");
+        ? I18n.t('host_planned_info', { gpu_model: (h.meta && h.meta.gpu_model) || "GPU", count: h.gpu_count })
+        : sys ? I18n.t('host_system_info', { cpu: fmtPct(sys.cpu_util_pct), load: sys.load1 ?? "—", mem_used: fmtGB(sys.mem_used_mib), mem_total: fmtGB(sys.mem_total_mib) }) : I18n.t('no_system_data');
+      const statusText = h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline'));
       const name = el("div", { class: "host-name", onclick: () => GM.go(`/host/${h.key}`) },
         [el("div", { class: "hn" }, [h.display_name]), el("div", { class: "hs" }, [statusText])]);
       const offline = h.status !== "planned" && !h.online;
@@ -46,12 +46,12 @@ window.Views.cluster = (function () {
     // 集群级利用率时序
     if (!c.id || c.status === "planned") {
       root.appendChild(el("div", { class: "panel" }, [
-        el("h3", {}, ["接入状态"]),
-        el("div", { class: "note" }, ["该集群已预留容量，待 SSH/root 权限就绪后开始采集。"]),
+        el("h3", {}, [I18n.t('cluster_access_status')]),
+        el("div", { class: "note" }, [I18n.t('cluster_planned_note')]),
       ]));
       return;
     }
-    const chartPanel = el("div", { class: "panel" }, [el("h3", {}, [`集群平均 GPU 利用率 · 近 ${w}`])]);
+    const chartPanel = el("div", { class: "panel" }, [el("h3", {}, [I18n.t('cluster_avg_util', { window: w })])]);
     const chartDom = el("div", { class: "chart" });
     chartPanel.appendChild(chartDom);
     root.appendChild(chartPanel);
@@ -66,12 +66,12 @@ window.Views.cluster = (function () {
 
   async function usersPanel(root, w, clusterKey, clusterName, color) {
     const data = await API.usersTop(w, "gpu_hours", 10, clusterKey);
-    const panel = el("div", { class: "panel" }, [el("h3", {}, [`${clusterName} · 使用人 Top · 近 ${w}（按 GPU·小时）`])]);
+    const panel = el("div", { class: "panel" }, [el("h3", {}, [I18n.t('cluster_top_users', { name: clusterName, window: w })])]);
     const dom = el("div", { class: "chart", style: "height:260px" });
     panel.appendChild(dom); root.appendChild(panel);
     const labels = data.items.map((x) => x.username);
     const vals = data.items.map((x) => x.gpu_hours);
-    const chart = barChart(dom, labels, vals, { xName: "GPU·小时", color: color || "#76b900" });
+    const chart = barChart(dom, labels, vals, { xName: I18n.t('gpu_hours'), color: color || "#76b900" });
     chart.resize();  // 修复超宽屏初始化时尺寸计算错误
     GM.onResize(chart);
   }

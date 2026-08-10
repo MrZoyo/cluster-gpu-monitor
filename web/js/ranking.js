@@ -51,8 +51,8 @@ window.Views.ranking = (function () {
     machines.forEach((m) => {
       if (order.some((o) => o.key === m.key)) return;
       order.push({ key: m.key, name: m.name, color: Palette.groupAccent("_other"),
-        groupKey: "_other", groupName: "其他", clusterKey: "_other",
-        clusterName: "其他", clusterColor: Palette.groupAccent("_other"),
+        groupKey: "_other", groupName: I18n.t('ranking_other'), clusterKey: "_other",
+        clusterName: I18n.t('ranking_other'), clusterColor: Palette.groupAccent("_other"),
         firstInGroup: false, firstInCluster: false });
       groupColor._other = groupColor._other || { color: Palette.groupAccent("_other"), tint: Palette.groupTint("_other") };
     });
@@ -68,23 +68,22 @@ window.Views.ranking = (function () {
 
   async function render(root) {
     const w = GM.state.window;
-    GM.crumb("用户占用排行");
+    GM.crumb(I18n.t('ranking_title'));
     const [data, topo] = await Promise.all([API.usersRanking(w), API.topology()]);
     root.innerHTML = "";
-    root.appendChild(el("span", { class: "back", onclick: () => GM.go("/") }, ["‹ 返回总览"]));
+    root.appendChild(el("span", { class: "back", onclick: () => GM.go("/") }, [I18n.t('back_to_overview')]));
 
     if (!data.users.length) {
       root.appendChild(el("div", { class: "panel" },
-        [el("div", { class: "note" }, [`近 ${w} 暂无使用人数据（数据积累中）`])]));
+        [el("div", { class: "note" }, [I18n.t('ranking_no_data', { window: w })])]));
       return;
     }
 
     const layout = buildLayout(topo, data.machines);
     const chartDom = el("div", { class: "chart" });
     root.appendChild(el("div", { class: "panel" }, [
-      el("h3", {}, [`用户占用排行 · 近 ${w}（按 GPU·小时）`]),
-      el("div", { class: "note" }, [
-        "同一用户名跨机器累加；颜色按算力域分色系、同集群用相近色，可点图例隐藏某设备。切换顶部时间窗改统计区间。"]),
+      el("h3", {}, [I18n.t('ranking_chart_title', { window: w })]),
+      el("div", { class: "note" }, [I18n.t('ranking_note')]),
       chartDom,
     ]));
     root.appendChild(table(data, layout));
@@ -108,8 +107,8 @@ window.Views.ranking = (function () {
       .sort((a, b) => b.v - a.v);
     const total = items.reduce((a, x) => a + x.v, 0);
     const head = `<b>${params[0].axisValueLabel || params[0].name}</b>` +
-      `<span style="float:right;margin-left:16px">${total.toFixed(1)} GPU·h</span>`;
-    if (!items.length) return head + "<br/>无占用";
+      `<span style="float:right;margin-left:16px">${total.toFixed(1)} ${I18n.t('ranking_gpu_hours')}</span>`;
+    if (!items.length) return head + "<br/>" + I18n.t('ranking_no_usage');
 
     const dot = (c) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};margin-right:6px"></span>`;
     const rows = items.slice(0, TOOLTIP_ROWS).map((x) =>
@@ -117,7 +116,7 @@ window.Views.ranking = (function () {
     const rest = items.slice(TOOLTIP_ROWS);
     if (rest.length) {
       const sum = rest.reduce((a, x) => a + x.v, 0);
-      rows.push(`<span style="opacity:.7">其余 ${rest.length} 台合计` +
+      rows.push(`<span style="opacity:.7">${I18n.t('ranking_others_sum', { n: rest.length })}` +
         `<span style="float:right;margin-left:16px">${sum.toFixed(1)}</span></span>`);
     }
     return head + "<br/>" + rows.join("<br/>");
@@ -161,7 +160,7 @@ window.Views.ranking = (function () {
         formatter: rankTooltip },
       legend: { type: "scroll", top: 0, textStyle: { color: cText }, pageTextStyle: { color: cText } },
       grid: { left: 150, right: 30, top: 38, bottom: 30 },
-      xAxis: { type: "value", name: "GPU·小时", nameTextStyle: { color: cText },
+      xAxis: { type: "value", name: I18n.t('ranking_gpu_hours'), nameTextStyle: { color: cText },
         axisLabel: { color: cText }, splitLine: { lineStyle: { color: cSplit } } },
       yAxis: { type: "category", data: usernames, inverse: true,
         axisLabel: { color: cText }, axisLine: { lineStyle: { color: cAxis } } },
@@ -241,13 +240,13 @@ window.Views.ranking = (function () {
         }, [g.name])),
       ]);
       const head = el("tr", {}, [
-        el("th", { class: "rank-sticky rank-sticky-1" }, ["#"]),
-        el("th", { class: "rank-sticky rank-sticky-2" }, ["用户"]),
-        el("th", { class: "num rank-sticky rank-sticky-3" }, ["合计 GPU·h"]),
+        el("th", { class: "rank-sticky rank-sticky-1" }, [I18n.t('ranking_rank')]),
+        el("th", { class: "rank-sticky rank-sticky-2" }, [I18n.t('ranking_user')]),
+        el("th", { class: "num rank-sticky rank-sticky-3" }, [I18n.t('ranking_total')]),
         ...cols.map((c) => el("th", {
           class: "num rank-machine-th" + (c.firstInGroup ? " grp-start" : ""),
           style: `--mc:${c.color}`,
-          title: expanded ? c.groupName : `${c.groupName} · ${c.hostKeys.length} 台`,
+          title: expanded ? c.groupName : `${c.groupName} · ${c.hostKeys.length} ${I18n.getLocale() === 'zh' ? '台' : 'hosts'}`,
         }, [el("span", { class: "rank-sw", style: `background:${c.color}` }), c.name])),
       ]);
       const rows = [groupTier, head];
@@ -269,17 +268,16 @@ window.Views.ranking = (function () {
           localStorage.setItem(LS_KEY, expanded ? "1" : "0");
           render();
         },
-      }, [expanded ? `按集群合并（当前 ${nM} 列）` : `展开到单机（${nM} 台）`]);
+      }, [expanded ? I18n.t('ranking_collapse', { n: nM }) : I18n.t('ranking_expand', { n: nM })]);
 
       panel.appendChild(el("h3", { class: "panel-head" }, [
         el("span", {}, [expanded
-          ? "明细 · 按算力域 / 集群分组（GPU·小时，跨设备）"
-          : "明细 · 按算力域 / 集群汇总（GPU·小时）"]),
+          ? I18n.t('ranking_detail_expanded')
+          : I18n.t('ranking_detail_collapsed')]),
         toggle,
       ]));
       if (!expanded) {
-        panel.appendChild(el("div", { class: "note" }, [
-          `机器较多（${nM} 台），已按集群合并列以免横向溢出；点右上角可展开到单机。`]));
+        panel.appendChild(el("div", { class: "note" }, [I18n.t('ranking_collapsed_note', { n: nM })]));
       }
       panel.appendChild(el("div", { class: "rank-scroll" }, [
         el("table", { class: "rank-table" }, [el("tbody", {}, rows)]),

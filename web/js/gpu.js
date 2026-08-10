@@ -3,11 +3,11 @@ window.Views = window.Views || {};
 window.Views.gpu = (function () {
   const { el, fmtPct, fmtGB, lineChart, utilCell } = UI;
   const METRICS = [
-    { key: "util_gpu", label: "GPU 利用率", yName: "%", max: 100, color: "#2563eb" },
-    { key: "util_mem", label: "显存带宽利用率", yName: "%", max: 100, color: "#0891b2" },
-    { key: "mem_used", label: "显存占用", yName: "MiB", color: "#7c3aed" },
-    { key: "temp", label: "温度", yName: "℃", color: "#dc2626" },
-    { key: "power", label: "功耗", yName: "W", color: "#d97706" },
+    { key: "util_gpu", label_key: "gpu_metric_util", yName: "%", max: 100, color: "#2563eb" },
+    { key: "util_mem", label_key: "gpu_metric_mem_util", yName: "%", max: 100, color: "#0891b2" },
+    { key: "mem_used", label_key: "gpu_metric_mem_used", yName: "MiB", color: "#7c3aed" },
+    { key: "temp", label_key: "gpu_metric_temp", yName: "℃", color: "#dc2626" },
+    { key: "power", label_key: "gpu_metric_power", yName: "W", color: "#d97706" },
   ];
 
   function findGpu(ov, id) {
@@ -23,18 +23,18 @@ window.Views.gpu = (function () {
     const w = GM.state.window;
     const [ov, multi] = await Promise.all([API.overview(w), API.avgMulti("gpu", "util_gpu")]);
     const found = findGpu(ov, params.id);
-    if (!found) { root.innerHTML = "<p class='note'>未找到该卡</p>"; return; }
+    if (!found) { root.innerHTML = `<p class='note'>${I18n.t('gpu_not_found')}</p>`; return; }
     const { g, h, c } = found;
-    GM.crumb(`总览 › ${c.name} › ${h.display_name} › GPU #${g.index}`);
+    GM.crumb(`${I18n.t('overview')} › ${c.name} › ${h.display_name} › GPU #${g.index}`);
     root.innerHTML = "";
-    root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/host/${h.key}`) }, ["‹ 返回 " + h.display_name]));
+    root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/host/${h.key}`) }, [I18n.t('back_to', { name: h.display_name })]));
 
     const n = g.now || {};
     const kpi = [
-      ["瞬时利用率", fmtPct(n.util_gpu)],
-      ["显存", `${fmtGB(n.mem_used_mib)} / ${fmtGB(g.mem_total_mib)}`],
-      ["温度", n.temp_c != null ? n.temp_c + "℃" : "—"],
-      ["功耗", n.power_w != null ? Math.round(n.power_w) + "W" : "—"],
+      [I18n.t('gpu_instant_util'), fmtPct(n.util_gpu)],
+      [I18n.t('gpu_memory'), `${fmtGB(n.mem_used_mib)} / ${fmtGB(g.mem_total_mib)}`],
+      [I18n.t('gpu_temperature'), n.temp_c != null ? n.temp_c + "℃" : "—"],
+      [I18n.t('gpu_power'), n.power_w != null ? Math.round(n.power_w) + "W" : "—"],
     ];
     root.appendChild(el("div", { class: "kpis" }, kpi.map(([k, v]) =>
       el("div", { class: "kpi" }, [el("div", { class: "v" }, [String(v)]), el("div", { class: "k" }, [k])]))));
@@ -46,14 +46,14 @@ window.Views.gpu = (function () {
       const it = (multi.windows[x] || []).find((i) => String(i.gpu_id) === String(g.gpu_id));
       return utilCell(it ? it.avg : null, it ? it.coverage : null);
     });
-    root.appendChild(el("div", { class: "panel" }, [el("h3", {}, ["平均利用率 · 各时间窗"]),
+    root.appendChild(el("div", { class: "panel" }, [el("h3", {}, [I18n.t('gpu_avg_util_windows')]),
       el("table", {}, [el("tbody", {}, [head, el("tr", {}, cells)])])]));
 
     // 指标切换 + 时序
     const chartPanel = el("div", { class: "panel" });
     const switcher = el("div", { class: "win-switch", style: "margin-bottom:10px" });
     const dom = el("div", { class: "chart" });
-    chartPanel.appendChild(el("h3", {}, [`时序 · 近 ${w}`]));
+    chartPanel.appendChild(el("h3", {}, [I18n.t('gpu_series_title', { window: w })]));
     chartPanel.appendChild(switcher);
     chartPanel.appendChild(dom);
     root.appendChild(chartPanel);
@@ -63,20 +63,20 @@ window.Views.gpu = (function () {
       Array.from(switcher.children).forEach((b) => b.classList.toggle("active", b.dataset.k === m.key));
       const s = await API.series("gpu", g.gpu_id, m.key, w);
       if (chart) chart.dispose();
-      chart = lineChart(dom, [{ name: m.label, points: s.points, color: m.color }],
+      chart = lineChart(dom, [{ name: I18n.t(m.label_key), points: s.points, color: m.color }],
         { max: m.max, yName: m.yName });
       chart.resize();  // 修复超宽屏初始化时尺寸计算错误
       GM.onResize(chart);
     }
     METRICS.forEach((m) => {
-      const b = el("button", { "data-k": m.key, onclick: () => draw(m) }, [m.label]);
+      const b = el("button", { "data-k": m.key, onclick: () => draw(m) }, [I18n.t(m.label_key)]);
       switcher.appendChild(b);
     });
     await draw(METRICS[0]);
 
     // 当前使用人
     const us = g.users || [];
-    const userRows = [el("tr", {}, [el("th", {}, ["使用人"]), el("th", {}, ["进程"]), el("th", {}, ["显存"])])];
+    const userRows = [el("tr", {}, [el("th", {}, [I18n.t('table_user')]), el("th", {}, [I18n.t('table_process')]), el("th", {}, [I18n.t('table_memory')])])];
     us.forEach((u) => userRows.push(el("tr", {}, [
       el("td", {}, [u.username || "?"]),
       el("td", {}, [u.comm || "—"]),
@@ -84,8 +84,8 @@ window.Views.gpu = (function () {
     ])));
     const usersBody = us.length
       ? el("table", {}, [el("tbody", {}, userRows)])
-      : el("div", { class: "note" }, ["当前空闲，无 GPU 进程"]);
-    root.appendChild(el("div", { class: "panel" }, [el("h3", {}, ["当前使用人"]), usersBody]));
+      : el("div", { class: "note" }, [I18n.t('gpu_idle')]);
+    root.appendChild(el("div", { class: "panel" }, [el("h3", {}, [I18n.t('gpu_current_users')]), usersBody]));
   }
 
   return { render };
