@@ -79,6 +79,13 @@ window.Views.ranking = (function () {
       return;
     }
 
+    if (data.truncated) {
+      root.appendChild(el("div", { class: "note" }, [I18n.t('ranking_truncated', {
+        shown: data.returned_users,
+        total: data.total_users,
+      })]));
+    }
+
     const layout = buildLayout(topo, data.machines);
     const chartDom = el("div", { class: "chart" });
     root.appendChild(el("div", { class: "panel" }, [

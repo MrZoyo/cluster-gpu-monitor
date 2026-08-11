@@ -24,6 +24,15 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
     print(f"数据库: {db_path()}")
     print(f"采集周期: {st.collector.poll_interval_s}s  并发: {st.collector.max_concurrency}")
     print(f"Web: {st.web.host}:{st.web.port}")
+    print(
+        "Web 查询边界: "
+        f"并发 {st.web.max_query_concurrency}  "
+        f"排队 {st.web.query_queue_timeout_s:g}s  "
+        f"执行 {st.web.query_timeout_s:g}s  "
+        f"缓存 {st.web.stats_cache_ttl_s}s  "
+        f"排行 {st.web.ranking_user_limit} 人  "
+        f"API 文档 {'开' if st.web.enable_docs else '关'}"
+    )
     # 算力域：打印最终生效的域列表 + 每域分到的色带，配错色带名/漏声明域能立刻看出来
     groups = inv.resolved_groups()
     group_names = {g.key: g.name for g in groups}
@@ -111,12 +120,18 @@ def _cmd_backup(args: argparse.Namespace) -> int:
 def _cmd_web(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from .api.app import create_app
     from .config import load_settings
 
     st = load_settings()
     host = args.host or st.web.host
     port = args.port or st.web.port
-    uvicorn.run("gpumon.api.app:app", host=host, port=port, log_level="info")
+    uvicorn.run(
+        create_app(enable_docs=st.web.enable_docs),
+        host=host,
+        port=port,
+        log_level="info",
+    )
     return 0
 
 

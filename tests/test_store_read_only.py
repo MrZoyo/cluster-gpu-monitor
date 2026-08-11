@@ -1,6 +1,7 @@
 """Web Store 的 SQLite 只读边界。"""
 
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,10 +52,32 @@ def test_read_only_store_does_not_create_missing_database_or_parent(tmp_path):
     assert not path.parent.exists()
 
 
+def test_read_only_store_interrupts_queries_after_deadline(tmp_path):
+    path = tmp_path / "monitor.db"
+    _seed(path)
+    reader = Store(path=path, read_only=True, query_timeout_s=0)
+
+    with reader.connect() as conn:
+        with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+            conn.execute("""
+                WITH RECURSIVE n(x) AS (
+                    VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 1000000
+                )
+                SELECT SUM(x) FROM n
+            """).fetchone()
+
+
 def test_api_dependency_constructs_read_only_store(tmp_path, monkeypatch):
     deps.get_store.cache_clear()
     monkeypatch.setattr(store_module, "db_path", lambda: tmp_path / "api.db")
+    monkeypatch.setattr(
+        deps,
+        "load_settings",
+        lambda: SimpleNamespace(web=SimpleNamespace(query_timeout_s=12)),
+    )
     try:
-        assert deps.get_store().read_only is True
+        store = deps.get_store()
+        assert store.read_only is True
+        assert store.query_timeout_s == 12
     finally:
         deps.get_store.cache_clear()

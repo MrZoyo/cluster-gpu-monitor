@@ -261,6 +261,11 @@ def test_unknown_nested_config_field_is_rejected():
         {"collector": {"max_concurrency": 0}},
         {"retention": {"raw_days": 30}},
         {"web": {"port": 70_000}},
+        {"web": {"max_query_concurrency": 0}},
+        {"web": {"query_queue_timeout_s": -1}},
+        {"web": {"query_timeout_s": 0}},
+        {"web": {"stats_cache_ttl_s": 301}},
+        {"web": {"ranking_user_limit": 0}},
         {"backup": {"keep_count": 0}},
         {"backup": {"hour": 99}},
     ],
@@ -323,6 +328,16 @@ def test_retention_default_covers_full_month_with_headroom():
     assert settings.retention.raw_days == 35
     minimum = Settings.model_validate({"retention": {"raw_days": 31}})
     assert minimum.retention.raw_days == 31
+
+
+def test_web_query_limits_have_small_host_defaults():
+    web = Settings.model_validate({}).web
+    assert web.enable_docs is False
+    assert web.max_query_concurrency == 4
+    assert web.query_queue_timeout_s == 1
+    assert web.query_timeout_s == 12
+    assert web.stats_cache_ttl_s == 15
+    assert web.ranking_user_limit == 200
 
 
 def test_load_settings_requires_real_settings_file(tmp_path, monkeypatch):

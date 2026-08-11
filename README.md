@@ -234,9 +234,15 @@ NVIDIA 路径是长期在线跑的。
 
 ```bash
 uv run --extra dev pytest        # 解析、聚合、清单校验、软退役的单元测试
+python3 scripts/check_added_secrets.py --self-test
+python3 scripts/check_added_secrets.py --staged  # git add 后只检查新增行，不回显内容
 scripts/probe_one.sh <alias>     # 只看某台机的原始探测输出，排查解析问题
 scripts/verify_e2e.sh            # 采一轮 → 聚合 → 校验库内数据与各 API 端点
 ```
+
+GitHub 原生 provider secret scanning/push protection 之外，CI 还会检查通用密码、私钥和
+常见凭据格式。`.secret-scan-baseline.json` 只为扫描器自测样本保存精确行哈希；新增例外
+必须逐条审核，不能用文件/目录通配跳过。
 
 - 后端 `src/gpumon/`：`collector/` 采集与解析、`db/` 存储与聚合、`api/` 接口。
 - 前端 `web/`：原生 HTML + JS + 本地 ECharts，无构建步骤。

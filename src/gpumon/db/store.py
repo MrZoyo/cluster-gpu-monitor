@@ -91,9 +91,11 @@ def _active_inventory_capacity() -> tuple[dict[str, int], dict[str, int]]:
 
 
 class Store:
-    def __init__(self, path: str | Path | None = None, *, read_only: bool = False):
+    def __init__(self, path: str | Path | None = None, *, read_only: bool = False,
+                 query_timeout_s: float | None = None):
         self.path = Path(path) if path else db_path()
         self.read_only = read_only
+        self.query_timeout_s = query_timeout_s
         self._write_conn: sqlite3.Connection | None = None
         self._host_id: dict[str, int] = {}   # host.key -> host.id 缓存
 
@@ -119,6 +121,12 @@ class Store:
         # cache（进程间共享、可被内核回收），跨连接复用，比调大 cache_size 更省内存
         # ——部署机只有 ~900MB RAM，每连接私有缓存会乘以线程池大小。
         conn.execute("PRAGMA mmap_size=268435456")   # 256MB 上限，按需映射不预占
+        if self.read_only and self.query_timeout_s is not None:
+            deadline = time.monotonic() + self.query_timeout_s
+            conn.set_progress_handler(
+                lambda: int(time.monotonic() >= deadline),
+                10_000,
+            )
         return conn
 
     def write_conn(self) -> sqlite3.Connection:
@@ -419,7 +427,7 @@ class Store:
         return out
 
     def get_avg_multi(self, scope: str, metric: str, now: int | None = None) -> dict:
-        """每实体一次性返回全部 5 个窗口的平均，供总览对比表。"""
+        """每实体一次性返回全部 7 个窗口的平均，供总览对比表。"""
         if scope not in _SCOPE_GROUP:
             raise ValueError(f"未知 scope: {scope}")
         if metric not in _METRIC_COLS:
@@ -551,11 +559,14 @@ class Store:
         return out
 
     def get_users_ranking(self, window: str, now: int | None = None,
-                          excluded_host_keys: Collection[str] | None = None) -> dict:
+                          excluded_host_keys: Collection[str] | None = None,
+                          limit: int = 200) -> dict:
         """用户占用排行：同 username 跨机器聚合，并按机器(设备)拆分 gpu_hours，
         供前端堆叠条形图（不同颜色=不同设备）。"""
         if window not in WINDOWS:
             raise ValueError(f"未知窗口: {window}")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
+            raise ValueError("limit 必须是 1..1000 的整数")
         now = int(now or time.time())
         win = WINDOWS[window]
         since = now - win
@@ -577,15 +588,32 @@ class Store:
                       AND p.mem_used_mib > 0
                       {excluded_sql}
                 GROUP BY p.username, p.gpu_id, p.ts, h.id, h.key
+            ), by_user_host AS (
+                SELECT username, host_id, host_key,
+                       COUNT(*) * ? / 3600.0 AS gpu_hours
+                FROM occupied
+                GROUP BY username, host_id, host_key
+            ), user_totals AS (
+                SELECT username, SUM(gpu_hours) AS total
+                FROM by_user_host
+                GROUP BY username
+            ), selected_users AS (
+                SELECT username, total, COUNT(*) OVER() AS total_users
+                FROM user_totals
+                ORDER BY total DESC, username
+                LIMIT ?
             )
-            SELECT username, host_key,
-                   COUNT(*) * ? / 3600.0 AS gpu_hours,
-                   COUNT(DISTINCT gpu_id) AS distinct_gpus
-            FROM occupied
-            GROUP BY username, host_id, host_key
+            SELECT b.username, b.host_key, b.gpu_hours,
+                   s.total, s.total_users
+            FROM selected_users s
+            JOIN by_user_host b ON b.username=s.username
+            ORDER BY s.total DESC, s.username, b.host_key
         """
         with self.connect() as conn:
-            rows = conn.execute(sql, (since, now, *excluded_params, interval)).fetchall()
+            rows = conn.execute(
+                sql,
+                (since, now, *excluded_params, interval, limit),
+            ).fetchall()
             machine_filter = ""
             machine_params: list[str] = []
             if excluded:
@@ -606,7 +634,16 @@ class Store:
         out = sorted(users.values(), key=lambda x: x["total"], reverse=True)
         for u in out:
             u["total"] = round(u["total"], 1)
-        return {"window": window, "machines": machines, "users": out}
+        total_users = rows[0]["total_users"] if rows else 0
+        return {
+            "window": window,
+            "machines": machines,
+            "users": out,
+            "total_users": total_users,
+            "returned_users": len(out),
+            "truncated": total_users > len(out),
+            "limit": limit,
+        }
 
     # ---- 查询：采集状态 -----------------------------------------------------
     def get_collector_status(self, online_window_s: int = 120, now: int | None = None) -> list[dict]:

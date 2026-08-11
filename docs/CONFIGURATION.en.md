@@ -231,6 +231,12 @@ path = "data/gpumon.db"     # Relative to project root
 [web]
 host = "127.0.0.1"          # Keep 127.0.0.1 behind reverse proxy; change to 0.0.0.0 for direct access
 port = 8848
+enable_docs = false          # Disable /docs, /redoc, and /openapi.json in production
+max_query_concurrency = 4    # Maximum concurrent expensive queries
+query_queue_timeout_s = 1    # Queue wait before returning 503
+query_timeout_s = 12         # Per-connection SQLite execution deadline
+stats_cache_ttl_s = 15       # Short historical-statistics cache; 0 disables it
+ranking_user_limit = 200     # Maximum users returned by the ranking
 
 [privacy]
 mask_users = false          # true shows users as a***e
@@ -239,6 +245,18 @@ mask_users = false          # true shows users as a***e
 enabled = true              # Whether to enable automatic backup (systemd timer checks this switch)
 keep_count = 3              # Keep N most recent backups
 ```
+
+### Web Query Boundaries
+
+By default, Web runs at most four expensive statistics queries concurrently. A request waits
+up to one second for a slot, and each read-only SQLite connection gets a 12-second execution
+deadline. Exceeding either boundary returns HTTP 503 with `Retry-After` instead of accumulating
+threads and memory. Historical averages, series, and rankings are reused through a 15-second
+cache. Rankings return at most 200 users and explicitly report truncation in both JSON and UI.
+Keep these defaults on small hosts; benchmark a database copy before raising them.
+
+`enable_docs=false` disables only FastAPI's interactive documentation and OpenAPI JSON, not the
+dashboard API. Set it to `true` explicitly in development when API exploration is needed.
 
 ### Backup Configuration
 

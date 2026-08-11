@@ -21,6 +21,12 @@ path = "data/gpumon.db"   # 相对项目根目录
 [web]
 host = "127.0.0.1"        # 只监听本地；对外访问一律经 Caddy 反代（阶段二）
 port = 8848
+enable_docs = false        # 生产默认关闭 /docs、/redoc、/openapi.json
+max_query_concurrency = 4  # 昂贵统计查询最多同时执行几个
+query_queue_timeout_s = 1  # 查询槽位满时最多排队多久，超时返回 503
+query_timeout_s = 12       # 单个 SQLite 只读连接的总执行上限
+stats_cache_ttl_s = 15     # 历史统计短缓存；0 表示关闭
+ranking_user_limit = 200   # 用户排行最多返回多少人
 
 [privacy]
 mask_users = false        # true 时网页把使用人显示为 a***e

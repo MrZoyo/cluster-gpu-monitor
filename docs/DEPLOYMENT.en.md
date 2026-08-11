@@ -198,7 +198,8 @@ the release and its parent directory should be root-owned and read-only to the r
 System units execute code from `<ROOT>/current` while `GPUMON_ROOT` remains the stable state root.
 Run the collector and Web as separate accounts. The Web account has no SSH home/key; SQLite is
 forced read-only with `mode=ro` plus `query_only`, and systemd mounts the application root read-only.
-The backup timer is the single automatic scheduler and runs daily at 04:00.
+The system Web unit also sets 256/384 MiB memory high/max boundaries and a 64-task limit. The backup
+timer is the single automatic scheduler and runs daily at 04:00.
 
 | File | Type | Notes |
 | --- | --- | --- |

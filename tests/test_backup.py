@@ -47,6 +47,36 @@ def test_backup_is_checked_private_and_atomically_published(source_db):
         conn.close()
 
 
+def test_explicit_backup_rejects_symlink_source(source_db, tmp_path):
+    link = tmp_path / "linked.db"
+    link.symlink_to(source_db)
+
+    with pytest.raises(ValueError, match="symlink"):
+        backup.backup_database(link)
+
+
+def test_explicit_backup_rejects_symlink_destination(source_db, tmp_path):
+    real_directory = tmp_path / "real-backups"
+    real_directory.mkdir()
+    linked_directory = tmp_path / "linked-backups"
+    linked_directory.symlink_to(real_directory, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        backup.backup_database(source_db, directory=linked_directory)
+
+
+def test_explicit_backup_supports_safe_custom_prefix(source_db, tmp_path):
+    dest = backup.backup_database(
+        source_db,
+        directory=tmp_path / "maintenance-backups",
+        prefix="gpumon_backfill",
+    )
+
+    assert dest.name.startswith("gpumon_backfill_")
+    assert stat.S_IMODE(dest.stat().st_mode) == 0o600
+    assert _read_values(dest) == ["first", "second"]
+
+
 def test_quick_check_runs_on_temp_file_before_publish(source_db, monkeypatch):
     checked = []
     real_check = backup._quick_check

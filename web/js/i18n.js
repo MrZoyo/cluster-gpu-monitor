@@ -153,6 +153,7 @@ window.I18n = {
       // 排行视图
       'ranking_title': '用户占用排行',
       'ranking_no_data': '近 {window} 暂无使用人数据（数据积累中）',
+      'ranking_truncated': '用户较多，仅显示前 {shown}/{total} 名。',
       'ranking_chart_title': '用户占用排行 · 近 {window}（按 GPU·小时）',
       'ranking_note': '同一用户名跨机器累加；颜色按算力域分色系、同集群用相近色，可点图例隐藏某设备。切换顶部时间窗改统计区间。',
       'ranking_gpu_hours': 'GPU·小时',
@@ -324,6 +325,7 @@ window.I18n = {
       // Ranking View
       'ranking_title': 'User Ranking',
       'ranking_no_data': 'No user data for last {window} (accumulating)',
+      'ranking_truncated': 'Many users; showing the top {shown} of {total}.',
       'ranking_chart_title': 'User Ranking · Last {window} (by GPU·hours)',
       'ranking_note': 'Same username aggregated across machines. Colors by capacity group family, same cluster uses similar hues. Click legend to hide devices. Change time window in topbar to adjust range.',
       'ranking_gpu_hours': 'GPU·hours',

@@ -72,6 +72,16 @@ def test_collector_units_have_memory_and_task_circuit_breakers():
         assert "TasksMax=128" in text
 
 
+def test_system_web_unit_has_memory_and_task_circuit_breakers():
+    text = (
+        ROOT / "deploy" / "systemd" / "system-gpumon-web.service"
+    ).read_text(encoding="utf-8")
+
+    assert "MemoryHigh=256M" in text
+    assert "MemoryMax=384M" in text
+    assert "TasksMax=64" in text
+
+
 def test_caddy_template_sets_browser_security_headers_and_no_store():
     text = (ROOT / "deploy" / "caddy" / "Caddyfile.example").read_text(
         encoding="utf-8"

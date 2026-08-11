@@ -10,10 +10,28 @@ from fastapi.staticfiles import StaticFiles
 from ..config import CODE_ROOT
 from .routes import router
 
-app = FastAPI(title="GPU 集群占用监控", version="0.1.0")
-app.include_router(router)
 
-# web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。
-_web_dir = CODE_ROOT / "web"
-if _web_dir.exists():
-    app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="static")
+def create_app(*, enable_docs: bool = False) -> FastAPI:
+    docs_url = "/docs" if enable_docs else None
+    openapi_url = "/openapi.json" if enable_docs else None
+    redoc_url = "/redoc" if enable_docs else None
+    application = FastAPI(
+        title="GPU 集群占用监控",
+        version="0.1.0",
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
+    )
+    application.include_router(router)
+
+    # web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。
+    web_dir = CODE_ROOT / "web"
+    if web_dir.exists():
+        application.mount(
+            "/", StaticFiles(directory=str(web_dir), html=True), name="static"
+        )
+    return application
+
+
+# 模块级 app 保持安全默认，供测试和通用 ASGI 导入；CLI 会按 settings 创建实例。
+app = create_app()

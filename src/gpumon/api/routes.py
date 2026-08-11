@@ -5,6 +5,8 @@ SQLite 同步查询在线程池里跑正合适。返回 JSON，时间一律 epoc
 """
 from __future__ import annotations
 
+from copy import deepcopy
+from functools import lru_cache
 import time
 
 from fastapi import APIRouter, Query
@@ -21,11 +23,24 @@ from .deps import (
     valid_user_sort,
     valid_window,
 )
+from .query_control import bounded_query
 
 router = APIRouter(prefix="/api")
 
 # 繁忙阈值：瞬时利用率 ≥ 该值视为“在用”
 BUSY_THRESHOLD = 10
+
+_TOPOLOGY_CLUSTER_FIELDS = (
+    "id", "key", "name", "sort_order", "capacity_group",
+    "capacity_group_name", "capacity_group_sort", "status", "note", "badges",
+)
+_TOPOLOGY_HOST_FIELDS = (
+    "id", "cluster_id", "key", "display_name", "gpu_count", "sort_order",
+    "status", "note", "vendor", "meta",
+)
+_TOPOLOGY_GPU_FIELDS = (
+    "id", "host_id", "gpu_index", "name", "mem_total_mib",
+)
 
 
 def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
@@ -88,7 +103,6 @@ def _host_placeholder(cluster_id: int | None, h, gpu_count: int) -> dict:
         "id": None,
         "cluster_id": cluster_id,
         "key": h.key,
-        "ssh_alias": h.ssh_alias,
         "display_name": h.display_name,
         "gpu_count": gpu_count,
         "sort_order": 0,
@@ -122,6 +136,114 @@ def _retired_inventory_host_keys() -> set[str]:
         for host in cluster.hosts
         if cluster.status == "retired" or host.status == "retired"
     }
+
+
+def _cache_as_of(now: int | None = None) -> int | None:
+    ttl = load_settings().web.stats_cache_ttl_s
+    if ttl == 0:
+        return None
+    current = int(now or time.time())
+    return current - current % ttl
+
+
+@lru_cache(maxsize=64)
+def _cached_avg(store, window: str, scope: str, metric: str, as_of: int):
+    return store.get_avg(window, scope, metric, now=as_of)
+
+
+@lru_cache(maxsize=32)
+def _cached_avg_multi(store, scope: str, metric: str, as_of: int):
+    return store.get_avg_multi(scope, metric, now=as_of)
+
+
+@lru_cache(maxsize=128)
+def _cached_series(store, scope: str, entity_id: int | None, metric: str,
+                   window: str, as_of: int):
+    return store.get_series(scope, entity_id, metric, window, now=as_of)
+
+
+@lru_cache(maxsize=64)
+def _cached_users_top(store, window: str, by: str, limit: int,
+                      cluster_key: str | None, excluded: tuple[str, ...], as_of: int):
+    return store.get_users_top(
+        window,
+        by=by,
+        limit=limit,
+        cluster_key=cluster_key,
+        excluded_host_keys=excluded,
+        now=as_of,
+    )
+
+
+@lru_cache(maxsize=32)
+def _cached_users_ranking(store, window: str, excluded: tuple[str, ...],
+                          limit: int, as_of: int):
+    return store.get_users_ranking(
+        window,
+        excluded_host_keys=excluded,
+        limit=limit,
+        now=as_of,
+    )
+
+
+def _get_avg(store, window: str, scope: str, metric: str, now: int | None = None):
+    as_of = _cache_as_of(now)
+    if as_of is None:
+        return store.get_avg(window, scope, metric, now=now)
+    return _cached_avg(store, window, scope, metric, as_of)
+
+
+def _get_avg_multi(store, scope: str, metric: str):
+    as_of = _cache_as_of()
+    if as_of is None:
+        return store.get_avg_multi(scope, metric)
+    return _cached_avg_multi(store, scope, metric, as_of)
+
+
+def _get_series(store, scope: str, entity_id: int | None,
+                metric: str, window: str):
+    as_of = _cache_as_of()
+    if as_of is None:
+        return store.get_series(scope, entity_id, metric, window)
+    return _cached_series(store, scope, entity_id, metric, window, as_of)
+
+
+def _get_users_top(store, window: str, by: str, limit: int,
+                   cluster_key: str | None, excluded: tuple[str, ...]):
+    as_of = _cache_as_of()
+    if as_of is None:
+        return store.get_users_top(
+            window,
+            by=by,
+            limit=limit,
+            cluster_key=cluster_key,
+            excluded_host_keys=excluded,
+        )
+    return deepcopy(
+        _cached_users_top(store, window, by, limit, cluster_key, excluded, as_of)
+    )
+
+
+def _get_users_ranking(store, window: str, excluded: tuple[str, ...], limit: int):
+    as_of = _cache_as_of()
+    if as_of is None:
+        return store.get_users_ranking(
+            window,
+            excluded_host_keys=excluded,
+            limit=limit,
+        )
+    return deepcopy(_cached_users_ranking(store, window, excluded, limit, as_of))
+
+
+def _clear_stats_caches_for_tests() -> None:
+    for cached in (
+        _cached_avg,
+        _cached_avg_multi,
+        _cached_series,
+        _cached_users_top,
+        _cached_users_ranking,
+    ):
+        cached.cache_clear()
 
 
 def _topology_with_inventory_placeholders() -> tuple[list[dict], list[dict], dict[str, dict], dict[str, dict]]:
@@ -159,6 +281,28 @@ def _topology_with_inventory_placeholders() -> tuple[list[dict], list[dict], dic
     return store_topo, groups, cluster_meta, host_meta
 
 
+def _selected_fields(item: dict, fields: tuple[str, ...]) -> dict:
+    return {field: item[field] for field in fields if field in item}
+
+
+def _public_topology(topo: list[dict]) -> list[dict]:
+    """只下发 UI/公开 API 需要的字段，不暴露 SSH alias 和硬件 UUID。"""
+    clusters = []
+    for cluster in topo:
+        public_cluster = _selected_fields(cluster, _TOPOLOGY_CLUSTER_FIELDS)
+        public_hosts = []
+        for host in cluster.get("hosts", []):
+            public_host = _selected_fields(host, _TOPOLOGY_HOST_FIELDS)
+            public_host["gpus"] = [
+                _selected_fields(gpu, _TOPOLOGY_GPU_FIELDS)
+                for gpu in host.get("gpus", [])
+            ]
+            public_hosts.append(public_host)
+        public_cluster["hosts"] = public_hosts
+        clusters.append(public_cluster)
+    return clusters
+
+
 @router.get("/meta")
 def meta():
     """前端启动时拉一次：可用窗口、服务器时间、是否打码、采集周期。"""
@@ -182,10 +326,11 @@ def topology():
         for h in c["hosts"]:
             h.update(host_meta.get(h["key"],
                                    {"status": "active", "note": None, "vendor": None, "meta": {}}))
-    return {"capacity_groups": groups, "clusters": topo}
+    return {"capacity_groups": groups, "clusters": _public_topology(topo)}
 
 
 @router.get("/overview")
+@bounded_query
 def overview(window: str = Query("24h")):
     """总览页一把拿全：集群→机→卡（瞬时 + 该窗均值 + coverage + 使用人），加全局汇总。"""
     window = valid_window(window)
@@ -193,7 +338,7 @@ def overview(window: str = Query("24h")):
     now = int(time.time())
     topo, groups, cluster_meta, host_meta = _topology_with_inventory_placeholders()
     snap = store.get_snapshot()
-    avg_list = store.get_avg(window, "gpu", "util_gpu", now=now)
+    avg_list = _get_avg(store, window, "gpu", "util_gpu", now=now)
     avg_by_gpu = {a["gpu_id"]: a for a in avg_list}
     recent_by_gpu = store.get_util_recent(now=now)   # 卡片大字/底色用的近期(10min)平滑值
     status_by_host = {s["key"]: s for s in store.get_collector_status(now=now)}
@@ -292,38 +437,32 @@ def overview(window: str = Query("24h")):
             "clusters": clusters_out, "summary": summary}
 
 
-@router.get("/snapshot")
-def snapshot():
-    store = get_store()
-    snap = store.get_snapshot()
-    # 打码
-    for procs in snap["procs"].values():
-        for p in procs:
-            p["username"] = mask_username(p["username"])
-    return snap
-
-
 @router.get("/metrics/avg")
+@bounded_query
 def metrics_avg(window: str = Query("24h"),
                 scope: str = Query("gpu"),
                 metric: str = Query("util_gpu")):
     window = valid_window(window)
     scope = valid_scope(scope)
     metric = valid_metric(metric)
+    store = get_store()
     return {"window": window, "scope": scope, "metric": metric,
-            "items": get_store().get_avg(window, scope, metric)}
+            "items": _get_avg(store, window, scope, metric)}
 
 
 @router.get("/metrics/avg_multi")
+@bounded_query
 def metrics_avg_multi(scope: str = Query("host"),
                       metric: str = Query("util_gpu")):
     scope = valid_scope(scope)
     metric = valid_metric(metric)
+    store = get_store()
     return {"scope": scope, "metric": metric,
-            "windows": get_store().get_avg_multi(scope, metric)}
+            "windows": _get_avg_multi(store, scope, metric)}
 
 
 @router.get("/metrics/series")
+@bounded_query
 def metrics_series(scope: str = Query("gpu"),
                    id: int | None = Query(None, ge=1),
                    metric: str = Query("util_gpu"),
@@ -332,23 +471,22 @@ def metrics_series(scope: str = Query("gpu"),
     scope = valid_scope(scope)
     metric = valid_metric(metric)
     id = valid_series_id(scope, id)
+    store = get_store()
     return {"scope": scope, "id": id, "metric": metric, "window": window,
-            "points": get_store().get_series(scope, id, metric, window)}
+            "points": _get_series(store, scope, id, metric, window)}
 
 
 @router.get("/users/top")
+@bounded_query
 def users_top(window: str = Query("24h"),
               by: str = Query("gpu_hours"),
               limit: int = Query(20, ge=1, le=100),
               cluster: str | None = Query(None)):
     window = valid_window(window)
     by = valid_user_sort(by)
-    items = get_store().get_users_top(
-        window,
-        by=by,
-        limit=limit,
-        cluster_key=cluster,
-        excluded_host_keys=_retired_inventory_host_keys(),
+    excluded = tuple(sorted(_retired_inventory_host_keys()))
+    items = _get_users_top(
+        get_store(), window, by, limit, cluster, excluded,
     )
     for it in items:
         it["username"] = mask_username(it["username"])
@@ -356,15 +494,19 @@ def users_top(window: str = Query("24h"),
 
 
 @router.get("/users/ranking")
+@bounded_query
 def users_ranking(window: str = Query("24h")):
     """全局用户占用排行：同 username 跨设备聚合，按设备拆分 gpu_hours（堆叠条用）。
     退役机器(status=retired)彻底移除，其 GPU·h 不计入合计。"""
     window = valid_window(window)
     retired = _retired_inventory_host_keys()
-    data = get_store().get_users_ranking(window, excluded_host_keys=retired)
+    limit = load_settings().web.ranking_user_limit
+    data = _get_users_ranking(
+        get_store(), window, tuple(sorted(retired)), limit
+    )
 
     # 过滤 retired 机器，并补充 capacity_group
-    _, cluster_meta, host_meta = _inventory_ui_meta()
+    _, cluster_meta, _ = _inventory_ui_meta()
     data["machines"] = [
         {**m, "capacity_group": cluster_meta.get(m["cluster_key"], {}).get("capacity_group")}
         for m in data["machines"]

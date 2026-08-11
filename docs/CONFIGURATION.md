@@ -254,6 +254,12 @@ path = "data/gpumon.db"     # 相对项目根
 [web]
 host = "127.0.0.1"          # 反代后面就保持 127.0.0.1；要直接访问改 0.0.0.0
 port = 8848
+enable_docs = false          # 生产关闭 /docs、/redoc、/openapi.json
+max_query_concurrency = 4    # 昂贵查询并发上限
+query_queue_timeout_s = 1    # 查询槽位满时排队上限；超时返回 503
+query_timeout_s = 12         # 单个 SQLite 查询连接的执行上限
+stats_cache_ttl_s = 15       # 历史统计短缓存；0 表示关闭
+ranking_user_limit = 200     # 排行最多返回多少人
 
 [privacy]
 mask_users = false          # true 时使用人显示成 a***e
@@ -262,6 +268,16 @@ mask_users = false          # true 时使用人显示成 a***e
 enabled = true              # 是否启用自动备份（systemd timer 会检查此开关）
 keep_count = 3              # 保留最近几个备份
 ```
+
+### Web 查询边界
+
+Web 默认只同时执行 4 个昂贵统计查询；槽位满后最多等 1 秒，单个 SQLite 只读连接
+最多执行 12 秒。超出任一边界会返回带 `Retry-After` 的 HTTP 503，而不是继续堆积线程和
+内存。历史均值、时序和排行按 15 秒短缓存复用，排行超过 200 人时只返回前 200 名并在
+响应/UI 标明截断。小规格宿主建议保留这些默认值；大部署应先在数据库副本测量，再逐项调大。
+
+`enable_docs=false` 只关闭 FastAPI 的交互式文档和 OpenAPI JSON，不影响仪表盘 API。
+开发环境需要调试接口时可显式设为 `true`。
 
 ### 备份配置
 

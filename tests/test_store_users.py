@@ -138,6 +138,28 @@ def test_user_queries_exclude_retired_hosts_before_aggregation(tmp_path, monkeyp
     ]
 
 
+def test_users_ranking_limits_complete_users_and_reports_truncation(tmp_path, monkeypatch):
+    store = _setup_store(tmp_path)
+    monkeypatch.setattr(
+        "gpumon.db.store.load_settings",
+        lambda: SimpleNamespace(collector=SimpleNamespace(poll_interval_s=3600)),
+    )
+    _insert_proc(store, 1, 100, 10, "alice", 100)
+    _insert_proc(store, 1, 200, 11, "alice", 100)
+    _insert_proc(store, 1, 100, 20, "bob", 100)
+    _insert_proc(store, 1, 100, 30, "charlie", 100)
+    store.write_conn().commit()
+
+    ranking = store.get_users_ranking("24h", now=1000, limit=2)
+
+    assert [user["username"] for user in ranking["users"]] == ["alice", "bob"]
+    assert ranking["users"][0]["by_machine"] == {"host": 2.0}
+    assert ranking["total_users"] == 3
+    assert ranking["returned_users"] == 2
+    assert ranking["truncated"] is True
+    assert ranking["limit"] == 2
+
+
 @pytest.mark.parametrize(
     ("method", "args", "kwargs"),
     [
@@ -145,6 +167,7 @@ def test_user_queries_exclude_retired_hosts_before_aggregation(tmp_path, monkeyp
         ("get_users_top", ("24h",), {"by": "not-a-sort"}),
         ("get_users_top", ("24h",), {"limit": 0}),
         ("get_users_ranking", ("bad",), {}),
+        ("get_users_ranking", ("24h",), {"limit": 0}),
     ],
 )
 def test_user_store_queries_reject_invalid_parameters(tmp_path, method, args, kwargs):

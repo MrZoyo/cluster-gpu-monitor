@@ -250,6 +250,16 @@ class DbSettings(ConfigModel):
 class WebSettings(ConfigModel):
     host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
     port: int = Field(default=8848, ge=1, le=65_535)
+    enable_docs: bool = False
+    max_query_concurrency: int = Field(default=4, ge=1, le=32)
+    query_queue_timeout_s: float = Field(
+        default=1.0, ge=0, le=30, allow_inf_nan=False
+    )
+    query_timeout_s: float = Field(
+        default=12.0, ge=1, le=120, allow_inf_nan=False
+    )
+    stats_cache_ttl_s: int = Field(default=15, ge=0, le=300)
+    ranking_user_limit: int = Field(default=200, ge=1, le=1000)
 
 
 class PrivacySettings(ConfigModel):

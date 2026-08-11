@@ -200,7 +200,8 @@ sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
 
 系统级 unit 都从 `<ROOT>/current` 执行代码，同时把 `GPUMON_ROOT` 指向稳定的
 `<ROOT>`。采集器与 Web 必须使用不同账户：Web 不持有 SSH home/key，代码会用 SQLite
-`mode=ro` + `query_only` 强制只读，systemd 也把整个应用根挂成只读。备份 timer 是唯一
+`mode=ro` + `query_only` 强制只读，systemd 也把整个应用根挂成只读，并为 Web 设置
+256/384 MiB 内存水位/硬上限和 64 个任务上限。备份 timer 是唯一
 自动调度源，每天 04:00 触发一次：
 
 | 文件 | 类型 | 说明 |

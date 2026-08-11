@@ -35,6 +35,9 @@ CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressAllow=localhost
 IPAddressDeny=any
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target
