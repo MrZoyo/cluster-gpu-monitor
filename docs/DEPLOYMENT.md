@@ -412,11 +412,12 @@ ECharts tooltip 和现有组件生成的行内样式；脚本仍严格限制为�
 ```bash
 sudo cp deploy/caddy/Caddyfile.example /etc/caddy/Caddyfile
 sudo vim /etc/caddy/Caddyfile          # 填 <YOUR_DOMAIN>
-sudo caddy validate --config /etc/caddy/Caddyfile
+sudo bash -c 'set -a; . /etc/gpumon/caddy.env; set +a; caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile'
 sudo systemctl enable --now caddy && sudo systemctl restart caddy
 ```
 
 模板关闭了 Caddy admin API，因此后续更新也必须先 `caddy validate`，再受控 restart。
+校验命令只加载环境文件、不回显变量；显式 adapter 也避免 staging 文件名被误当成 JSON。
 
 首次启动 Caddy 会自动向 Let's Encrypt 申请证书并配置自动续期，什么都不用管。
 前提是**入站 80 和 443 都可达**：80 用于 HTTP-01 挑战和 HTTP→HTTPS 跳转，443 是正经服务。
@@ -821,7 +822,7 @@ print('ok')"
 | 证书签不下来（DNS-01） | token 错、插件没编进去、DNS 缓存 | `caddy list-modules \| grep dns.providers`（没输出 = 插件没带进来）；`tls` 块里加 `resolvers 1.1.1.1 8.8.8.8` |
 | `curl` 在 TLS 握手阶段被 RST | 域名按 SNI 被阻断 | 加 IP 直连入口 + `default_sni`，见 7.5 |
 | 口令怎么输都不对 | hash 里的 `$` 被 shell 展开了 | `/etc/gpumon/caddy.env` 里用单引号：`GPUMON_BASIC_HASH='$2a$14$...'`；改完 `systemctl restart caddy`（不是 reload） |
-| Caddy 起不来 | 指令名版本不符、端口被占 | `caddy validate --config /etc/caddy/Caddyfile`；≥2.8 用 `basic_auth`，更早用 `basicauth`；`ss -tlnp \| grep -E ':(443\|8443)'` |
+| Caddy 起不来 | 指令名版本不符、环境文件未加载、端口被占 | 用 6.4 节“加载环境文件 + 显式 adapter”的 validate 命令；≥2.8 用 `basic_auth`，更早用 `basicauth`；`ss -tlnp \| grep -E ':(443\|8443)'` |
 | 数据库 `database is locked` | 两个采集器同时在跑 | 用户级和系统级只能留一套：`systemctl --user disable --now gpumon-collector` |
 | 改了 inventory 网页没反应 | 采集器只在启动时读配置 | `systemctl restart gpumon-collector`（退役机器还要一起重启 `gpumon-web`） |
 

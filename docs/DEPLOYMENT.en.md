@@ -406,12 +406,14 @@ meta CSP; `frame-ancestors` still requires the real deployment response header.
 ```bash
 sudo cp deploy/caddy/Caddyfile.example /etc/caddy/Caddyfile
 sudo vim /etc/caddy/Caddyfile          # Fill <YOUR_DOMAIN>
-sudo caddy validate --config /etc/caddy/Caddyfile
+sudo bash -c 'set -a; . /etc/gpumon/caddy.env; set +a; caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile'
 sudo systemctl enable --now caddy && sudo systemctl restart caddy
 ```
 
 The template disables Caddy's admin API, so later changes must also be validated first and
 then applied with a controlled restart.
+The command loads the environment file without printing it and pins the adapter so a staging
+filename is not accidentally parsed as JSON.
 
 First Caddy start automatically requests certificate from Let's Encrypt and configures auto-renewal, nothing to manage. Prerequisite is **inbound 80 and 443 both reachable**: 80 for HTTP-01 challenge and HTTP→HTTPS redirect, 443 is actual service. Cloud VM remember to allow 80/443 in security group, **8848 absolutely do not allow**.
 
@@ -790,7 +792,7 @@ Historical data can continue seamlessly because everything links by `key` in `in
 | Certificate won't sign (DNS-01) | Token wrong, plugin not compiled in, DNS cache | `caddy list-modules \| grep dns.providers` (no output = plugin not included); add `resolvers 1.1.1.1 8.8.8.8` in `tls` block |
 | `curl` gets RST at TLS handshake stage | Domain blocked by SNI | Add IP direct-connect entry + `default_sni`, see 7.5 |
 | Password never matches | Hash's `$` got shell-expanded | `/etc/gpumon/caddy.env` use single quotes: `GPUMON_BASIC_HASH='$2a$14$...'`; after changing `systemctl restart caddy` (not reload) |
-| Caddy won't start | Directive name version mismatch, port occupied | `caddy validate --config /etc/caddy/Caddyfile`; ≥2.8 use `basic_auth`, earlier use `basicauth`; `ss -tlnp \| grep -E ':(443\|8443)'` |
+| Caddy won't start | Directive mismatch, environment file not loaded, port occupied | Use the environment-loading, explicit-adapter validate command from section 6.4; ≥2.8 uses `basic_auth`, earlier versions use `basicauth`; `ss -tlnp \| grep -E ':(443\|8443)'` |
 | Database `database is locked` | Two collectors running simultaneously | Only keep one of user-level or system-level: `systemctl --user disable --now gpumon-collector` |
 | Changed inventory, web no response | Collector only reads config at startup | `systemctl restart gpumon-collector` (retired machines also restart `gpumon-web`) |
 
