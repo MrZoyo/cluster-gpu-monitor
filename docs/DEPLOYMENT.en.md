@@ -1,6 +1,12 @@
 # Deployment Guide
 
+[简体中文](DEPLOYMENT.md) | English | [Documentation](README.en.md) | [Project home](../README.en.md)
+
 Install cluster-gpu-monitor on a machine that stays online (hereinafter **monitor host**). It polls each GPU node via SSH and runs a web service for your team. Target nodes **install nothing** and need no root access.
+
+For a first evaluation, use the [README quick start](../README.en.md#quick-start). This document is
+the complete production runbook. See the [configuration reference](CONFIGURATION.en.md) for fields
+and [Architecture and trade-offs](ARCHITECTURE.en.md) for data and security boundaries.
 
 Placeholders in this guide, replace per your environment:
 
@@ -26,7 +32,7 @@ All three are supported, choose based on what you have:
 | **2. Domain + Caddy auto HTTPS** | Production recommended | Trusted cert, green lock | Two lines of config |
 | **3. No domain → DuckDNS + DNS-01** | No domain, or inbound 80/443 blocked | Trusted cert, green lock | Needs Caddy with plugin |
 
-Sections 1, 2, 3 are common prep for all paths, do them then jump to section 5 to pick your path.
+Sections 1–4 are common preparation for every path. Complete them before choosing a path in section 5.
 
 ---
 
@@ -289,11 +295,15 @@ Browser open `http://<SERVER_IP>:8848`.
 
 > **Warning: Plaintext transmission.**
 >
-> This is **pure HTTP, no encryption**. Future login page passwords would also transmit plaintext, same network segment packet capture can grab them; page content (who's using which GPU) also plaintext.
+> This is **plain HTTP with neither encryption nor application authentication**. Dashboard content,
+> including who uses each GPU, crosses the network in plaintext.
 >
-> **Only use on networks you trust** (lab intranet, office LAN, inside company VPN).
+> **Use it only on isolated, trusted networks** such as a lab LAN, office LAN, or company VPN, and
+> restrict source addresses with a firewall or security group.
 >
-> Additionally, `--host 0.0.0.0` means **anyone who can reach this port can access**, no network-layer filtering. This path's access control **only relies on application's own login page** — and current version has no login page yet, meaning this path equals "whoever connects can view." So must rely on firewall to narrow source:
+> `--host 0.0.0.0` means **anyone who can reach the port can view the dashboard**. The current Web
+> application has no built-in login, so this path depends entirely on network isolation. Narrow the
+> source range with a firewall:
 >
 > ```bash
 > # Only allow access from certain subnet to 8848 (example, change per your subnet)
@@ -445,7 +455,7 @@ ACME certificate signing needs to prove "this domain is yours", three challenge 
 
 DNS-01 is entirely the monitor host actively calling DuckDNS HTTP API to write TXT record, CA queries DNS, **no step requires external connection into your machine**.
 
-This saves several common困境situations:
+This avoids several common deployment problems:
 
 - Cloud provider / datacenter / ISP **blocks inbound 80, 443** (home broadband, some regional compliance restrictions very common)
 - Machine behind NAT, can't do port mapping
@@ -692,22 +702,20 @@ sudo systemctl restart caddy         # Changed EnvironmentFile needs restart, re
 
 ### Backup
 
-Database is single-file SQLite, WAL enabled. **Direct `cp` is unsafe**, use SQLite online backup:
+The database uses SQLite WAL. **Do not copy a live database with `cp`**; use the built-in online
+backup command:
 
 ```bash
-sqlite3 <ROOT>/data/gpumon.db ".backup '/backup/gpumon-$(date +%F).db'"
+ROOT=<ROOT>
+APP_USER=<USER>
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
+  "$ROOT/current/.venv/bin/gpumon" backup
 ```
 
-No `sqlite3` command-line? Use Python backup API:
-
-```bash
-cd <ROOT> && .venv/bin/python -c "
-import sqlite3
-src = sqlite3.connect('data/gpumon.db')
-dst = sqlite3.connect('/backup/gpumon.db')
-src.backup(dst); dst.close(); src.close()
-print('ok')"
-```
+Backups are written under `<ROOT>/data/backups/`. A temporary file must pass `quick_check`,
+permission, and fsync checks before atomic publication; old files are then pruned according to
+`[backup] keep_count`. `backup.enabled=false` skips only timer-triggered runs. The manual command
+still creates a backup immediately.
 
 Database is single-writer model. Before any offline DB operations first `systemctl stop gpumon-collector` to avoid write contention.
 
@@ -771,7 +779,9 @@ Historical data can continue seamlessly because everything links by `key` in `in
 - [ ] **Password hash, DNS token, private keys only on deployment host locally**, `chmod 600`, never in repo.
 - [ ] **Want to hide usernames** (public display, privacy compliance): `[privacy] mask_users = true` in `settings.toml`, web shows as `a***e`.
 
-> **About login**: Current version has no built-in login page, access control relies on reverse proxy's Basic Auth (path 2/3) or network-layer isolation (path 1). Built-in login page coming in future version, then path 1 can also have application-level auth; but **even with login page, public exposure still must use HTTPS**.
+> **About login**: The current version has no built-in login or authorization system. Access control
+> must come from reverse-proxy Basic Auth (paths 2 and 3) or network isolation (path 1). Every public
+> entry point must use HTTPS.
 
 ---
 

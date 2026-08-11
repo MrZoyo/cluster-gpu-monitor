@@ -1,5 +1,11 @@
 # Configuration Reference
 
+[简体中文](CONFIGURATION.md) | English | [Documentation](README.en.md) | [Project home](../README.en.md)
+
+This is the field reference. Start with the [README quick start](../README.en.md#quick-start).
+See [Architecture and trade-offs](ARCHITECTURE.en.md) for metric semantics and the
+[deployment guide](DEPLOYMENT.en.md) for production installation.
+
 Two files, both under `config/`, both **not checked into repo** (`.gitignore` already excludes them):
 
 | File | What it controls | What to do after changing |

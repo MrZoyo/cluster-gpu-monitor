@@ -1,298 +1,179 @@
-# cluster-gpu-monitor
+# Cluster GPU Monitor
 
 [简体中文](README.md) | English
 
-Self-hosted monitoring for multi-cluster GPU servers: **no agent, no root, no scheduler**.
-A plain SSH connection is all it takes to record utilization, VRAM, temperature, power and
-*who is using what* into SQLite. It answers **"do we need to buy more GPUs"**, not
-"which card is free right now".
+[![Tests](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml/badge.svg)](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The primary metric is the **rolling average** of GPU utilization
-(12h / 24h / 48h / 72h / 1 week / 2 weeks / 1 month), paired with a per-user GPU-hours
-leaderboard and idle-but-occupied detection, so capacity decisions rest on real data.
+Monitor NVIDIA and AMD GPU servers from one central host over SSH. Cluster GPU Monitor stores
+long-term utilization, per-user GPU hours, and idle-but-occupied cards in SQLite. Target nodes
+need no agent, scheduler, or root access.
 
-## Why another one
+**It answers “do we need more GPUs?”, not only “which GPU is free right now?”**
 
-GPU monitoring tools cluster into two camps, and there is a gap between them:
+[Live demo](https://mrzoyo.github.io/cluster-gpu-monitor/) ·
+[Documentation](docs/README.en.md) ·
+[Configuration](docs/CONFIGURATION.en.md) ·
+[Deployment](docs/DEPLOYMENT.en.md)
 
-- **"Who's free right now" dashboards** (gpustat-web, gpuview, ssh-dashboard, nvitop):
-  also agentless, and they do show per-user processes — but they keep **no history**,
-  so they cannot answer "what was our average utilization last month".
-- **Long-term metric stacks** (DCGM + Prometheus + Grafana) and **HPC job accounting**
-  (jobstats-style tooling, GCM-style systems): history and per-user attribution are there,
-  but the price is **a per-node agent or daemon**, or **a scheduler**
-  (Slurm, k8s) to attribute usage to people.
+## Why use it
 
-This project sits in the gap: agentless collection, long-term history, and per-user
-attribution, all three at once.
+Agentless dashboards show current processes but usually discard history. Prometheus / DCGM
+stacks retain history but install components on every node. HPC accounting systems usually
+depend on a scheduler. Cluster GPU Monitor fills the gap: **agentless collection, long-term
+history, and username attribution in one small service.**
 
-|                          | Agentless | Persistent history | Per-user attribution | Scheduler required |
-| ------------------------ | :-------: | :----------------: | :------------------: | :----------------: |
-| Multi-host "who's free"  |    yes    |         no         |         yes          |         no         |
-| DCGM + Prometheus        |    no     |        yes         |       limited        |         no         |
-| HPC job accounting       |    no     |        yes         |         yes          |        yes         |
-| **This project**         |  **yes**  |      **yes**       |       **yes**        |       **no**       |
+| Approach | Agentless | Long-term history | User attribution | Scheduler required |
+| --- | :---: | :---: | :---: | :---: |
+| Multi-host live dashboard | yes | no | yes | no |
+| DCGM + Prometheus | no | yes | limited | no |
+| HPC job accounting | no | yes | yes | yes |
+| **Cluster GPU Monitor** | **yes** | **yes** | **yes** | **no** |
 
-How: a central host SSHes into each node to run `nvidia-smi` / `rocm-smi` plus `ps`,
-attributes usage to users via the username parsed from `ps` (no Slurm, no k8s),
-and writes raw samples into SQLite with **two-tier pre-aggregation** so an average over
-any window comes back instantly.
+It fits teams with a handful to a few dozen self-managed GPU servers, no shared scheduler, and
+a need for historical capacity data. Use a full telemetry and scheduling stack for thousand-node
+fleets, second-level alerts, quotas, or billing.
 
-Good fit: a handful to a few dozen self-managed GPU boxes, no shared scheduler, and a need
-for **long-term data you can take into a budget conversation**.
-Not a fit: thousand-node cluster telemetry (use a DCGM exporter) or second-level alerting.
+## Highlights
 
-## Features
-
-- **Rolling average utilization** over 12h / 24h / 48h / 72h / 1w / 2w / 1m, with drill-down
-  from overview to cluster to host to a single card.
-- **Per-user GPU-hours leaderboard**, aggregated across machines by username, with a
-  breakdown stacked by capacity domain, cluster and host.
-- **Idle-but-occupied detection**: cards holding VRAM while recent utilization stays below
-  5% get their own marker, which is how you find wasted reservations.
-- **NVIDIA + AMD (ROCm)**: vendor is auto-detected on the remote host, or pinned in the
-  inventory (see the AMD note below).
-- **Multi-cluster / capacity-domain grouping**: a three-level topology where each domain
-  gets its own color family automatically, no manual palette work.
-- **Fully customizable names and badges**: display names plus badges
-  (text, prefix mark, tooltip, semantic tone) all live in the inventory.
-- **Light and dark themes**; charts use a **bundled local ECharts**, no external CDN,
-  so it works on air-gapped networks.
-- **Offline and missing-card awareness**: a host that misses the liveness threshold is
-  marked offline and shows "offline" instead of its last stale occupancy, and it is excluded
-  from current averages and busy counts. Discovering fewer cards than the inventory expects
-  is surfaced in the UI.
-- **Soft retirement**: mark a decommissioned box `status: retired` and the collector stops
-  probing it and the UI hides it, while every history row stays in the database.
-
-## Architecture
-
-```
-Monitored nodes (nothing installed)
-    ↑ ssh <alias> bash -s        ← ordinary user, script piped via stdin, nothing written remotely
-Collector                        ← one connection fetches everything: GPU / processes / CPU / RAM / load
-    ↓
-SQLite (WAL) ─ raw samples ─→ 5-minute rollup ─→ 1-hour rollup
-    ↓
-FastAPI (/api/*) ─→ vanilla HTML + JS + local ECharts (no build step)
-```
-
-- **Collection**: SSH polling (pull), 30s per round by default, with a configurable
-  concurrency cap. It shells out to the system `ssh` rather than using paramiko, so it
-  inherits aliases, `ProxyJump`, keys and known_hosts straight from `~/.ssh/config` —
-  no IP, port, password or private key ever appears in the code, and moving to a different
-  central host is just an ssh config change. The remote side only needs coreutils, the
-  vendor smi tool and `ps`.
-- **Storage**: SQLite with WAL. Raw samples plus 5-minute and 1-hour rollups. Queries pick a
-  table by window size: 5-minute buckets for ≤24h, 1-hour buckets for anything longer
-  (see `WINDOWS` and `pick_table()` in `src/gpumon/db/store.py`), so even a one-month
-  average never scans the raw tables. The collector loop advances rollups incrementally
-  (5-minute buckets every minute, 1-hour buckets every 5 minutes) and runs retention cleanup
-  hourly.
-- **Backend**: FastAPI — JSON endpoints plus serving `web/` as a static site.
-- **Frontend**: vanilla HTML/JS. No bundler, no node_modules; edit and refresh.
-
-One deliberate design choice: **the big number on a GPU card is "recent utilization"**
-(a 10-minute average, with a "zero it out after 3 consecutive samples ≤5%" rule). That
-smooths the 0/100 flicker between training steps while still dropping to idle the moment a
-job stops. The small "avg" figure underneath is the long-term average over the selected
-window. True instantaneous values live only in the tooltip and the single-card page.
-
-Utilization colors are **semantic** — red at full load, then orange, yellow, green for in-use
-and grey for idle, with fixed meaning (thresholds in `utilColor`, `web/js/components.js`).
-Capacity domains and clusters instead use **family colors** (the 8 built-in `Palette` bands:
-lime, violet, azure, amber, rose, teal, indigo, slate) purely to express *which* domain or
-cluster something belongs to. The two systems never interfere. Once the built-in bands are
-exhausted, new hues are generated by golden-angle rotation, so a ninth domain still gets a
-distinct color instead of falling back to grey.
-
-## Requirements
-
-- **Central host**: Python 3.12+ and an `ssh` client. [uv](https://docs.astral.sh/uv/) is
-  recommended for dependency management.
-- **Monitored nodes**: `bash`, `nvidia-smi` (or `rocm-smi` / `amd-smi`), `ps`, coreutils, and
-  an ordinary account you can log into without a password prompt.
-  **No root, nothing to install.**
+- **Long-term utilization:** rolling averages from 12 hours to 1 month, with overview, cluster,
+  host, and single-GPU drill-down.
+- **Per-user GPU hours:** aggregate operating-system usernames across machines and break usage
+  down by capacity domain, cluster, and host.
+- **Idle-but-occupied detection:** flag GPUs that hold VRAM while recent utilization stays below 5%.
+- **Multi-cluster topology:** model capacity domain → cluster → host, with badges, planned capacity,
+  and soft retirement.
+- **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`.
+- **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
+  build step.
 
 ## Quick start
 
+The central host needs Python 3.12+, [uv](https://docs.astral.sh/uv/), and the system `ssh`
+client. Target nodes need `bash`, `ps`, coreutils, and the vendor SMI tool.
+
 ```bash
-git clone <this-repo>
+git clone https://github.com/MrZoyo/cluster-gpu-monitor.git
 cd cluster-gpu-monitor
 uv sync
 
-cp config/inventory.example.yaml config/inventory.yaml   # your machines
-cp config/settings.example.toml  config/settings.toml    # interval, retention, etc.
+cp config/inventory.example.yaml config/inventory.yaml
+cp config/settings.example.toml config/settings.toml
+$EDITOR config/inventory.yaml
 
-uv run gpumon config-check     # validate: prints domains, clusters, hosts, expected cards, palettes
-uv run gpumon initdb           # create tables + sync topology
-uv run gpumon collect --once   # one probe round (add --host <key> for a single machine)
-uv run gpumon web              # serve http://127.0.0.1:8848/
+SSH_ALIAS=my-a-1                  # replace with one ssh_alias from the inventory
+ssh "$SSH_ALIAS" true             # confirm non-interactive login
+uv run gpumon config-check        # validate topology, expected GPUs, and runtime settings
+uv run gpumon initdb
+uv run gpumon collect --once      # test one collection round
+uv run gpumon web                 # http://127.0.0.1:8848/
 ```
 
-This assumes `~/.ssh/config` on the central host already has an entry for every `ssh_alias`
-in the inventory and that login needs no interaction. Confirm with `ssh <alias> true` before
-running `collect --once`.
+Every `ssh_alias` in `inventory.yaml` must match an entry in the central host's
+`~/.ssh/config`. Keep bastions, ports, keys, and host-key policy in SSH configuration;
+the collector calls the system `ssh` client and preserves those settings.
 
-Other subcommand: `gpumon rollup-once` runs aggregation and retention cleanup by hand
-(the long-running collector does this automatically).
-
-A production setup runs two processes: `gpumon collect` (the polling loop) and `gpumon web`.
-`web` listens on `127.0.0.1` only and **ships with no authentication of its own** — if you
-expose it, put a reverse proxy with auth in front of it (`deploy/` has systemd and Caddy
-templates).
-
-## Live demo
-
-**https://mrzoyo.github.io/cluster-gpu-monitor/**
-
-Every name in it is made up (4 capacity domains / 9 clusters / 32 hosts / 256 GPUs),
-and the clock is frozen at export time. It's a **fully static page**: the build
-generates fresh data, snapshots each API response to JSON, and a small shim rewrites
-`/api/...` requests to those files — the frontend code is unmodified. See
-`scripts/export_static_demo.py`.
-
-Build one locally:
+To view the dashboard from another machine, create a tunnel:
 
 ```bash
-# demo database + matching inventory (256 GPUs, 3 days of history, ~14s)
-uv run python scripts/gen_demo_db.py --scale large --days 3 \
-    --db data/demo.db --inventory config/inventory.demo.yaml
-
-# serve it with the real backend
-cp config/inventory.demo.yaml config/inventory.yaml
-# then point [db] path in config/settings.toml at data/demo.db
-uv run gpumon web
-
-# or export a static site that any web server can host
-uv run python scripts/export_static_demo.py \
-    --db data/demo.db --inventory config/inventory.demo.yaml --out dist/demo
-cd dist/demo && python3 -m http.server 8080
+ssh -N -L 8848:127.0.0.1:8848 <monitor-host>
 ```
 
-The generator marks both the demo database and inventory as synthetic, and refuses to
-overwrite real-looking paths or existing unmarked files. Static export accepts those marked
-inputs by default, while `--force` only removes an output directory previously marked by this
-tool. Use `--allow-unmarked-inputs` only for deliberately constructed fictional data—never for
-a real monitoring database.
+Then open `http://127.0.0.1:8848/`. See the [deployment guide](docs/DEPLOYMENT.en.md) for
+long-running services, systemd, backups, and HTTPS.
 
-`--scale small` gives a 48-GPU variant. The demo data deliberately covers the edge
-cases: saturated GPUs, idle-but-occupied GPUs (VRAM held at <5% utilization), an
-offline host, a host reporting one GPU short, a planned cluster, a retired cluster,
-an AMD cluster, and a cluster with enough badges to trigger the `+N` fold.
+## How it works
 
-## Configuration
-
-Two files, both gitignored:
-
-- `config/inventory.yaml` — the machine list, and **the single source of truth** for the
-  whole system.
-- `config/settings.toml` — runtime knobs: poll interval, SSH timeouts, concurrency,
-  retention, DB path, listen address, and whether to mask usernames
-  (`mask_users = true` renders them as `a***e`).
-
-See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the full field reference,
-the palette list, badge syntax, `status` semantics, and the retention gotcha.
-(Reference is in Chinese; the example configs are commented in both.)
-
-### Three-level hierarchy
-
-The hierarchy is fixed at three levels. Page grouping, summary tables, the leaderboard and
-all coloring adapt to it, so **adding machines never means touching code**:
-
+```text
+GPU nodes (no agent installed)
+    ↑  ssh <alias> bash -s
+Collector: GPU / processes / CPU / RAM / load
+    ↓
+SQLite: raw samples → 5-minute rollups → 1-hour rollups
+    ↓
+FastAPI /api/* → vanilla HTML + JavaScript + bundled ECharts
 ```
-capacity domain (capacity_group)   own / rented / partner ... your call; one color family each
-└── cluster                        a set of machines plus cluster-level badges
-    └── host                       one alias in ~/.ssh/config
-```
+
+- The remote script runs from stdin and writes no files on target nodes.
+- Raw samples support username attribution; two rollup tiers keep long-window queries small.
+- GPU cards separate recent activity from the selected window's average, which avoids treating
+  training-step oscillation as meaningful capacity change.
+- The Web process can use a separate account with read-only SQLite access and no SSH key access.
+
+See [Architecture and trade-offs](docs/ARCHITECTURE.en.md) for query windows, data lifecycle,
+metric semantics, and security boundaries.
+
+## Minimal configuration
 
 ```yaml
-capacity_groups:
-  - { key: own, name: "Own capacity", sort_order: 1, palette: lime }
+version: 1
 
 clusters:
-  - key: cluster-a
-    name: "Cluster A"
-    capacity_group: own
-    badges:
-      - { text: "self-hosted", mark: "◆", tone: cyan, tooltip: "Racked in-house, self-service accounts" }
-      - { text: "InfiniBand", tone: green }
+  - key: training
+    name: "Training cluster"
     hosts:
-      - { key: node-1, ssh_alias: my-node-1, display_name: "Node-1",
-          meta: { gpu_model: "NVIDIA A100 80GB" } }
+      - key: node-1
+        ssh_alias: gpu-node-1
+        display_name: "GPU Node 1"
+        gpu_count: 8
 ```
 
-Key conventions:
+`key` anchors history and should remain stable after deployment. When addresses, ports, or
+bastions change, update `ssh_alias` and `~/.ssh/config` instead. See the
+[configuration reference](docs/CONFIGURATION.en.md) for every field, badges, AMD, retention,
+concurrency, and query limits.
 
-- **Never change a `key` once it is live** — history is linked by it. When a machine moves to
-  a different central host, change only `ssh_alias`; the `key` stays and the history stays
-  continuous.
-- `palette` can be omitted; bands are assigned by rotating through the domains' `sort_order`.
-- `gpu_count` is the expected card count, used for missing-card and offline detection.
-  Falls back to `defaults.gpu_count`.
-- Leave `vendor` empty for remote auto-detection (`nvidia-smi` → `amd-smi` → `rocm-smi`);
-  pin it only if detection guesses wrong.
-- `status`: `active`, `planned` (not yet onboarded, shown as placeholder cards), or
-  `retired` (soft retirement).
-- Multiple `badges` render on the cluster card header; beyond three they collapse into "+N".
-  `tone` accepts only the preset names (cyan, gold, green, violet, neutral).
+## Production and security
 
-Restart the collector after editing the inventory — topology is upserted and GPUs are
-discovered on the first round. Run `gpumon config-check` first; it prints the effective
-domains, palettes, clusters, hosts and total card count.
+`gpumon web` has **no built-in authentication** and listens on `127.0.0.1` by default. Put it
+behind an authenticating HTTPS reverse proxy before sharing it with a team. The repository
+includes systemd and Caddy templates.
 
-### Retention
+For production:
 
-Three numbers under `[retention]`, one per tier:
+- Run collector / backup and Web under separate system accounts; the Web account needs no SSH key.
+- Keep real `inventory.yaml`, `settings.toml`, password hashes, DNS tokens, and private keys on the
+  deployment host.
+- Use immutable releases with separate configuration and data directories, plus a previous release
+  for rollback.
+- Use the built-in online SQLite backup instead of copying a live WAL database.
 
-| Setting | Default | Notes |
+The [deployment guide](docs/DEPLOYMENT.en.md) covers installation, HTTPS, operations,
+troubleshooting, and rollback.
+
+## Documentation
+
+| Goal | English | 简体中文 |
 | --- | --- | --- |
-| `raw_days` | 35 | Raw samples; minimum 31 days, with five extra days by default so the one-month leaderboard is complete |
-| `rollup_5m_days` | 30 | 5-minute rollups, used by windows ≤24h |
-| `rollup_1h_days` | 400 | 1-hour rollups, used by windows >24h |
+| Choose a guide | [Documentation index](docs/README.en.md) | [文档目录](docs/README.md) |
+| Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
+| Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
+| Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |
+| Deploy, operate, and troubleshoot | [Deployment guide](docs/DEPLOYMENT.en.md) | [部署指南](docs/DEPLOYMENT.md) |
 
-Note that **the user leaderboard scans raw process samples**, so its reach is bounded by
-`raw_days`. Utilization charts and averages read the rollup tables and are unaffected.
-Legacy values below 31 days are rejected before startup instead of silently serving a
-partial “1m” leaderboard.
+## Limits
 
-## AMD (ROCm) support status
-
-To be upfront about it: the AMD path is **implemented against the documented `rocm-smi` /
-`amd-smi` output formats and unit-tested with synthetic samples, but has not yet been
-validated on real AMD hardware.** The NVIDIA path is what runs in production today.
-
-Implementation notes: the remote side forwards the raw smi JSON verbatim and all parsing
-happens in Python (`src/gpumon/collector/parse_amd.py`), matching fields by key name anywhere
-in the nested structure and normalizing units — because amd-smi's field names and nesting
-have changed across ROCm point releases. Process-to-GPU mapping on `rocm-smi` depends on
-`--showpidgpus`, which some versions do not have; without it, processes cannot be tied to a
-specific card.
-
-If you have AMD hardware, running `scripts/probe_one.sh <alias>` and pasting the raw output
-into an issue would help a lot — or send a PR fixing the field names directly.
+- User attribution comes from the operating-system username reported by `ps`; it does not model
+  scheduler jobs, projects, or cost centers.
+- The NVIDIA path runs in production. The AMD parser has synthetic fixtures but still needs
+  validation on real AMD hardware.
+- SQLite suits small and medium self-managed fleets, not thousand-node high-frequency telemetry.
+- The project has no built-in login, authorization system, or alerting engine. Network controls and
+  the reverse proxy provide access control.
 
 ## Development
 
 ```bash
-uv run --extra dev pytest        # unit tests: parsing, rollups, inventory validation, retirement
-scripts/probe_one.sh <alias>     # dump one machine's raw probe output to debug parsing
-scripts/verify_e2e.sh            # probe → rollup → verify DB contents and API endpoints
+uv sync --extra dev
+uv run pytest -q
+python3 scripts/check_added_secrets.py --self-test
+python3 scripts/check_added_secrets.py --staged
 ```
 
-- Backend `src/gpumon/`: `collector/` for probing and parsing, `db/` for storage and
-  aggregation, `api/` for endpoints.
-- Frontend `web/`: vanilla HTML + JS + local ECharts, no build step.
-- Code comments are in Chinese.
-
-## Deployment
-
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the full systemd plus reverse-proxy walkthrough,
-directory layout and operational commands. Templates live in `deploy/` (systemd units and a
-Caddyfile example).
-
-Worth repeating: `gpumon web` has no built-in authentication. Always put an authenticating
-reverse proxy in front of it.
+Backend code lives in `src/gpumon/`; the frontend lives in `web/`. When filing an issue or patch,
+include the GPU vendor, SMI version, reproduction command, and sanitized output. Never submit real
+topology, usernames, credentials, or databases.
 
 ## License
 

@@ -1,5 +1,10 @@
 # 配置参考
 
+简体中文 | [English](CONFIGURATION.en.md) | [文档目录](README.md) | [项目首页](../README.md)
+
+本文是字段手册。第一次运行先看 [README 快速开始](../README.md#快速开始)；采集与指标口径见
+[架构与设计取舍](ARCHITECTURE.md)，生产安装见[部署指南](DEPLOYMENT.md)。
+
 两个文件，都在 `config/` 下，都**不入库**（`.gitignore` 已排除）：
 
 | 文件 | 管什么 | 改完要做什么 |

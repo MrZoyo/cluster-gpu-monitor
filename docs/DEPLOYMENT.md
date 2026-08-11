@@ -1,7 +1,12 @@
 # 部署指南
 
+简体中文 | [English](DEPLOYMENT.en.md) | [文档目录](README.md) | [项目首页](../README.md)
+
 把 cluster-gpu-monitor 装到一台常开的机器上（下称 **监控机**），它通过 SSH 轮询各 GPU 节点，
 自己跑一个网页服务给团队看。目标节点上**不装任何东西**，也不需要 root。
+
+第一次试用请先走 [README 快速开始](../README.md#快速开始)。本文是完整生产手册；字段解释见
+[配置参考](CONFIGURATION.md)，数据与安全边界见[架构与设计取舍](ARCHITECTURE.md)。
 
 本文占位符，按你的环境替换：
 
@@ -27,7 +32,7 @@
 | **2. 域名 + Caddy 自动 HTTPS** | 生产推荐 | 可信证书，绿锁 | 两行配置 |
 | **3. 无域名 → DuckDNS + DNS-01** | 没域名，或入站 80/443 被封 | 可信证书，绿锁 | 需带插件的 Caddy |
 
-第 1、2、3 节是所有路径共用的准备工作，做完再跳到第 5 节挑你的路径。
+第 1～4 节是所有路径共用的准备工作，做完再跳到第 5 节挑你的路径。
 
 ---
 
@@ -292,14 +297,13 @@ uv run gpumon web --host 0.0.0.0 --port 8848
 
 > **警告：明文传输。**
 >
-> 这是**纯 HTTP，没有任何加密**。往后有了登录页，口令也会明文过网，同网段抓包就能拿到；
-> 页面内容（谁在用哪张卡）同样明文。
+> 这是**纯 HTTP，没有加密，也没有应用内认证**。页面内容（谁在用哪张卡）会明文传输。
 >
-> **只在你信任的网络里这么用**（实验室内网、办公局域网、公司 VPN 之内）。
+> **只在隔离且可信的网络里这么用**（实验室内网、办公局域网、公司 VPN 之内），并用
+> 防火墙或安全组限制来源。
 >
 > 另外，`--host 0.0.0.0` 意味着**凡是能连到这个端口的人都能访问**，没有网络层过滤。
-> 这条路径的访问控制**只能靠应用自身的登录页** —— 而当前版本还没有登录页，
-> 也就是说现在这条路径等于「谁连上谁就能看」。所以必须靠防火墙收窄来源：
+> 当前 Web 没有内置登录，所以这条路径完全依赖网络隔离。必须靠防火墙收窄来源：
 >
 > ```bash
 > # 只放行某个内网段访问 8848（示例，按你的网段改）
@@ -711,22 +715,18 @@ sudo systemctl restart caddy         # 改了 EnvironmentFile 要 restart，relo
 
 ### 备份
 
-数据库是单文件 SQLite，开着 WAL。**直接 `cp` 不安全**，用 SQLite 的在线备份：
+数据库使用 SQLite WAL。**不要直接 `cp` 正在写入的数据库**；使用项目内置的在线备份命令：
 
 ```bash
-sqlite3 <ROOT>/data/gpumon.db ".backup '/backup/gpumon-$(date +%F).db'"
+ROOT=<ROOT>
+APP_USER=<USER>
+sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
+  "$ROOT/current/.venv/bin/gpumon" backup
 ```
 
-没装 `sqlite3` 命令行的话用 Python 的 backup API：
-
-```bash
-cd <ROOT> && .venv/bin/python -c "
-import sqlite3
-src = sqlite3.connect('data/gpumon.db')
-dst = sqlite3.connect('/backup/gpumon.db')
-src.backup(dst); dst.close(); src.close()
-print('ok')"
-```
+备份写入 `<ROOT>/data/backups/`：先写临时文件，通过 `quick_check`、权限和 fsync 检查后再
+原子发布，并按 `[backup] keep_count` 清理旧备份。`backup.enabled=false` 只跳过 timer 的
+定时调用，手工命令仍会立即备份。
 
 数据库是单写者模型。做任何离线改库操作前先 `systemctl stop gpumon-collector`，
 避免写竞争。
@@ -799,9 +799,8 @@ print('ok')"
 - [ ] **想隐去使用人姓名**（对外展示、隐私合规）：`settings.toml` 里
       `[privacy] mask_users = true`，网页显示成 `a***e`。
 
-> **关于登录**：当前版本自身没有登录页，访问控制靠反向代理的 Basic Auth
-> （路径 2 / 3）或网络层隔离（路径 1）。内置登录页在后续版本中加入，
-> 届时路径 1 也能有应用级鉴权；但**即便有了登录页，公网暴露仍然必须套 HTTPS**。
+> **关于登录**：当前版本没有内置登录或授权系统。访问控制必须由反向代理的 Basic Auth
+> （路径 2 / 3）或网络隔离（路径 1）提供；公网入口必须使用 HTTPS。
 
 ---
 
