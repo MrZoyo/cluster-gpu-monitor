@@ -139,6 +139,11 @@ uv run python scripts/export_static_demo.py \
 cd dist/demo && python3 -m http.server 8080
 ```
 
+生成器会给 demo DB 与清单写入 synthetic 标记，并拒绝覆盖真实库名、真实配置或没有
+标记的已有文件。静态导出默认也只接受这对标记输入，`--force` 只会清理此前由本工具
+标记过的输出目录；确需导出自行构造的纯虚构数据时，才显式使用
+`--allow-unmarked-inputs`。不要对真实监控库使用该开关。
+
 `--scale small` 是 48 卡的轻量版本。演示数据刻意覆盖了各种边界：满载卡、空占卡
 （占着显存但利用率 <5%）、离线主机、少一张卡的主机、待接入集群、已退役集群、
 AMD 集群，以及标签超过 3 枚触发折叠的集群。

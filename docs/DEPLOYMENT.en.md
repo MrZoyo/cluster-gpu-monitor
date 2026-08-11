@@ -333,7 +333,7 @@ sudo apt update && sudo apt install -y caddy
 ### 6.3 Password Hash via Environment Variable
 
 ```bash
-caddy hash-password --plaintext '<your strong password>'      # Output $2a$14$...
+caddy hash-password                              # Hidden prompt + confirmation; outputs $2a$14$...
 
 sudo mkdir -p /etc/gpumon
 sudo tee /etc/gpumon/caddy.env >/dev/null <<'EOF'
@@ -405,7 +405,7 @@ Verify:
 
 ```bash
 curl -I https://<YOUR_DOMAIN>/                              # Expect 401 (no credentials)
-curl -u 'team:<your password>' https://<YOUR_DOMAIN>/api/health   # Expect {"ok":true,...}
+curl -u 'team:<your password>' https://<YOUR_DOMAIN>/api/health   # Expect {"ok":true,"status":"ok",...}
 curl -sSI -u 'team:<your password>' https://<YOUR_DOMAIN>/ | grep -Ei \
   'content-security-policy|strict-transport-security|x-content-type-options|cache-control'
 ```
@@ -626,11 +626,17 @@ sudo tail -f /var/log/caddy/gpumon.log
 ### Health Check
 
 ```bash
+curl -fsS http://127.0.0.1:8848/api/live
+# {"ok":true,"status":"alive"}
 curl -fsS http://127.0.0.1:8848/api/health
-# {"ok":true,"last_sample_ts":1234567890,"last_sample_age_s":18}
+# {"ok":true,"status":"ok","last_sample_ts":1234567890,"last_sample_age_s":18,"stale_after_s":120}
 ```
 
-`last_sample_age_s` should fluctuate around `poll_interval_s`. Consistently greater than two or three cycles means collector is down or all SSH failed.
+`/api/live` is process liveness and does not read configuration or the database. `/api/health`
+is readiness: unavailable configuration/database returns HTTP 503; samples older than
+`stale_after_s` still return HTTP 200 with `ok=false,status=stale`, keeping historical views
+available. `last_sample_age_s` should normally fluctuate around `poll_interval_s`; persistent
+staleness means the collector is down or all SSH targets failed.
 
 ```bash
 curl -fsS http://127.0.0.1:8848/api/collector/status | python3 -m json.tool
@@ -662,7 +668,7 @@ End-to-end self-test script (collect one round + aggregate + hit all endpoints):
 ### Change Access Password
 
 ```bash
-caddy hash-password --plaintext '<new password>'
+caddy hash-password                              # Hidden prompt + confirmation
 sudo vim /etc/gpumon/caddy.env       # Update GPUMON_BASIC_HASH (remember single quotes)
 sudo systemctl restart caddy         # Changed EnvironmentFile needs restart, reload won't reread
 ```

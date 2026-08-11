@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Collection
 from pathlib import Path
 
 from ..config import db_path, load_inventory, load_settings
@@ -48,6 +49,12 @@ _SCOPE_GROUP: dict[str, str | None] = {
     "global": None,
 }
 
+# HTTP 层和存储层共用同一组白名单。路由会把非法输入转换成明确的 4xx，
+# Store 仍保留独立校验，避免脚本或将来的非 HTTP 调用绕过边界。
+METRICS = tuple(_METRIC_COLS)
+SCOPES = tuple(_SCOPE_GROUP)
+USER_TOP_SORTS = ("gpu_hours", "mem_gb_peak")
+
 
 def pick_table(window_seconds: int) -> tuple[str, int]:
     """按窗口选聚合表：≤24h 用 5 分钟桶，否则用 1 小时桶。返回 (表名, 桶宽秒)。"""
@@ -59,6 +66,28 @@ def pick_table(window_seconds: int) -> tuple[str, int]:
 def current_sample_max_age_s() -> int:
     """实时视图允许的最大样本年龄；至少容忍四轮采集或两分钟。"""
     return max(120, load_settings().collector.poll_interval_s * 4)
+
+
+def _active_inventory_capacity() -> tuple[dict[str, int], dict[str, int]]:
+    """返回 active 主机/集群的预期 GPU 数，inventory 是唯一事实来源。
+
+    planned 尚未接入，retired 只保留历史；两者既不应把 coverage 分母撑大，
+    其旧观测也不应继续混入当前统计口径。集群被标为非 active 时，其下主机即使
+    没有逐台重复标记，也按同一状态处理。
+    """
+    inv = load_inventory()
+    by_host: dict[str, int] = {}
+    by_cluster: dict[str, int] = {}
+    for cluster in inv.clusters:
+        if cluster.status != "active":
+            continue
+        for host in cluster.hosts:
+            if host.status != "active":
+                continue
+            expected = host.gpu_count or inv.defaults.gpu_count
+            by_host[host.key] = expected
+            by_cluster[cluster.key] = by_cluster.get(cluster.key, 0) + expected
+    return by_host, by_cluster
 
 
 class Store:
@@ -326,21 +355,25 @@ class Store:
         now = int(now or time.time())
         win = WINDOWS[window]
         since = now - win
-        table, bucket = pick_table(win)
+        table, _ = pick_table(win)
         avg_col, max_col = _METRIC_COLS[metric]
         interval = load_settings().collector.poll_interval_s
         expected_per_gpu = win / interval
+        expected_by_host, expected_by_cluster = _active_inventory_capacity()
+        active_host_keys = list(expected_by_host)
+        if not active_host_keys:
+            return []
 
         group = _SCOPE_GROUP[scope]
         max_expr = f"MAX(r.{max_col})" if max_col else "NULL"
         select_id = f"{group} AS gid," if group else ""
         group_by = f"GROUP BY {group}" if group else ""
+        host_placeholders = ",".join("?" for _ in active_host_keys)
         sql = f"""
             SELECT {select_id}
                    SUM(r.{avg_col}*r.n)/NULLIF(SUM(r.n),0) AS avg,
                    {max_expr} AS mx,
                    SUM(r.n) AS sum_n,
-                   COUNT(DISTINCT g.id) AS n_gpus,
                    h.key AS host_key, h.display_name AS host_name,
                    c.key AS cluster_key, c.name AS cluster_name, g.gpu_index AS gpu_index
             FROM {table} r
@@ -348,13 +381,23 @@ class Store:
             JOIN host h ON h.id=g.host_id
             JOIN cluster c ON c.id=h.cluster_id
             WHERE r.bucket_ts >= ? AND r.bucket_ts < ?
+                  AND h.key IN ({host_placeholders})
             {group_by}
         """
         with self.connect() as conn:
-            rows = conn.execute(sql, (since, now)).fetchall()
+            rows = conn.execute(sql, (since, now, *active_host_keys)).fetchall()
         out = []
         for r in rows:
-            n_gpus = r["n_gpus"] or 1
+            if scope == "gpu":
+                n_gpus = 1
+            elif scope == "host":
+                n_gpus = expected_by_host.get(r["host_key"], 0)
+            elif scope == "cluster":
+                n_gpus = expected_by_cluster.get(r["cluster_key"], 0)
+            else:
+                n_gpus = sum(expected_by_host.values())
+            if n_gpus <= 0:
+                continue
             expected = n_gpus * expected_per_gpu
             cov = min(1.0, (r["sum_n"] or 0) / expected) if expected else 0.0
             item = {
@@ -376,6 +419,10 @@ class Store:
 
     def get_avg_multi(self, scope: str, metric: str, now: int | None = None) -> dict:
         """每实体一次性返回全部 5 个窗口的平均，供总览对比表。"""
+        if scope not in _SCOPE_GROUP:
+            raise ValueError(f"未知 scope: {scope}")
+        if metric not in _METRIC_COLS:
+            raise ValueError(f"未知指标: {metric}")
         now = int(now or time.time())
         result: dict[str, list[dict]] = {}
         for w in WINDOWS:
@@ -386,8 +433,17 @@ class Store:
     def get_series(self, scope: str, entity_id: int | None, metric: str,
                    window: str, now: int | None = None) -> list[list]:
         """返回 [[bucket_ts, avg], ...]，断档桶不出现（前端 connectNulls=false 自然断开）。"""
-        if window not in WINDOWS or metric not in _METRIC_COLS:
-            raise ValueError("参数错误")
+        if window not in WINDOWS:
+            raise ValueError(f"未知窗口: {window}")
+        if metric not in _METRIC_COLS:
+            raise ValueError(f"未知指标: {metric}")
+        if scope not in _SCOPE_GROUP:
+            raise ValueError(f"未知 scope: {scope}")
+        if scope == "global":
+            if entity_id is not None:
+                raise ValueError("global scope 不接受 entity_id")
+        elif not isinstance(entity_id, int) or isinstance(entity_id, bool) or entity_id < 1:
+            raise ValueError(f"{scope} scope 需要正整数 entity_id")
         now = int(now or time.time())
         win = WINDOWS[window]
         since = now - win
@@ -418,21 +474,36 @@ class Store:
 
     # ---- 查询：使用人 -------------------------------------------------------
     def get_users_top(self, window: str, by: str = "gpu_hours", limit: int = 20,
-                      cluster_key: str | None = None, now: int | None = None) -> list[dict]:
+                      cluster_key: str | None = None, now: int | None = None,
+                      excluded_host_keys: Collection[str] | None = None) -> list[dict]:
+        if window not in WINDOWS:
+            raise ValueError(f"未知窗口: {window}")
+        if by not in USER_TOP_SORTS:
+            raise ValueError(f"未知排序字段: {by}")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("limit 必须是 1..100 的整数")
         now = int(now or time.time())
-        win = WINDOWS.get(window, WINDOWS["24h"])
+        win = WINDOWS[window]
         since = now - win
         interval = load_settings().collector.poll_interval_s
         # 同一用户可能在同一卡同一轮出现多个 PID；GPU·小时按用户/卡/轮次去重。
         # 不同用户共享同一卡时仍各计完整时长，是否分摊属于独立的产品口径。
         order = "gpu_hours DESC" if by == "gpu_hours" else "mem_gb_peak DESC"
+        excluded = sorted(set(excluded_host_keys or ()))
         join = filt = ""
         params: list = [since, now]
-        if cluster_key:    # 按集群过滤（集群视图用）
+        if cluster_key or excluded:
             join = ("JOIN gpu_card g ON g.id=p.gpu_id JOIN host h ON h.id=g.host_id "
                     "JOIN cluster c ON c.id=h.cluster_id")
-            filt = "AND c.key = ?"
+        filters = []
+        if cluster_key:    # 按集群过滤（集群视图用）
+            filters.append("c.key = ?")
             params.append(cluster_key)
+        if excluded:
+            filters.append(f"h.key NOT IN ({','.join('?' for _ in excluded)})")
+            params.extend(excluded)
+        if filters:
+            filt = "AND " + " AND ".join(filters)
         params.extend([interval, limit])
         sql = f"""
             WITH occupied AS (
@@ -478,14 +549,23 @@ class Store:
         out.sort(key=lambda x: x["mem_gb"], reverse=True)
         return out
 
-    def get_users_ranking(self, window: str, now: int | None = None) -> dict:
+    def get_users_ranking(self, window: str, now: int | None = None,
+                          excluded_host_keys: Collection[str] | None = None) -> dict:
         """用户占用排行：同 username 跨机器聚合，并按机器(设备)拆分 gpu_hours，
         供前端堆叠条形图（不同颜色=不同设备）。"""
+        if window not in WINDOWS:
+            raise ValueError(f"未知窗口: {window}")
         now = int(now or time.time())
-        win = WINDOWS.get(window, WINDOWS["24h"])
+        win = WINDOWS[window]
         since = now - win
         interval = load_settings().collector.poll_interval_s
-        sql = """
+        excluded = sorted(set(excluded_host_keys or ()))
+        excluded_sql = ""
+        excluded_params: list[str] = []
+        if excluded:
+            excluded_sql = f"AND h.key NOT IN ({','.join('?' for _ in excluded)})"
+            excluded_params = excluded
+        sql = f"""
             WITH occupied AS (
                 SELECT p.username AS username, p.gpu_id AS gpu_id, p.ts AS ts,
                        h.id AS host_id, h.key AS host_key
@@ -494,6 +574,7 @@ class Store:
                 JOIN host h ON h.id=g.host_id
                 WHERE p.ts >= ? AND p.ts < ? AND p.username IS NOT NULL
                       AND p.mem_used_mib > 0
+                      {excluded_sql}
                 GROUP BY p.username, p.gpu_id, p.ts, h.id, h.key
             )
             SELECT username, host_key,
@@ -503,12 +584,18 @@ class Store:
             GROUP BY username, host_id, host_key
         """
         with self.connect() as conn:
-            rows = conn.execute(sql, (since, now, interval)).fetchall()
+            rows = conn.execute(sql, (since, now, *excluded_params, interval)).fetchall()
+            machine_filter = ""
+            machine_params: list[str] = []
+            if excluded:
+                machine_filter = f"WHERE h.key NOT IN ({','.join('?' for _ in excluded)})"
+                machine_params = excluded
             machines = [{"key": r["key"], "name": r["display_name"], "cluster_key": r["cluster_key"]}
                         for r in conn.execute(
-                            """SELECT h.key, h.display_name, c.key as cluster_key
+                            f"""SELECT h.key, h.display_name, c.key as cluster_key
                                FROM host h LEFT JOIN cluster c ON c.id = h.cluster_id
-                               ORDER BY h.sort_order, h.id""")]
+                               {machine_filter}
+                               ORDER BY h.sort_order, h.id""", machine_params)]
         users: dict[str, dict] = {}
         for r in rows:
             u = users.setdefault(r["username"],

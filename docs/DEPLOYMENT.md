@@ -339,7 +339,7 @@ sudo apt update && sudo apt install -y caddy
 ### 6.3 口令 hash 走环境变量
 
 ```bash
-caddy hash-password --plaintext '<你的强口令>'      # 输出 $2a$14$...
+caddy hash-password                              # 按隐藏提示输入并确认，输出 $2a$14$...
 
 sudo mkdir -p /etc/gpumon
 sudo tee /etc/gpumon/caddy.env >/dev/null <<'EOF'
@@ -413,7 +413,7 @@ sudo systemctl enable --now caddy && sudo systemctl reload caddy
 
 ```bash
 curl -I https://<YOUR_DOMAIN>/                              # 期望 401（没带凭据）
-curl -u 'team:<你的口令>' https://<YOUR_DOMAIN>/api/health   # 期望 {"ok":true,...}
+curl -u 'team:<你的口令>' https://<YOUR_DOMAIN>/api/health   # 期望 {"ok":true,"status":"ok",...}
 curl -sSI -u 'team:<你的口令>' https://<YOUR_DOMAIN>/ | grep -Ei \
   'content-security-policy|strict-transport-security|x-content-type-options|cache-control'
 ```
@@ -648,12 +648,16 @@ sudo tail -f /var/log/caddy/gpumon.log
 ### 健康检查
 
 ```bash
+curl -fsS http://127.0.0.1:8848/api/live
+# {"ok":true,"status":"alive"}
 curl -fsS http://127.0.0.1:8848/api/health
-# {"ok":true,"last_sample_ts":1234567890,"last_sample_age_s":18}
+# {"ok":true,"status":"ok","last_sample_ts":1234567890,"last_sample_age_s":18,"stale_after_s":120}
 ```
 
-`last_sample_age_s` 应当在 `poll_interval_s` 附近波动。持续大于两三个周期就说明
-采集器挂了或全线 SSH 失败。
+`/api/live` 是不读取配置/数据库的进程 liveness。`/api/health` 是 readiness：配置或
+数据库不可用时返回 HTTP 503；样本超过 `stale_after_s` 时仍返回 HTTP 200，但 JSON 为
+`ok=false,status=stale`，所以历史页面仍可查看。`last_sample_age_s` 应当在
+`poll_interval_s` 附近波动，持续 stale 说明采集器挂了或全线 SSH 失败。
 
 ```bash
 curl -fsS http://127.0.0.1:8848/api/collector/status | python3 -m json.tool
@@ -685,7 +689,7 @@ curl -fsS http://127.0.0.1:8848/api/collector/status \
 ### 换访问口令
 
 ```bash
-caddy hash-password --plaintext '<新口令>'
+caddy hash-password                              # 按隐藏提示输入并确认
 sudo vim /etc/gpumon/caddy.env       # 更新 GPUMON_BASIC_HASH（记得单引号）
 sudo systemctl restart caddy         # 改了 EnvironmentFile 要 restart，reload 不重读
 ```
@@ -834,6 +838,3 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
-
-
-

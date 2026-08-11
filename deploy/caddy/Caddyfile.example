@@ -9,7 +9,7 @@
 #       所有外部流量都从这里进，TLS 和鉴权都在这里做，后端端口不对公网放行。
 #
 # 口令 hash 从 EnvironmentFile 注入，本文件永不出现明文：
-#   caddy hash-password --plaintext '<你的强口令>'
+#   caddy hash-password                   # 按隐藏提示输入并确认，不把明文放进 argv
 #   # /etc/gpumon/caddy.env  (chmod 600，不入库)
 #   GPUMON_BASIC_HASH='$2a$14$...'      <- 必须单引号，bcrypt hash 里的 $ 会被 shell 展开
 #   DUCKDNS_TOKEN='<你的 token>'        <- 仅方式 B 需要

@@ -1,6 +1,28 @@
 """聚合层测试：加权聚合必须等于对原始样本的直接平均；窗口选表正确。"""
+from types import SimpleNamespace
+
+import pytest
+
 from gpumon.db.rollup import Rollup
 from gpumon.db.store import Store, pick_table
+
+
+@pytest.fixture(autouse=True)
+def _active_inventory(monkeypatch):
+    """Store 的 coverage 以 inventory 为准，测试拓扑也必须给出对应清单。"""
+    inventory = SimpleNamespace(
+        defaults=SimpleNamespace(gpu_count=8),
+        clusters=[SimpleNamespace(
+            key="cx",
+            status="active",
+            hosts=[SimpleNamespace(key="hx", status="active", gpu_count=2)],
+        )],
+    )
+    monkeypatch.setattr("gpumon.db.store.load_inventory", lambda: inventory)
+    monkeypatch.setattr(
+        "gpumon.db.store.load_settings",
+        lambda: SimpleNamespace(collector=SimpleNamespace(poll_interval_s=30)),
+    )
 
 
 def _setup(tmp_path):
@@ -81,3 +103,77 @@ def test_series_has_points(tmp_path):
     Rollup(s).roll_gpu_5m(now)
     pts = s.get_series("gpu", 1, "util_gpu", "12h", now=now)
     assert len(pts) == 1 and round(pts[0][1]) == 20
+
+
+def test_coverage_uses_active_inventory_capacity(tmp_path, monkeypatch):
+    s = _setup(tmp_path)
+    conn = s.write_conn()
+    with conn:
+        conn.execute(
+            "INSERT INTO host(id,cluster_id,key,ssh_alias,display_name,gpu_count) "
+            "VALUES(2,1,'planned','p','Planned',20)"
+        )
+        conn.execute(
+            "INSERT INTO host(id,cluster_id,key,ssh_alias,display_name,gpu_count) "
+            "VALUES(3,1,'retired','r','Retired',20)"
+        )
+        conn.execute("INSERT INTO gpu_card(id,host_id,gpu_index,uuid) VALUES(3,2,0,'UP')")
+        conn.execute("INSERT INTO gpu_card(id,host_id,gpu_index,uuid) VALUES(4,3,0,'UR')")
+
+    inventory = SimpleNamespace(
+        defaults=SimpleNamespace(gpu_count=8),
+        clusters=[SimpleNamespace(
+            key="cx",
+            status="active",
+            hosts=[
+                SimpleNamespace(key="hx", status="active", gpu_count=4),
+                SimpleNamespace(key="planned", status="planned", gpu_count=20),
+                SimpleNamespace(key="retired", status="retired", gpu_count=20),
+            ],
+        )],
+    )
+    monkeypatch.setattr("gpumon.db.store.load_inventory", lambda: inventory)
+    monkeypatch.setattr(
+        "gpumon.db.store.load_settings",
+        lambda: SimpleNamespace(collector=SimpleNamespace(poll_interval_s=3600)),
+    )
+
+    now = 1_700_000_000
+    bucket = ((now - 300) // 300) * 300
+    with conn:
+        # active 主机只有 1 张卡有 12 个观测；清单预期 4 张，coverage 应为 1/4。
+        conn.execute(
+            "INSERT INTO rollup_gpu_5m(gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max) "
+            "VALUES(1,?,12,20,20)", (bucket,)
+        )
+        # planned/retired 即使残留旧 rollup，也不能污染均值或 coverage。
+        conn.execute(
+            "INSERT INTO rollup_gpu_5m(gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max) "
+            "VALUES(3,?,12,100,100)", (bucket,)
+        )
+        conn.execute(
+            "INSERT INTO rollup_gpu_5m(gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max) "
+            "VALUES(4,?,12,100,100)", (bucket,)
+        )
+
+    host = s.get_avg("12h", "host", "util_gpu", now=now)[0]
+    cluster = s.get_avg("12h", "cluster", "util_gpu", now=now)[0]
+    global_item = s.get_avg("12h", "global", "util_gpu", now=now)[0]
+    gpu_items = s.get_avg("12h", "gpu", "util_gpu", now=now)
+
+    for item in (host, cluster, global_item):
+        assert item["avg"] == 20.0
+        assert item["n_gpus"] == 4
+        assert item["coverage"] == 0.25
+    assert [item["gpu_id"] for item in gpu_items] == [1]
+    assert gpu_items[0]["coverage"] == 1.0
+
+
+@pytest.mark.parametrize(
+    ("scope", "entity_id"),
+    [("unknown", 1), ("gpu", None), ("host", 0), ("global", 1)],
+)
+def test_series_rejects_invalid_scope_id_combinations(tmp_path, scope, entity_id):
+    s = _setup(tmp_path)
+    with pytest.raises(ValueError):
+        s.get_series(scope, entity_id, "util_gpu", "12h", now=1_700_000_000)

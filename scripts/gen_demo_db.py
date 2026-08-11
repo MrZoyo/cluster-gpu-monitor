@@ -39,6 +39,15 @@ sys.path.append(str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402  项目已依赖 pyyaml，不引入新依赖
 
 import demo_fixtures as FX  # noqa: E402  演示内容（搞怪命名）都在这里
+from demo_safety import (  # noqa: E402
+    DEMO_INVENTORY_MARKER,
+    DemoSafetyError,
+    assert_safe_generation_target,
+    demo_database_state,
+    finalize_demo_database,
+    initialize_demo_database_marker,
+    is_demo_inventory,
+)
 
 TICK = 30              # 采集周期，须与 settings 的 collector.poll_interval_s 一致
 FLUSH_ROWS = 100_000   # 攒够这么多行 executemany 一次，兼顾内存与吞吐
@@ -229,6 +238,7 @@ def open_db(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     schema = (_ROOT / "src" / "gpumon" / "db" / "schema.sql").read_text(encoding="utf-8")
     conn.executescript(schema)
+    initialize_demo_database_marker(conn)
     conn.execute("PRAGMA synchronous=OFF")
     conn.execute("PRAGMA cache_size=-131072")        # 128MB
     conn.execute("PRAGMA temp_store=MEMORY")
@@ -484,18 +494,30 @@ def resolve(path: str) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    db = resolve(args.db)
-    inv_path = resolve(args.inventory)
-
-    # 防误伤：绝不默认往真实库写
-    if db.name == "gpumon.db" and not args.force:
-        print(f"拒绝写入 {db} —— 这是默认的真实库名。换个名字，或明确加 --force。",
-              file=sys.stderr)
+    try:
+        db = assert_safe_generation_target(resolve(args.db), kind="database")
+        inv_path = assert_safe_generation_target(resolve(args.inventory), kind="inventory")
+        if db == inv_path:
+            raise DemoSafetyError("数据库和 inventory 不能写到同一个路径")
+    except DemoSafetyError as exc:
+        print(f"拒绝生成：{exc}", file=sys.stderr)
         return 2
+
     for target in (db, inv_path):
-        if target.exists() and not args.force:
+        if not target.exists():
+            continue
+        if not args.force:
             print(f"{target} 已存在。加 --force 覆盖。", file=sys.stderr)
             return 2
+        marked = demo_database_state(target) is not None if target == db else is_demo_inventory(target)
+        if not marked:
+            print(f"拒绝覆盖没有 demo 生成标记的文件: {target}", file=sys.stderr)
+            return 2
+
+    sidecars = [db.with_name(db.name + suffix) for suffix in ("-wal", "-shm")]
+    if not db.exists() and any(side.exists() for side in sidecars):
+        print("拒绝删除没有对应已标记 demo 主库的 SQLite sidecar", file=sys.stderr)
+        return 2
 
     FX.validate()
     if args.scale == "large":
@@ -521,14 +543,14 @@ def main(argv: list[str] | None = None) -> int:
     for target in (db, inv_path):
         if target.exists():
             target.unlink()
-    for suffix in ("-wal", "-shm"):
-        side = db.with_name(db.name + suffix)
+    for side in sidecars:
         if side.exists():
             side.unlink()
 
     inv_path.parent.mkdir(parents=True, exist_ok=True)
     inv_doc = topo.to_inventory()
     inv_path.write_text(
+        DEMO_INVENTORY_MARKER + "\n"
         "# 演示清单 —— 由 scripts/gen_demo_db.py 生成，内容是虚构的搞怪示例。\n"
         "# 想看真实效果：把本文件复制成 config/inventory.yaml，\n"
         f"# 并把 config/settings.toml 的 [db] path 指向 {args.db}。\n"
@@ -548,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     conn.close()
 
     roll = build_rollups(db, now, quiet=args.quiet)
+    finalize_demo_database(db)
     elapsed = time.time() - t0
 
     if not args.quiet:

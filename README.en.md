@@ -170,6 +170,12 @@ uv run python scripts/export_static_demo.py \
 cd dist/demo && python3 -m http.server 8080
 ```
 
+The generator marks both the demo database and inventory as synthetic, and refuses to
+overwrite real-looking paths or existing unmarked files. Static export accepts those marked
+inputs by default, while `--force` only removes an output directory previously marked by this
+tool. Use `--allow-unmarked-inputs` only for deliberately constructed fictional data—never for
+a real monitoring database.
+
 `--scale small` gives a 48-GPU variant. The demo data deliberately covers the edge
 cases: saturated GPUs, idle-but-occupied GPUs (VRAM held at <5% utilization), an
 offline host, a host reporting one GPU short, a planned cluster, a retired cluster,

@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from gpumon.db.store import Store
 
 
@@ -96,3 +98,56 @@ def test_gpu_hours_deduplicates_same_user_gpu_and_round(tmp_path, monkeypatch):
     assert ranking_by_user["alice"]["total"] == 2.0
     assert ranking_by_user["alice"]["by_machine"] == {"host": 2.0}
     assert ranking_by_user["bob"]["total"] == 2.0
+
+
+def test_user_queries_exclude_retired_hosts_before_aggregation(tmp_path, monkeypatch):
+    store = _setup_store(tmp_path)
+    monkeypatch.setattr(
+        "gpumon.db.store.load_settings",
+        lambda: SimpleNamespace(collector=SimpleNamespace(poll_interval_s=3600)),
+    )
+    conn = store.write_conn()
+    with conn:
+        conn.execute(
+            "INSERT INTO host(id,cluster_id,key,ssh_alias,display_name,gpu_count) "
+            "VALUES(2,1,'retired','retired-alias','Retired',1)"
+        )
+        conn.execute("INSERT INTO gpu_card(id,host_id,gpu_index,uuid) VALUES(3,2,0,'GPU-3')")
+    _insert_proc(store, 1, 100, 10, "alice", 100)
+    _insert_proc(store, 3, 100, 20, "alice", 100)
+    _insert_proc(store, 3, 100, 21, "retired-only", 100)
+    conn.commit()
+
+    top = {
+        item["username"]: item
+        for item in store.get_users_top(
+            "24h", now=1000, excluded_host_keys={"retired"}
+        )
+    }
+    ranking = store.get_users_ranking(
+        "24h", now=1000, excluded_host_keys={"retired"}
+    )
+
+    assert top["alice"]["gpu_hours"] == 1.0
+    assert "retired-only" not in top
+    assert ranking["machines"] == [
+        {"key": "host", "name": "Host", "cluster_key": "cluster"}
+    ]
+    assert ranking["users"] == [
+        {"username": "alice", "total": 1.0, "by_machine": {"host": 1.0}}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "kwargs"),
+    [
+        ("get_users_top", ("bad",), {}),
+        ("get_users_top", ("24h",), {"by": "not-a-sort"}),
+        ("get_users_top", ("24h",), {"limit": 0}),
+        ("get_users_ranking", ("bad",), {}),
+    ],
+)
+def test_user_store_queries_reject_invalid_parameters(tmp_path, method, args, kwargs):
+    store = _setup_store(tmp_path)
+    with pytest.raises(ValueError):
+        getattr(store, method)(*args, **kwargs)

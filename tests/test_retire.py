@@ -1,5 +1,7 @@
 """退役过滤测试：status=retired 的主机/集群不下发给网页（DB 行仍在，历史保留）。"""
-from gpumon.api.routes import _drop_retired
+from types import SimpleNamespace
+
+from gpumon.api.routes import _drop_retired, _retired_inventory_host_keys
 
 
 def _topo():
@@ -58,3 +60,23 @@ def test_all_active_unchanged():
     topo = [c for c in _topo() if c["key"] != "legacy-single"]
     out = _drop_retired(topo, cm, hm)
     assert out == topo
+
+
+def test_retired_host_keys_inherit_cluster_retirement(monkeypatch):
+    inventory = SimpleNamespace(clusters=[
+        SimpleNamespace(
+            status="retired",
+            hosts=[SimpleNamespace(key="cluster-retired", status="active")],
+        ),
+        SimpleNamespace(
+            status="active",
+            hosts=[
+                SimpleNamespace(key="host-retired", status="retired"),
+                SimpleNamespace(key="planned", status="planned"),
+                SimpleNamespace(key="active", status="active"),
+            ],
+        ),
+    ])
+    monkeypatch.setattr("gpumon.api.routes.load_inventory", lambda: inventory)
+
+    assert _retired_inventory_host_keys() == {"cluster-retired", "host-retired"}

@@ -8,10 +8,19 @@ from __future__ import annotations
 import time
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 from ..config import load_inventory, load_settings
 from ..db.store import WINDOWS, current_sample_max_age_s
-from .deps import get_store, mask_username, valid_window
+from .deps import (
+    get_store,
+    mask_username,
+    valid_metric,
+    valid_scope,
+    valid_series_id,
+    valid_user_sort,
+    valid_window,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -102,6 +111,17 @@ def _drop_retired(topo: list[dict], cluster_meta: dict[str, dict],
             continue
         out.append({**c, "hosts": kept_hosts})
     return out
+
+
+def _retired_inventory_host_keys() -> set[str]:
+    """集群或主机任一层标 retired，都视为该主机已退役。"""
+    inv = load_inventory()
+    return {
+        host.key
+        for cluster in inv.clusters
+        for host in cluster.hosts
+        if cluster.status == "retired" or host.status == "retired"
+    }
 
 
 def _topology_with_inventory_placeholders() -> tuple[list[dict], list[dict], dict[str, dict], dict[str, dict]]:
@@ -288,6 +308,8 @@ def metrics_avg(window: str = Query("24h"),
                 scope: str = Query("gpu"),
                 metric: str = Query("util_gpu")):
     window = valid_window(window)
+    scope = valid_scope(scope)
+    metric = valid_metric(metric)
     return {"window": window, "scope": scope, "metric": metric,
             "items": get_store().get_avg(window, scope, metric)}
 
@@ -295,16 +317,21 @@ def metrics_avg(window: str = Query("24h"),
 @router.get("/metrics/avg_multi")
 def metrics_avg_multi(scope: str = Query("host"),
                       metric: str = Query("util_gpu")):
+    scope = valid_scope(scope)
+    metric = valid_metric(metric)
     return {"scope": scope, "metric": metric,
             "windows": get_store().get_avg_multi(scope, metric)}
 
 
 @router.get("/metrics/series")
 def metrics_series(scope: str = Query("gpu"),
-                   id: int | None = Query(None),
+                   id: int | None = Query(None, ge=1),
                    metric: str = Query("util_gpu"),
                    window: str = Query("24h")):
     window = valid_window(window)
+    scope = valid_scope(scope)
+    metric = valid_metric(metric)
+    id = valid_series_id(scope, id)
     return {"scope": scope, "id": id, "metric": metric, "window": window,
             "points": get_store().get_series(scope, id, metric, window)}
 
@@ -315,7 +342,14 @@ def users_top(window: str = Query("24h"),
               limit: int = Query(20, ge=1, le=100),
               cluster: str | None = Query(None)):
     window = valid_window(window)
-    items = get_store().get_users_top(window, by=by, limit=limit, cluster_key=cluster)
+    by = valid_user_sort(by)
+    items = get_store().get_users_top(
+        window,
+        by=by,
+        limit=limit,
+        cluster_key=cluster,
+        excluded_host_keys=_retired_inventory_host_keys(),
+    )
     for it in items:
         it["username"] = mask_username(it["username"])
     return {"window": window, "by": by, "cluster": cluster, "items": items}
@@ -326,12 +360,11 @@ def users_ranking(window: str = Query("24h")):
     """全局用户占用排行：同 username 跨设备聚合，按设备拆分 gpu_hours（堆叠条用）。
     退役机器(status=retired)彻底移除，其 GPU·h 不计入合计。"""
     window = valid_window(window)
-    data = get_store().get_users_ranking(window)
-    _, _, host_meta = _inventory_ui_meta()
+    retired = _retired_inventory_host_keys()
+    data = get_store().get_users_ranking(window, excluded_host_keys=retired)
 
     # 过滤 retired 机器，并补充 capacity_group
     _, cluster_meta, host_meta = _inventory_ui_meta()
-    retired = {k for k, v in host_meta.items() if v.get("status") == "retired"}
     data["machines"] = [
         {**m, "capacity_group": cluster_meta.get(m["cluster_key"], {}).get("capacity_group")}
         for m in data["machines"]
@@ -360,15 +393,44 @@ def users_current():
 
 @router.get("/health")
 def health():
-    store = get_store()
     try:
+        # readiness 必须覆盖所有 UI 路由依赖的配置；只验证 DB 会让缺配置的新进程
+        # 错误地通过健康检查，随后其它接口才 500。
+        load_settings()
+        load_inventory()
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "status": "unavailable", "error": "configuration unavailable"},
+        )
+
+    try:
+        store = get_store()
         with store.connect() as conn:
             row = conn.execute("SELECT MAX(ts) FROM sample_gpu").fetchone()
         last = row[0] if row else None
         age = (int(time.time()) - last) if last else None
-        return {"ok": True, "last_sample_ts": last, "last_sample_age_s": age}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "status": "unavailable", "error": "database unavailable"},
+        )
+
+    stale_after = current_sample_max_age_s()
+    stale = age is None or age > stale_after
+    return {
+        "ok": not stale,
+        "status": "stale" if stale else "ok",
+        "last_sample_ts": last,
+        "last_sample_age_s": age,
+        "stale_after_s": stale_after,
+    }
+
+
+@router.get("/live")
+def live():
+    """纯进程 liveness：不读配置和数据库。"""
+    return {"ok": True, "status": "alive"}
 
 
 @router.get("/collector/status")
