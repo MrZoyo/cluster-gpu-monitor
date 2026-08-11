@@ -270,7 +270,7 @@ ranking_user_limit = 200     # 排行最多返回多少人
 mask_users = false          # true 时使用人显示成 a***e
 
 [backup]
-enabled = true              # 是否启用自动备份（systemd timer 会检查此开关）
+enabled = true              # 是否启用定时备份（外部调度器调用 --scheduled 时检查）
 keep_count = 3              # 保留最近几个备份
 ```
 
@@ -286,16 +286,17 @@ Web 默认只同时执行 4 个昂贵统计查询；槽位满后最多等 1 秒�
 
 ### 备份配置
 
-数据库自动备份仅由 systemd timer 调度，默认每天 04:00 运行一次。
+程序内部没有定时器。原生部署由 systemd timer 在每天 04:00 调度；Docker Compose 部署由
+宿主的唯一外部调度器调用一次性 backup 服务。
 
-- `enabled`: 是否启用定时备份。设为 `false` 时 timer 仍会触发，但
+- `enabled`: 是否启用定时备份。设为 `false` 时外部调度器仍可触发，但
   `gpumon backup --scheduled` 会安全跳过；手工 `gpumon backup` 不受影响。
 - `keep_count`: 保留最近几个备份文件。默认 3 个，即最多恢复到 3 天前。
 
 备份先由 SQLite backup API 写入同目录临时文件，通过 `quick_check`、设为 `0600`
 并 fsync 后才原子改名；只有新备份成功发布后才会清理旧文件。
 
-**修改备份时间**只能更新 systemd timer，避免 settings 与实际调度产生两个真相来源：
+**原生部署修改备份时间**只更新 systemd timer，避免 settings 与实际调度产生两个真相来源：
 
 ```bash
 # 编辑 timer（OnCalendar 一行）
@@ -310,6 +311,7 @@ sudo systemctl restart gpumon-backup.timer
 ```
 
 手动备份：`uv run gpumon backup`（立即备份一次，按 `keep_count` 清理旧备份）。
+Docker 的手工与定时命令见 [Docker Compose 指南](DOCKER.md#7-备份与定时调度)。
 
 ### 保留天数怎么定（有个坑）
 

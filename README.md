@@ -14,7 +14,8 @@
 [在线演示](https://mrzoyo.github.io/cluster-gpu-monitor/) ·
 [文档目录](docs/README.md) ·
 [配置参考](docs/CONFIGURATION.md) ·
-[部署指南](docs/DEPLOYMENT.md)
+[原生部署](docs/DEPLOYMENT.md) ·
+[Docker Compose](docs/DOCKER.md)
 
 ## 为什么用它
 
@@ -72,8 +73,19 @@ uv run gpumon web                 # http://127.0.0.1:8848/
 ssh -N -L 8848:127.0.0.1:8848 <monitor-host>
 ```
 
-然后打开 `http://127.0.0.1:8848/`。常驻运行、systemd、备份和 HTTPS 配置见
-[部署指南](docs/DEPLOYMENT.md)。
+然后打开 `http://127.0.0.1:8848/`。原生常驻运行、systemd、备份和 HTTPS 配置见
+[部署指南](docs/DEPLOYMENT.md)；容器运行见 [Docker Compose 指南](docs/DOCKER.md)。
+
+## 两种部署方式
+
+| 方式 | 适合场景 | 指南 |
+| --- | --- | --- |
+| Python + systemd | 小规格宿主、需要完整 systemd 加固与原子 release 回滚 | [原生部署](docs/DEPLOYMENT.md) |
+| Docker Compose | 快速安装、环境隔离、已有容器运维体系 | [Docker Compose 部署](docs/DOCKER.md) |
+
+两种方式使用同一份 inventory、settings 和 SQLite 数据模型。容器版仍通过 SSH 采集远端 GPU，
+不需要 NVIDIA Container Toolkit。切换部署方式前必须停止旧 collector，禁止两个 collector
+同时写同一数据库。
 
 ## 工作方式
 
@@ -116,16 +128,17 @@ clusters:
 ## 生产部署与安全
 
 `gpumon web` **没有内置认证**，默认只监听 `127.0.0.1`。对团队开放时必须放在带认证的
-HTTPS 反向代理之后；仓库提供 systemd 与 Caddy 模板。
+HTTPS 反向代理之后；仓库同时提供原生 systemd/Caddy 部署和 Docker Compose 部署。
 
 生产部署建议：
 
-- 让 collector / backup 与 Web 使用不同系统账户；Web 不持有 SSH key。
+- 隔离 collector / backup 与 Web 的权限；Web 不持有 SSH key，也不能写数据库。
 - 把真实 `inventory.yaml`、`settings.toml`、口令 hash、DNS token 和私钥留在部署机。
-- 使用不可变 release、独立配置和数据目录，并保留可回滚的上一版本。
+- 使用不可变 release 或镜像、独立配置和数据目录，并保留可回滚的上一版本。
 - 使用内置 SQLite 在线备份，不要直接复制正在写入的 WAL 数据库。
 
-完整安装、HTTPS、日常运维、排障与回滚步骤见[部署指南](docs/DEPLOYMENT.md)。
+完整安装、HTTPS、日常运维、排障与回滚步骤见[原生部署指南](docs/DEPLOYMENT.md)或
+[Docker Compose 指南](docs/DOCKER.md)。
 
 ## 文档
 
@@ -135,7 +148,8 @@ HTTPS 反向代理之后；仓库提供 systemd 与 Caddy 模板。
 | 配置机器与运行参数 | [配置参考](docs/CONFIGURATION.md) | [Configuration reference](docs/CONFIGURATION.en.md) |
 | 理解采集、存储与指标 | [架构与设计取舍](docs/ARCHITECTURE.md) | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) |
 | 生成或发布演示数据 | [Demo 指南](docs/DEMO.md) | [Demo guide](docs/DEMO.en.md) |
-| 部署、运维与排障 | [部署指南](docs/DEPLOYMENT.md) | [Deployment guide](docs/DEPLOYMENT.en.md) |
+| 原生部署、运维与排障 | [部署指南](docs/DEPLOYMENT.md) | [Deployment guide](docs/DEPLOYMENT.en.md) |
+| Docker Compose 部署 | [Docker 指南](docs/DOCKER.md) | [Docker guide](docs/DOCKER.en.md) |
 
 ## 已知边界
 

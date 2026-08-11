@@ -5,6 +5,9 @@
 把 cluster-gpu-monitor 装到一台常开的机器上（下称 **监控机**），它通过 SSH 轮询各 GPU 节点，
 自己跑一个网页服务给团队看。目标节点上**不装任何东西**，也不需要 root。
 
+本文讲 Python 虚拟环境、systemd 和不可变 release 的原生部署。需要容器部署时改读
+[Docker Compose 指南](DOCKER.md)；两种方式任选其一，不要同时运行两个 collector。
+
 第一次试用请先走 [README 快速开始](../README.md#快速开始)。本文是完整生产手册；字段解释见
 [配置参考](CONFIGURATION.md)，数据与安全边界见[架构与设计取舍](ARCHITECTURE.md)。
 

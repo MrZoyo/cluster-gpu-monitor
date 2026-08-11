@@ -15,7 +15,8 @@ need no agent, scheduler, or root access.
 [Live demo](https://mrzoyo.github.io/cluster-gpu-monitor/) ·
 [Documentation](docs/README.en.md) ·
 [Configuration](docs/CONFIGURATION.en.md) ·
-[Deployment](docs/DEPLOYMENT.en.md)
+[Native deployment](docs/DEPLOYMENT.en.md) ·
+[Docker Compose](docs/DOCKER.en.md)
 
 ## Why use it
 
@@ -80,8 +81,19 @@ To view the dashboard from another machine, create a tunnel:
 ssh -N -L 8848:127.0.0.1:8848 <monitor-host>
 ```
 
-Then open `http://127.0.0.1:8848/`. See the [deployment guide](docs/DEPLOYMENT.en.md) for
-long-running services, systemd, backups, and HTTPS.
+Then open `http://127.0.0.1:8848/`. See the [native deployment guide](docs/DEPLOYMENT.en.md) for
+systemd, backups, and HTTPS, or the [Docker Compose guide](docs/DOCKER.en.md) for containers.
+
+## Two deployment paths
+
+| Path | Best for | Guide |
+| --- | --- | --- |
+| Python + systemd | Small hosts, full systemd hardening, and atomic release rollback | [Native deployment](docs/DEPLOYMENT.en.md) |
+| Docker Compose | Quick installation, environment isolation, and existing container operations | [Docker Compose deployment](docs/DOCKER.en.md) |
+
+Both paths use the same inventory, settings, and SQLite data model. Containers still collect
+remote GPUs over SSH and need no NVIDIA Container Toolkit. Stop the old collector before switching
+paths; two collectors must never write the same database.
 
 ## How it works
 
@@ -128,19 +140,20 @@ concurrency, and query limits.
 
 `gpumon web` has **no built-in authentication** and listens on `127.0.0.1` by default. Put it
 behind an authenticating HTTPS reverse proxy before sharing it with a team. The repository
-includes systemd and Caddy templates.
+includes native systemd/Caddy deployment and Docker Compose deployment.
 
 For production:
 
-- Run collector / backup and Web under separate system accounts; the Web account needs no SSH key.
+- Isolate collector / backup permissions from Web; Web needs no SSH key or database write access.
 - Keep real `inventory.yaml`, `settings.toml`, password hashes, DNS tokens, and private keys on the
   deployment host.
-- Use immutable releases with separate configuration and data directories, plus a previous release
-  for rollback.
+- Use immutable releases or images with separate configuration and data directories, plus a
+  previous version for rollback.
 - Use the built-in online SQLite backup instead of copying a live WAL database.
 
-The [deployment guide](docs/DEPLOYMENT.en.md) covers installation, HTTPS, operations,
-troubleshooting, and rollback.
+Choose the [native deployment guide](docs/DEPLOYMENT.en.md) or
+[Docker Compose guide](docs/DOCKER.en.md) for installation, HTTPS, operations, troubleshooting,
+and rollback.
 
 ## Documentation
 
@@ -150,7 +163,8 @@ troubleshooting, and rollback.
 | Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
 | Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
 | Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |
-| Deploy, operate, and troubleshoot | [Deployment guide](docs/DEPLOYMENT.en.md) | [部署指南](docs/DEPLOYMENT.md) |
+| Native deployment, operations, and troubleshooting | [Deployment guide](docs/DEPLOYMENT.en.md) | [部署指南](docs/DEPLOYMENT.md) |
+| Docker Compose deployment | [Docker guide](docs/DOCKER.en.md) | [Docker 指南](docs/DOCKER.md) |
 
 ## Limits
 

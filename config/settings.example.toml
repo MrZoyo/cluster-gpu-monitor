@@ -32,5 +32,5 @@ ranking_user_limit = 200   # 用户排行最多返回多少人
 mask_users = false        # true 时网页把使用人显示为 a***e
 
 [backup]
-enabled = true            # 是否启用自动备份（systemd timer 会检查此开关）
+enabled = true            # 是否启用定时备份（外部调度器调用 --scheduled 时检查）
 keep_count = 3            # 保留最近几个备份

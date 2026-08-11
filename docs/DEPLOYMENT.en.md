@@ -4,6 +4,10 @@
 
 Install cluster-gpu-monitor on a machine that stays online (hereinafter **monitor host**). It polls each GPU node via SSH and runs a web service for your team. Target nodes **install nothing** and need no root access.
 
+This guide covers native deployment with a Python virtual environment, systemd, and immutable
+releases. For containers, use the [Docker Compose guide](DOCKER.en.md). Choose one path and never
+run two collectors against the same database.
+
 For a first evaluation, use the [README quick start](../README.en.md#quick-start). This document is
 the complete production runbook. See the [configuration reference](CONFIGURATION.en.md) for fields
 and [Architecture and trade-offs](ARCHITECTURE.en.md) for data and security boundaries.

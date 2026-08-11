@@ -14,7 +14,8 @@ manual.
 | Add hosts or tune runtime settings | [Configuration reference](CONFIGURATION.en.md) | Inventory, settings, states, badges, retention, and concurrency |
 | Understand the data model | [Architecture and trade-offs](ARCHITECTURE.en.md) | SSH collection, SQLite, rollups, liveness, GPU hours, and security boundaries |
 | Generate fictional data or a static site | [Demo guide](DEMO.en.md) | Local demos, GitHub Pages export, and destructive-operation guards |
-| Run a persistent service | [Deployment guide](DEPLOYMENT.en.md) | Release layout, systemd, Caddy, backups, migration, and troubleshooting |
+| Deploy with Python + systemd | [Native deployment guide](DEPLOYMENT.en.md) | Release layout, systemd, Caddy, backups, migration, and troubleshooting |
+| Deploy with containers | [Docker Compose guide](DOCKER.en.md) | Non-root image, trust boundaries, SSH mounts, backups, and upgrades |
 
 ## Suggested paths
 
@@ -32,16 +33,17 @@ data.
 
 1. Read the security boundaries in [Architecture and trade-offs](ARCHITECTURE.en.md), especially
    that the Web application has no built-in authentication.
-2. Complete sections 1–4 of the [deployment guide](DEPLOYMENT.en.md).
-3. Choose direct HTTP, domain HTTPS, or DuckDNS from the three access paths.
-4. Complete the security checklist and health checks before opening access.
+2. Choose either [Python + systemd](DEPLOYMENT.en.md) or [Docker Compose](DOCKER.en.md).
+3. Follow that guide for SSH, persistent data, backups, and an authenticating HTTPS entry point.
+4. Complete its security checklist and health checks before opening access.
 
 ## Documentation boundaries
 
 - `README.md` is the landing page; it does not duplicate the full configuration or runbook.
 - `CONFIGURATION.en.md` is the source of truth for configuration fields.
 - `ARCHITECTURE.en.md` describes current behavior and deliberate trade-offs, not a roadmap.
-- `DEPLOYMENT.en.md` keeps copyable production procedures.
+- `DEPLOYMENT.en.md` keeps Python + systemd production procedures.
+- `DOCKER.en.md` keeps Docker Compose build, runtime, and maintenance procedures.
 - `DEMO.en.md` is for fictional data only; real databases should never enter static export.
 
 If documentation and code disagree, treat the current code and example configuration as

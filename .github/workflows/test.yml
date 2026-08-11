@@ -48,3 +48,24 @@ jobs:
           bash -n src/gpumon/collector/remote_probe.sh
           bash -n scripts/probe_one.sh
           bash -n scripts/verify_e2e.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate Compose model
+        env:
+          GPUMON_SSH_DIR: /tmp/gpumon-ssh
+        run: |
+          mkdir -p "$GPUMON_SSH_DIR"
+          docker compose config --quiet
+
+      - name: Build container image
+        run: docker build --tag cluster-gpu-monitor:test .
+
+      - name: Smoke-test image contents
+        run: |
+          docker run --rm --entrypoint python cluster-gpu-monitor:test -c \
+            "from gpumon.api.app import create_app; assert create_app().routes[-1].name == 'static'"
+          docker run --rm --entrypoint ssh cluster-gpu-monitor:test -V

@@ -248,7 +248,7 @@ ranking_user_limit = 200     # Maximum users returned by the ranking
 mask_users = false          # true shows users as a***e
 
 [backup]
-enabled = true              # Whether to enable automatic backup (systemd timer checks this switch)
+enabled = true              # Enable scheduled backup when an external scheduler passes --scheduled
 keep_count = 3              # Keep N most recent backups
 ```
 
@@ -266,10 +266,11 @@ dashboard API. Set it to `true` explicitly in development when API exploration i
 
 ### Backup Configuration
 
-Automatic backups are scheduled only by the systemd timer, once daily at 04:00 by default.
+The application has no internal scheduler. Native deployment uses a systemd timer at 04:00 daily;
+Docker Compose deployment invokes its one-shot backup service from one host scheduler.
 
-- `enabled`: Whether scheduled backups are enabled. When `false`, the timer can still fire but
-  `gpumon backup --scheduled` exits successfully without creating a backup. Manual
+- `enabled`: Whether scheduled backups are enabled. When `false`, the external scheduler can still
+  fire, but `gpumon backup --scheduled` exits successfully without creating a backup. Manual
   `gpumon backup` commands are unaffected.
 - `keep_count`: Keep N most recent backup files. Default 3, i.e. can restore to 3 days ago max.
 
@@ -277,8 +278,8 @@ Each backup is written through the SQLite backup API to a temporary file. It mus
 `quick_check`, is set to mode `0600`, and is fsynced before an atomic rename. Old backups
 are pruned only after the new file is published successfully.
 
-**To change the backup time**, edit the systemd timer. There is deliberately no separate
-settings value that could drift from the real schedule:
+**To change the native deployment backup time**, edit the systemd timer. There is deliberately no
+separate settings value that could drift from the real schedule:
 
 ```bash
 # Edit timer (OnCalendar line)
@@ -293,6 +294,8 @@ sudo systemctl restart gpumon-backup.timer
 ```
 
 Manual backup: `uv run gpumon backup` (backup once immediately, clean old backups per `keep_count`).
+See the [Docker Compose guide](DOCKER.en.md#7-backups-and-scheduling) for containerized manual and
+scheduled commands.
 
 ### How to Set Retention Days (There's a Gotcha)
 
