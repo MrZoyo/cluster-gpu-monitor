@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .. import __version__
 from ..config import CODE_ROOT
 from .routes import router
 
@@ -17,7 +18,7 @@ def create_app(*, enable_docs: bool = False) -> FastAPI:
     redoc_url = "/redoc" if enable_docs else None
     application = FastAPI(
         title="GPU 集群占用监控",
-        version="0.1.0",
+        version=__version__,
         docs_url=docs_url,
         redoc_url=redoc_url,
         openapi_url=openapi_url,

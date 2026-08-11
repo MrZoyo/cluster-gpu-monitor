@@ -1,6 +1,6 @@
 [project]
 name = "cluster-gpu-monitor"
-version = "0.1.0"
+version = "0.3.2"
 description = "Self-hosted GPU cluster monitoring with long-term utilization history, per-user accounting and idle-GPU detection. Agentless (SSH + nvidia-smi/rocm-smi), no scheduler required."
 readme = "README.md"
 requires-python = ">=3.12"

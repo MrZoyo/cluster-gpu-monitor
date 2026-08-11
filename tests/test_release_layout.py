@@ -1,10 +1,28 @@
 """release/state 分离、systemd 调度与浏览器防护的静态契约。"""
 import hashlib
+import tomllib
 from pathlib import Path
 
+from gpumon import __version__
+from gpumon.api.app import create_app
 from gpumon.config import CODE_ROOT
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_version_identifiers_match():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked_project = next(
+        package
+        for package in lock["package"]
+        if package["name"] == project["project"]["name"]
+        and package.get("source") == {"editable": "."}
+    )
+
+    assert __version__ == project["project"]["version"]
+    assert locked_project["version"] == __version__
+    assert create_app().version == __version__
 
 
 def test_code_root_owns_web_assets_independently_of_state_root():
