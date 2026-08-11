@@ -10,8 +10,8 @@ cpu_sample_gap_s = 1      # remote_probe 内两次读 /proc/stat 的间隔，用
 ssh_output_limit_bytes = 4194304 # 单台单轮 stdout+stderr 总上限（4 MiB），超限终止 SSH
 
 [retention]
-raw_days = 31             # 原始 sample_* 保留天数；须 ≥ 最长时间窗(1m=30d)+余量，
-                          # 否则该窗的「使用人排行」(扫 sample_proc 原始表)会少算。
+raw_days = 35             # 原始 sample_* 保留天数；最低 31，默认多留 5 天余量，
+                          # 「使用人排行」会直接扫描 sample_proc 原始表。
 rollup_5m_days = 30       # 5 分钟聚合保留天数（≤24h 窗口用）
 rollup_1h_days = 400      # 1 小时聚合保留天数（>24h 窗口用）；须 > 最长时间窗，留足余量
 

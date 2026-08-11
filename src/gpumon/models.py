@@ -223,7 +223,9 @@ class CollectorSettings(ConfigModel):
 
 
 class RetentionSettings(ConfigModel):
-    raw_days: int = Field(default=14, ge=1, le=36_500)
+    # 用户排行的最长窗口是 1m（30 天），因此原始进程样本不能再允许低于 31 天。
+    # 默认留到 35 天，给清理任务执行时点和少量时间偏差留出余量。
+    raw_days: int = Field(default=35, ge=31, le=36_500)
     rollup_5m_days: int = Field(default=30, ge=1, le=36_500)
     # 1 小时聚合保留天数；须 > 最长时间窗(1m=30d)，留足余量
     rollup_1h_days: int = Field(default=400, ge=1, le=36_500)

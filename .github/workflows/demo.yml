@@ -43,7 +43,7 @@ jobs:
 
       # 3 天历史足够让 12h/24h/48h/72h 四个窗都有曲线；
       # 更长的窗会显示"数据积累中"，这在演示站上是可接受的，
-      # 换成 31 天则要造 2000 万行、库上 GB，CI 里不值当。
+      # 换成默认 35 天则要造数千万行、库上 GB，CI 里不值当。
       - name: Generate demo database
         run: |
           uv run python scripts/gen_demo_db.py \

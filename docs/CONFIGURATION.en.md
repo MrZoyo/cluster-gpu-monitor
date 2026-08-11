@@ -221,7 +221,7 @@ cpu_sample_gap_s = 1        # Interval between two /proc/stat reads on remote, f
 ssh_output_limit_bytes = 4194304 # Combined stdout+stderr budget per host; excess terminates SSH
 
 [retention]
-raw_days = 31               # Raw sample retention days
+raw_days = 35               # Raw sample retention days (minimum 31)
 rollup_5m_days = 30         # 5-minute aggregation retention days
 rollup_1h_days = 400        # 1-hour aggregation retention days
 
@@ -278,7 +278,11 @@ Three tables each manage a time range, queries auto-pick table by window:
 - **>24h windows** use 1-hour aggregation table (never touches raw table, so long windows are fast too)
 - **User rankings scan raw `sample_proc` table**
 
-The last point is the gotcha: **`raw_days` must be ≥ longest time window you want + margin**. Default `raw_days = 31` just covers 1-month window (30 days). If you reduce it to say 7 days, then "last month user ranking" only counts the most recent 7 days of data, **no error, but numbers are low**.
+The last point is the gotcha: **`raw_days` must be ≥ the longest time window plus margin**.
+The validated minimum is now 31 days and the default is 35, leaving five days beyond the
+30-day window. Legacy values such as 7, 14, or 30 are rejected by `config-check` and at
+service startup instead of silently serving an incomplete one-month leaderboard. Before
+upgrading, set the real `settings.toml` to at least 31; keeping 35 is recommended.
 
 `rollup_1h_days` similarly must exceed longest window, default 400 days leaves ample margin.
 

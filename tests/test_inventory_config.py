@@ -259,7 +259,7 @@ def test_unknown_nested_config_field_is_rejected():
     [
         {"collector": {"poll_interval_s": 0}},
         {"collector": {"max_concurrency": 0}},
-        {"retention": {"raw_days": -1}},
+        {"retention": {"raw_days": 30}},
         {"web": {"port": 70_000}},
         {"backup": {"keep_count": 0}},
         {"backup": {"hour": 99}},
@@ -298,6 +298,13 @@ def test_public_example_configs_pass_strict_models():
     Settings.model_validate(settings_data)
     from gpumon.config import _validate_unique_keys
     _validate_unique_keys(inv)
+
+
+def test_retention_default_covers_full_month_with_headroom():
+    settings = Settings.model_validate({})
+    assert settings.retention.raw_days == 35
+    minimum = Settings.model_validate({"retention": {"raw_days": 31}})
+    assert minimum.retention.raw_days == 31
 
 
 def test_load_settings_requires_real_settings_file(tmp_path, monkeypatch):

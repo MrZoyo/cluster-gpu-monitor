@@ -244,7 +244,7 @@ cpu_sample_gap_s = 1        # 远端两次读 /proc/stat 的间隔，用于算 C
 ssh_output_limit_bytes = 4194304 # 单机单轮 stdout+stderr 合计上限，超限终止 SSH
 
 [retention]
-raw_days = 31               # 原始样本保留天数
+raw_days = 35               # 原始样本保留天数（最低 31 天）
 rollup_5m_days = 30         # 5 分钟聚合保留天数
 rollup_1h_days = 400        # 1 小时聚合保留天数
 
@@ -299,8 +299,9 @@ sudo systemctl restart gpumon-backup.timer
 - **使用人排行扫原始 `sample_proc` 表**
 
 最后这条是坑所在：**`raw_days` 必须 ≥ 你想用的最长时间窗 + 余量**。
-默认 `raw_days = 31` 刚好覆盖 1 月窗口（30 天）。如果把它调小到比如 7 天，
-那么"近 1 月使用人排行"只会统计到最近 7 天的数据，**不报错，但数字偏小**。
+现在配置下限为 31 天，默认 `raw_days = 35`，在 30 天窗口之外再留 5 天余量。
+旧版配置若仍写 7/14/30 天，`config-check` 和服务启动会直接拒绝，避免“近 1 月使用人
+排行”无提示地少算。升级前先把真实 `settings.toml` 调到至少 31，推荐保持 35。
 
 `rollup_1h_days` 同理要大于最长窗口，默认 400 天留了充足余量。
 

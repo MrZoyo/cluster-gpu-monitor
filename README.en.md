@@ -241,12 +241,14 @@ Three numbers under `[retention]`, one per tier:
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| `raw_days` | 31 | Raw samples. **Must be ≥ longest window plus headroom**, or the one-month user leaderboard undercounts |
+| `raw_days` | 35 | Raw samples; minimum 31 days, with five extra days by default so the one-month leaderboard is complete |
 | `rollup_5m_days` | 30 | 5-minute rollups, used by windows ≤24h |
 | `rollup_1h_days` | 400 | 1-hour rollups, used by windows >24h |
 
 Note that **the user leaderboard scans raw process samples**, so its reach is bounded by
 `raw_days`. Utilization charts and averages read the rollup tables and are unaffected.
+Legacy values below 31 days are rejected before startup instead of silently serving a
+partial “1m” leaderboard.
 
 ## AMD (ROCm) support status
 
