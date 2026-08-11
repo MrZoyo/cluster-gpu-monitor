@@ -105,6 +105,8 @@ uv run gpumon web              # 起网页 http://127.0.0.1:8848/
 
 前提是中心机的 `~/.ssh/config` 里已有 inventory 中 `ssh_alias` 对应的条目，且能免密登录。
 先用 `ssh <alias> true` 确认一遍，再跑 `collect --once`。
+采集器不会覆盖 alias 的主机密钥策略：能核验指纹的设备建议在首次确认后设
+`StrictHostKeyChecking yes`；无法核验的外部资产可只在对应 alias 显式设 `accept-new`。
 
 其余子命令：`gpumon rollup-once` 手动跑一次聚合 + 保留清理（采集器常驻时会自动做）。
 

@@ -10,6 +10,46 @@ from ..db.store import Store
 from ..models import ProbeResult
 from .ssh import probe
 
+MAX_GPUS_PER_ROUND = 16_384
+MAX_PROCESSES_PER_ROUND = 65_536
+
+
+class _RoundBudget:
+    """限制一轮中长期保留的解析对象；调用方必须在两个 await 之间同步调用。"""
+
+    def __init__(self) -> None:
+        self.gpus = 0
+        self.procs = 0
+
+    def apply(self, result: ProbeResult) -> ProbeResult:
+        if not result.ok:
+            return result
+
+        gpu_count = len(result.gpus)
+        if self.gpus + gpu_count > MAX_GPUS_PER_ROUND:
+            return ProbeResult(
+                host_key=result.host_key,
+                ok=False,
+                error=f"本轮 GPU 样本超过总上限({MAX_GPUS_PER_ROUND})",
+            )
+        self.gpus += gpu_count
+
+        proc_count = len(result.procs)
+        if self.procs + proc_count > MAX_PROCESSES_PER_ROUND:
+            warning = (
+                f"本轮进程样本超过总上限({MAX_PROCESSES_PER_ROUND})，"
+                "已省略本机进程明细"
+            )
+            if result.warning:
+                warning = f"{result.warning}; {warning}"
+            # GPU 与主机指标仍然有效；只释放内存放大最明显的进程对象。
+            result.procs = []
+            result.warning = warning[:512]
+            return result
+
+        self.procs += proc_count
+        return result
+
 
 def _hosts(host_filter: str | None):
     """产出 (host_key, ssh_alias, vendor)。host_filter 非空时只取该 key。"""
@@ -24,17 +64,21 @@ def _hosts(host_filter: str | None):
 async def _probe_all(host_filter: str | None = None) -> tuple[int, list[ProbeResult]]:
     """并发采集所有主机；返回 (本轮统一 ts, 结果列表)。"""
     sem = asyncio.Semaphore(load_settings().collector.max_concurrency)
+    budget = _RoundBudget()
     ts = int(time.time())   # 一轮共用同一 ts，利于跨机对齐与全局聚合
+    host_specs = list(_hosts(host_filter))
 
     async def one(key: str, alias: str, vendor: str | None) -> ProbeResult:
         async with sem:
-            return await probe(key, alias, vendor)
+            result = await probe(key, alias, vendor)
+            # asyncio 只在 await 处切换；这里同步扣减共享预算，不会发生协程竞态。
+            return budget.apply(result)
 
-    tasks = [one(k, a, v) for k, a, v in _hosts(host_filter)]
+    tasks = [one(k, a, v) for k, a, v in host_specs]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     # gather 的异常兜底（probe 内部已尽量自包，这里再防一层）
     clean: list[ProbeResult] = []
-    host_keys = [k for k, _, _ in _hosts(host_filter)]
+    host_keys = [k for k, _, _ in host_specs]
     for key, r in zip(host_keys, results):
         if isinstance(r, ProbeResult):
             clean.append(r)
@@ -56,6 +100,9 @@ def _summary(ts: int, results: list[ProbeResult]) -> str:
              f"{sum(len(r.procs) for r in ok)} 进程"]
     for r in bad:
         lines.append(f"  ✗ {r.host_key}: {r.error}")
+    for r in ok:
+        if r.warning:
+            lines.append(f"  ⚠ {r.host_key}: {r.warning}")
     return "\n".join(lines)
 
 
@@ -100,7 +147,7 @@ def run_forever() -> int:
                 rollup.cleanup(ts); last_cleanup = now_m
 
             bad = [r for r in results if not r.ok]
-            if bad:
+            if bad or any(r.warning for r in results):
                 print(_summary(ts, results))
 
             next_tick += interval               # 防累积漂移

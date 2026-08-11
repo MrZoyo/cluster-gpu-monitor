@@ -227,10 +227,11 @@ class Store:
 
                 conn.execute(
                     "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,consec_fail,last_error) "
-                    "VALUES(?,?,?,?,0,NULL) ON CONFLICT(host_id) DO UPDATE SET "
+                    "VALUES(?,?,?,?,0,?) ON CONFLICT(host_id) DO UPDATE SET "
                     "last_try_ts=excluded.last_try_ts, last_ok_ts=excluded.last_ok_ts, "
-                    "gpus_seen=excluded.gpus_seen, consec_fail=0, last_error=NULL",
-                    (hid, ts, ts, len(r.gpus)))
+                    "gpus_seen=excluded.gpus_seen, consec_fail=0, "
+                    "last_error=excluded.last_error",
+                    (hid, ts, ts, len(r.gpus), (r.warning or "")[:500] or None))
 
     # ---- 查询：拓扑 ---------------------------------------------------------
     def get_topology(self) -> list[dict]:

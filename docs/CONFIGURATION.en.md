@@ -218,7 +218,7 @@ ssh_connect_timeout_s = 8   # SSH connection timeout
 ssh_total_timeout_s = 20    # Overall timeout per host per round (includes remote sleep)
 max_concurrency = 8         # How many simultaneous SSH connections. Increase for many machines, mind bastion capacity
 cpu_sample_gap_s = 1        # Interval between two /proc/stat reads on remote, for CPU utilization
-ssh_output_limit_bytes = 4194304 # Combined stdout+stderr budget per host; excess terminates SSH
+ssh_output_limit_bytes = 4194304 # Per-host output budget (max 16 MiB); excess terminates SSH
 
 [retention]
 raw_days = 35               # Raw sample retention days (minimum 31)
@@ -289,6 +289,11 @@ upgrading, set the real `settings.toml` to at least 31; keeping 35 is recommende
 ### Concurrency and Bastions
 
 `max_concurrency` is the number of simultaneous SSH connections. Want to increase for many machines, but note: if all machines go through same bastion, bastion's `MaxSessions` / `MaxStartups` becomes the bottleneck first, manifesting as random timeouts on some machines. Safe approach: increment gradually (8 → 16), watch `/api/collector/status` for new timeouts.
+
+Validation also requires `max_concurrency * ssh_output_limit_bytes <= 64 MiB` so concurrent
+SSH output cannot grow without bound. Parsing retains at most 4,096 process samples per host
+and 65,536 per round. On abnormal overflow, GPU/host metrics are kept while that host's process
+details are omitted and a warning is stored in collector status.
 
 ---
 

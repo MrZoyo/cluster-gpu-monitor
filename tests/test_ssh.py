@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
-from gpumon.collector.ssh import OutputLimitExceeded, _communicate_limited
+from gpumon.collector import ssh as ssh_module
+from gpumon.collector.ssh import OutputLimitExceeded, _communicate_limited, _ssh_opts
 
 
 async def _spawn_python(code: str) -> asyncio.subprocess.Process:
@@ -58,3 +61,57 @@ def test_cancellation_reaps_subprocess():
         assert proc.returncode is not None
 
     asyncio.run(run())
+
+
+def test_ssh_options_disable_unneeded_features_without_overriding_host_keys(monkeypatch):
+    monkeypatch.setattr(
+        ssh_module,
+        "load_settings",
+        lambda: SimpleNamespace(
+            collector=SimpleNamespace(ssh_connect_timeout_s=8)
+        ),
+    )
+    opts = _ssh_opts()
+    joined = " ".join(opts)
+
+    assert "StrictHostKeyChecking" not in joined
+    for option in (
+        "ForwardAgent=no",
+        "ForwardX11=no",
+        "RequestTTY=no",
+        "ClearAllForwardings=yes",
+        "PermitLocalCommand=no",
+    ):
+        assert option in opts
+
+
+def test_hardening_options_keep_alias_proxyjump_and_host_key_policy(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ssh_module,
+        "load_settings",
+        lambda: SimpleNamespace(
+            collector=SimpleNamespace(ssh_connect_timeout_s=8)
+        ),
+    )
+    config = tmp_path / "ssh_config"
+    config.write_text(
+        "Host target\n"
+        "  HostName 192.0.2.10\n"
+        "  User collector\n"
+        "  ProxyJump bastion\n"
+        "  StrictHostKeyChecking yes\n"
+        "Host bastion\n"
+        "  HostName 192.0.2.20\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        ["ssh", "-G", "-F", str(config), *_ssh_opts(), "target"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    effective = completed.stdout.lower()
+    assert "proxyjump bastion" in effective
+    assert "stricthostkeychecking true" in effective

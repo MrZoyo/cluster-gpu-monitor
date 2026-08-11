@@ -38,7 +38,9 @@ Palette = Literal["lime", "violet", "azure", "amber", "rose", "teal", "indigo", 
 HardwareId = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 OptionalShortText = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 MAX_GPUS_PER_HOST = 1024
-MAX_PROCESSES_PER_HOST = 50_000
+MAX_PROCESSES_PER_HOST = 4096
+MAX_SSH_OUTPUT_PER_HOST_BYTES = 16 * 1024 * 1024
+MAX_SSH_OUTPUT_IN_FLIGHT_BYTES = 64 * 1024 * 1024
 
 
 class ConfigModel(BaseModel):
@@ -218,8 +220,18 @@ class CollectorSettings(ConfigModel):
     ssh_output_limit_bytes: int = Field(
         default=4 * 1024 * 1024,
         ge=64 * 1024,
-        le=64 * 1024 * 1024,
+        le=MAX_SSH_OUTPUT_PER_HOST_BYTES,
     )
+
+    @model_validator(mode="after")
+    def validate_ssh_memory_budget(self) -> CollectorSettings:
+        """限制并发管道里可同时保留的原始 SSH 输出。"""
+        in_flight = self.max_concurrency * self.ssh_output_limit_bytes
+        if in_flight > MAX_SSH_OUTPUT_IN_FLIGHT_BYTES:
+            raise ValueError(
+                "max_concurrency * ssh_output_limit_bytes 不能超过 64 MiB"
+            )
+        return self
 
 
 class RetentionSettings(ConfigModel):
@@ -300,6 +312,8 @@ class ProbeResult(SampleModel):
     host_key: ConfigKey
     ok: bool
     error: str | None = Field(default=None, max_length=512)
+    # ok=True 时仍可能因整轮资源预算而省略部分明细；warning 会写入采集状态。
+    warning: str | None = Field(default=None, max_length=512)
     vendor: Literal["nvidia", "amd", "none"] | None = None
     remote_hostname: OptionalShortText | None = None
     gpus: list[GpuSample] = Field(default_factory=list, max_length=MAX_GPUS_PER_HOST)

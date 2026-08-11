@@ -241,7 +241,7 @@ ssh_connect_timeout_s = 8   # SSH 建连超时
 ssh_total_timeout_s = 20    # 单台机一轮的整体超时（含远端 sleep）
 max_concurrency = 8         # 同时 SSH 几台。机器多可以调大，注意跳板机承受能力
 cpu_sample_gap_s = 1        # 远端两次读 /proc/stat 的间隔，用于算 CPU 利用率
-ssh_output_limit_bytes = 4194304 # 单机单轮 stdout+stderr 合计上限，超限终止 SSH
+ssh_output_limit_bytes = 4194304 # 单机单轮输出上限（最高 16 MiB），超限终止 SSH
 
 [retention]
 raw_days = 35               # 原始样本保留天数（最低 31 天）
@@ -311,6 +311,10 @@ sudo systemctl restart gpumon-backup.timer
 如果这些机器都走同一个跳板，跳板的 `MaxSessions` / `MaxStartups` 会先成为瓶颈，
 表现是部分机器随机超时。稳妥做法是先小步调大（8 → 16），观察
 `/api/collector/status` 里有没有新增的超时。
+
+配置校验还要求 `max_concurrency * ssh_output_limit_bytes <= 64 MiB`，避免同时保留过多
+SSH 输出。解析后每台最多保留 4096 条进程样本，整轮最多 65536 条；异常超量时优先
+保留 GPU/主机指标，省略该机进程明细并在采集状态里给出告警。
 
 ---
 

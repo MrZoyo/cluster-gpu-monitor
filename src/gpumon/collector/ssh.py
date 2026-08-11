@@ -118,7 +118,12 @@ def _ssh_opts() -> list[str]:
         "-o", f"ConnectTimeout={c.ssh_connect_timeout_s}",
         "-o", "ServerAliveInterval=5",
         "-o", "ServerAliveCountMax=2",
-        "-o", "StrictHostKeyChecking=accept-new",
+        # 主机密钥策略由每个 ~/.ssh/config alias 决定；不同资产的现实条件不同。
+        "-o", "ForwardAgent=no",
+        "-o", "ForwardX11=no",
+        "-o", "RequestTTY=no",
+        "-o", "ClearAllForwardings=yes",
+        "-o", "PermitLocalCommand=no",
     ]
 
 

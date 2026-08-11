@@ -270,6 +270,24 @@ def test_invalid_settings_ranges_are_rejected(data):
         Settings.model_validate(data)
 
 
+def test_collector_rejects_excessive_combined_ssh_output_budget():
+    with pytest.raises(ValidationError, match="不能超过 64 MiB"):
+        Settings.model_validate({
+            "collector": {
+                "max_concurrency": 8,
+                "ssh_output_limit_bytes": 16 * 1024 * 1024,
+            }
+        })
+
+    accepted = Settings.model_validate({
+        "collector": {
+            "max_concurrency": 4,
+            "ssh_output_limit_bytes": 16 * 1024 * 1024,
+        }
+    })
+    assert accepted.collector.ssh_output_limit_bytes == 16 * 1024 * 1024
+
+
 def test_inventory_enums_and_identifiers_are_strict():
     with pytest.raises(ValidationError, match="ssh_alias"):
         HostCfg(key="h1", ssh_alias="-oProxyCommand=bad", display_name="H1")

@@ -121,6 +121,11 @@ done
 每行都回 `GPU 0: NVIDIA ...` 才算通。`BatchMode=yes` 很关键：它禁掉一切交互提示，
 能问密码就说明密钥没配好，服务化之后会静默卡死。
 
+采集器不会替你改写 `StrictHostKeyChecking`。能从资产方核验指纹时，先人工确认并写入
+`known_hosts`，再在该 alias 下设 `StrictHostKeyChecking yes`；若外部资产确实无法核验，
+可以只在对应 alias 显式保留 `StrictHostKeyChecking accept-new`。不要把宽松策略写成
+所有主机的全局默认。
+
 **为什么这层间接值得**：
 
 1. **迁移监控机只需重写 ssh config。** `inventory.yaml` 里的 `key` 是历史数据的稳定锚点，
@@ -152,12 +157,18 @@ APP_USER=<USER>
 APP_GROUP=$(id -gn "$APP_USER")
 COMMIT=$(git -C "$SRC" rev-parse HEAD)
 
-sudo install -d -o root -g root "$ROOT/releases"
-sudo install -d -o "$APP_USER" -g "$APP_GROUP" \
-  "$ROOT/releases/$COMMIT" "$ROOT/config" "$ROOT/data"
+sudo install -d -o root -g root "$ROOT/releases" "$ROOT/releases/$COMMIT"
+sudo install -d -m 0750 -o root -g "$APP_GROUP" "$ROOT/config"
+sudo install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$ROOT/data"
 git -C "$SRC" archive "$COMMIT" \
-  | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
-sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
+  | sudo tar --no-same-owner -x -C "$ROOT/releases/$COMMIT"
+sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
+sudo chmod -R a-w "$ROOT/releases/$COMMIT"
+sudo install -d -m 0700 -o "$APP_USER" -g "$APP_GROUP" "$ROOT/releases/$COMMIT/.venv"
+sudo -u "$APP_USER" uv venv --allow-existing "$ROOT/releases/$COMMIT/.venv"
+sudo -u "$APP_USER" env UV_PROJECT_ENVIRONMENT="$ROOT/releases/$COMMIT/.venv" \
+  uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
 sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
 sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
 sudo chmod -R a-w "$ROOT/releases/$COMMIT"
@@ -221,13 +232,13 @@ sudo find "$ROOT/config" -maxdepth 1 -type f -exec chmod 0640 {} +
 sudo find "$ROOT/data" -maxdepth 1 -type f -name 'gpumon.db*' \
   -exec chown "$APP_USER:$APP_GROUP" {} + -exec chmod 0640 {} +
 
-sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/system-gpumon-collector.service" \
   | sudo tee /etc/systemd/system/gpumon-collector.service >/dev/null
 sed "s#__ROOT__#$ROOT#g; s#__WEB_USER__#$WEB_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/system-gpumon-web.service" \
   | sudo tee /etc/systemd/system/gpumon-web.service >/dev/null
-sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/gpumon-backup.service" \
   | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
 sudo cp "$ROOT/current/deploy/systemd/gpumon-backup.timer" \
@@ -402,8 +413,10 @@ ECharts tooltip 和现有组件生成的行内样式；脚本仍严格限制为�
 sudo cp deploy/caddy/Caddyfile.example /etc/caddy/Caddyfile
 sudo vim /etc/caddy/Caddyfile          # 填 <YOUR_DOMAIN>
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl enable --now caddy && sudo systemctl reload caddy
+sudo systemctl enable --now caddy && sudo systemctl restart caddy
 ```
+
+模板关闭了 Caddy admin API，因此后续更新也必须先 `caddy validate`，再受控 restart。
 
 首次启动 Caddy 会自动向 Let's Encrypt 申请证书并配置自动续期，什么都不用管。
 前提是**入站 80 和 443 都可达**：80 用于 HTTP-01 挑战和 HTTP→HTTPS 跳转，443 是正经服务。

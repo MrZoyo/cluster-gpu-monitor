@@ -25,6 +25,11 @@ def test_system_units_execute_through_current_release():
         assert "ExecStart=__ROOT__/current/.venv/bin/gpumon" in text
         assert "/opt/gpu-monitor" not in text
 
+    for name in ("system-gpumon-collector.service", "gpumon-backup.service"):
+        text = (unit_dir / name).read_text(encoding="utf-8")
+        assert "User=__USER__" in text
+        assert "Group=__GROUP__" in text
+
 
 def test_backup_timer_has_exactly_one_schedule_and_no_eager_service_dependency():
     text = (ROOT / "deploy" / "systemd" / "gpumon-backup.timer").read_text(
@@ -58,6 +63,15 @@ def test_system_web_unit_is_a_separate_read_only_sandbox():
     assert "ReadWritePaths=" not in text
 
 
+def test_collector_units_have_memory_and_task_circuit_breakers():
+    unit_dir = ROOT / "deploy" / "systemd"
+    for name in ("gpumon-collector.service", "system-gpumon-collector.service"):
+        text = (unit_dir / name).read_text(encoding="utf-8")
+        assert "MemoryHigh=384M" in text
+        assert "MemoryMax=512M" in text
+        assert "TasksMax=128" in text
+
+
 def test_caddy_template_sets_browser_security_headers_and_no_store():
     text = (ROOT / "deploy" / "caddy" / "Caddyfile.example").read_text(
         encoding="utf-8"
@@ -75,6 +89,7 @@ def test_caddy_template_sets_browser_security_headers_and_no_store():
     assert "frame-ancestors 'none'" in text
     assert "script-src 'self'" in text
     assert "@gpumon_no_store path / /index.html /api/*" in text
+    assert "admin off" in text
 
 
 def test_pages_meta_csp_and_vendored_echarts_are_pinned():

@@ -10,6 +10,9 @@ Environment=GPUMON_ROOT=__STATE_ROOT__
 ExecStart=__CODE_ROOT__/.venv/bin/gpumon collect
 Restart=always
 RestartSec=5
+MemoryHigh=384M
+MemoryMax=512M
+TasksMax=128
 
 [Install]
 WantedBy=default.target

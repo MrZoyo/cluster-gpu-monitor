@@ -115,6 +115,11 @@ done
 
 Each line should return `GPU 0: NVIDIA ...`. `BatchMode=yes` is critical: disables all interactive prompts, if it asks for password the key isn't set up, and after becoming a service it will silently hang.
 
+The collector does not override `StrictHostKeyChecking`. When a fingerprint can be verified,
+confirm it manually, store it in `known_hosts`, and set `StrictHostKeyChecking yes` on that alias.
+If an externally managed asset cannot be verified, explicitly keep `accept-new` only on that
+alias instead of making it a global default.
+
 **Why this indirection is worth it**:
 
 1. **Migrating monitor host only requires rewriting ssh config.** `key` in `inventory.yaml` is the stable anchor for historical data. When changing machines, IPs/bastions behind `ssh_alias` can change however they want, as long as `key` stays unchanged, historical curves and stats stay continuous — database links by `key`, not address.
@@ -142,12 +147,18 @@ ROOT=<ROOT>
 APP_USER=<USER>
 APP_GROUP=$(id -gn "$APP_USER")
 COMMIT=$(git -C "$SRC" rev-parse HEAD)
-sudo install -d -o root -g root "$ROOT/releases"
-sudo install -d -o "$APP_USER" -g "$APP_GROUP" \
-  "$ROOT/releases/$COMMIT" "$ROOT/config" "$ROOT/data"
+sudo install -d -o root -g root "$ROOT/releases" "$ROOT/releases/$COMMIT"
+sudo install -d -m 0750 -o root -g "$APP_GROUP" "$ROOT/config"
+sudo install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$ROOT/data"
 git -C "$SRC" archive "$COMMIT" \
-  | sudo -u "$APP_USER" tar -x -C "$ROOT/releases/$COMMIT"
-sudo -u "$APP_USER" uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
+  | sudo tar --no-same-owner -x -C "$ROOT/releases/$COMMIT"
+sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
+sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
+sudo chmod -R a-w "$ROOT/releases/$COMMIT"
+sudo install -d -m 0700 -o "$APP_USER" -g "$APP_GROUP" "$ROOT/releases/$COMMIT/.venv"
+sudo -u "$APP_USER" uv venv --allow-existing "$ROOT/releases/$COMMIT/.venv"
+sudo -u "$APP_USER" env UV_PROJECT_ENVIRONMENT="$ROOT/releases/$COMMIT/.venv" \
+  uv sync --project "$ROOT/releases/$COMMIT" --frozen --no-dev
 sudo chown -R root:"$APP_GROUP" "$ROOT/releases/$COMMIT"
 sudo chmod -R u=rwX,g=rX,o= "$ROOT/releases/$COMMIT"
 sudo chmod -R a-w "$ROOT/releases/$COMMIT"
@@ -218,13 +229,13 @@ sudo find "$ROOT/config" -maxdepth 1 -type f -exec chmod 0640 {} +
 sudo find "$ROOT/data" -maxdepth 1 -type f -name 'gpumon.db*' \
   -exec chown "$APP_USER:$APP_GROUP" {} + -exec chmod 0640 {} +
 
-sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/system-gpumon-collector.service" \
   | sudo tee /etc/systemd/system/gpumon-collector.service >/dev/null
 sed "s#__ROOT__#$ROOT#g; s#__WEB_USER__#$WEB_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/system-gpumon-web.service" \
   | sudo tee /etc/systemd/system/gpumon-web.service >/dev/null
-sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g" \
+sed "s#__ROOT__#$ROOT#g; s#__USER__#$APP_USER#g; s#__GROUP__#$APP_GROUP#g" \
   "$ROOT/current/deploy/systemd/gpumon-backup.service" \
   | sudo tee /etc/systemd/system/gpumon-backup.service >/dev/null
 sudo cp "$ROOT/current/deploy/systemd/gpumon-backup.timer" \
@@ -396,8 +407,11 @@ meta CSP; `frame-ancestors` still requires the real deployment response header.
 sudo cp deploy/caddy/Caddyfile.example /etc/caddy/Caddyfile
 sudo vim /etc/caddy/Caddyfile          # Fill <YOUR_DOMAIN>
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl enable --now caddy && sudo systemctl reload caddy
+sudo systemctl enable --now caddy && sudo systemctl restart caddy
 ```
+
+The template disables Caddy's admin API, so later changes must also be validated first and
+then applied with a controlled restart.
 
 First Caddy start automatically requests certificate from Let's Encrypt and configures auto-renewal, nothing to manage. Prerequisite is **inbound 80 and 443 both reachable**: 80 for HTTP-01 challenge and HTTP→HTTPS redirect, 443 is actual service. Cloud VM remember to allow 80/443 in security group, **8848 absolutely do not allow**.
 
