@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- GitHub Pages 不能自定义响应头；正式部署还会由 Caddy 下发更完整的 CSP/安全头。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
   <title>GPU 集群占用监控</title>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -26,7 +29,7 @@
   </div>
   <div class="wrap"><div id="view"></div></div>
 
-  <script src="/vendor/echarts.min.js"></script>
+  <script src="/vendor/echarts.min.js?v=6.1.0"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/components.js"></script>

@@ -354,10 +354,26 @@ sudo systemctl edit caddy      # Write following three lines
 
 ### 6.4 Caddyfile
 
-Core is two lines — domain + reverse proxy, certificate handled by Caddy automatically:
+The full template keeps browser protections in a reusable snippet. `style-src` retains
+`'unsafe-inline'` for ECharts tooltips and existing components that generate inline styles;
+scripts remain same-origin only, with no inline/eval allowance:
 
 ```caddyfile
+(gpumon_security_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		X-Frame-Options "DENY"
+	}
+	@gpumon_no_store path / /index.html /api/*
+	header @gpumon_no_store Cache-Control "no-store"
+}
+
 <YOUR_DOMAIN> {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	basic_auth {
 		team {$GPUMON_BASIC_HASH}
 	}
@@ -368,7 +384,11 @@ Core is two lines — domain + reverse proxy, certificate handled by Caddy autom
 }
 ```
 
-Full commented template see `deploy/caddy/Caddyfile.example`.
+See `deploy/caddy/Caddyfile.example` for the fully commented template. Only trusted
+certificate domain entries should set HSTS; omit it from a self-signed IP fallback so a
+browser does not remember an endpoint whose certificate cannot be trusted automatically.
+GitHub Pages cannot set these response headers, so `web/index.html` carries the equivalent
+meta CSP; `frame-ancestors` still requires the real deployment response header.
 
 > Directive name by version: Caddy ≥ 2.8 is `basic_auth`, 2.7 and earlier is `basicauth`. Check with `caddy version`.
 
@@ -386,6 +406,8 @@ Verify:
 ```bash
 curl -I https://<YOUR_DOMAIN>/                              # Expect 401 (no credentials)
 curl -u 'team:<your password>' https://<YOUR_DOMAIN>/api/health   # Expect {"ok":true,...}
+curl -sSI -u 'team:<your password>' https://<YOUR_DOMAIN>/ | grep -Ei \
+  'content-security-policy|strict-transport-security|x-content-type-options|cache-control'
 ```
 
 ---
@@ -481,6 +503,8 @@ Caddyfile:
 
 ```caddyfile
 <YOUR_SUBDOMAIN>.duckdns.org:8443 {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 		# Explicitly specify resolvers, bypass local DNS cache causing TXT validation failure
@@ -525,6 +549,8 @@ Workaround: **Add an IP direct-connect entry**. Browser accessing by IP has TLS 
 
 # Domain entry (green lock) — people who can access use this
 <YOUR_SUBDOMAIN>.duckdns.org:8443 {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 		resolvers 1.1.1.1 8.8.8.8
@@ -537,6 +563,8 @@ Workaround: **Add an IP direct-connect entry**. Browser accessing by IP has TLS 
 # IP fallback entry (self-signed, browser first-time warning click continue, traffic still TLS encrypted)
 https://<SERVER_IP>:8443 {
 	tls internal
+	import gpumon_security_headers
+	# Do not set HSTS on the self-signed IP entry
 	basic_auth { team {$GPUMON_BASIC_HASH} }
 	reverse_proxy 127.0.0.1:8848
 	log { output file /var/log/caddy/gpumon.log }

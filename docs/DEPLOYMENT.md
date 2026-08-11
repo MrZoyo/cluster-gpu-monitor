@@ -361,10 +361,25 @@ sudo systemctl edit caddy      # 写入下面三行
 
 ### 6.4 Caddyfile
 
-核心就两行 —— 域名 + 反代，证书 Caddy 自己搞定：
+完整模板把浏览器安全头收在一个可复用片段里。`style-src` 保留 `'unsafe-inline'` 是为了兼容
+ECharts tooltip 和现有组件生成的行内样式；脚本仍严格限制为同源，不允许 inline/eval：
 
 ```caddyfile
+(gpumon_security_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		X-Frame-Options "DENY"
+	}
+	@gpumon_no_store path / /index.html /api/*
+	header @gpumon_no_store Cache-Control "no-store"
+}
+
 <YOUR_DOMAIN> {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	basic_auth {
 		team {$GPUMON_BASIC_HASH}
 	}
@@ -375,7 +390,10 @@ sudo systemctl edit caddy      # 写入下面三行
 }
 ```
 
-完整带注释的模板见 `deploy/caddy/Caddyfile.example`。
+完整带注释的模板见 `deploy/caddy/Caddyfile.example`。HSTS 只用于有可信证书的域名入口；
+自签 IP 保底入口不要设置，避免浏览器记住一个无法自动信任的证书入口。GitHub Pages 无法
+配置这些响应头，因此 `web/index.html` 另带等价的 meta CSP；`frame-ancestors` 仍只能由
+正式部署的响应头生效。
 
 > 指令名按版本：Caddy ≥ 2.8 是 `basic_auth`，2.7 及更早是 `basicauth`。
 > `caddy version` 确认一下。
@@ -396,6 +414,8 @@ sudo systemctl enable --now caddy && sudo systemctl reload caddy
 ```bash
 curl -I https://<YOUR_DOMAIN>/                              # 期望 401（没带凭据）
 curl -u 'team:<你的口令>' https://<YOUR_DOMAIN>/api/health   # 期望 {"ok":true,...}
+curl -sSI -u 'team:<你的口令>' https://<YOUR_DOMAIN>/ | grep -Ei \
+  'content-security-policy|strict-transport-security|x-content-type-options|cache-control'
 ```
 
 ---
@@ -498,6 +518,8 @@ Caddyfile：
 
 ```caddyfile
 <YOUR_SUBDOMAIN>.duckdns.org:8443 {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 		# 显式指定解析器，绕开本机 DNS 缓存导致的 TXT 校验失败
@@ -545,6 +567,8 @@ sudo journalctl -u caddy -f          # 看证书签发过程，通常 10~60 秒
 
 # 域名入口（绿锁）—— 能访问的人走这个
 <YOUR_SUBDOMAIN>.duckdns.org:8443 {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
 	tls {
 		dns duckdns {env.DUCKDNS_TOKEN}
 		resolvers 1.1.1.1 8.8.8.8
@@ -557,6 +581,8 @@ sudo journalctl -u caddy -f          # 看证书签发过程，通常 10~60 秒
 # IP 保底入口（自签，浏览器首次告警点继续即可，流量仍是 TLS 加密）
 https://<SERVER_IP>:8443 {
 	tls internal
+	import gpumon_security_headers
+	# 自签 IP 入口不设置 HSTS
 	basic_auth { team {$GPUMON_BASIC_HASH} }
 	reverse_proxy 127.0.0.1:8848
 	log { output file /var/log/caddy/gpumon.log }
@@ -808,7 +834,6 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
-
 
 
 

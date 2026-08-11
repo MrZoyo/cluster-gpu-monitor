@@ -17,6 +17,7 @@ const appSource = fs.readFileSync(
   path.join(__dirname, "..", "web", "js", "app.js"),
   "utf8",
 );
+const echarts = require(path.join(__dirname, "..", "web", "vendor", "echarts.min.js"));
 
 const context = { window: {} };
 vm.createContext(context);
@@ -30,3 +31,4 @@ assert.equal(context.window.UI.escapeHtml(null), "");
 assert.match(rankingSource, /escapeHtml\(x\.name\)/);
 assert.doesNotMatch(rankingSource, /\$\{x\.name\}/);
 assert.doesNotMatch(appSource, /\$\{e\.message\}/);
+assert.equal(echarts.version, "6.1.0");

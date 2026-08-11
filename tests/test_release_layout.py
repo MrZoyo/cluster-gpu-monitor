@@ -1,4 +1,5 @@
-"""release/state 分离与 systemd 单一调度源的静态契约。"""
+"""release/state 分离、systemd 调度与浏览器防护的静态契约。"""
+import hashlib
 from pathlib import Path
 
 from gpumon.config import CODE_ROOT
@@ -55,3 +56,37 @@ def test_system_web_unit_is_a_separate_read_only_sandbox():
     ):
         assert setting in text
     assert "ReadWritePaths=" not in text
+
+
+def test_caddy_template_sets_browser_security_headers_and_no_store():
+    text = (ROOT / "deploy" / "caddy" / "Caddyfile.example").read_text(
+        encoding="utf-8"
+    )
+    for header in (
+        "Content-Security-Policy",
+        "Strict-Transport-Security",
+        "X-Content-Type-Options",
+        "Referrer-Policy",
+        "Permissions-Policy",
+        "X-Frame-Options",
+        "Cache-Control",
+    ):
+        assert header in text
+    assert "frame-ancestors 'none'" in text
+    assert "script-src 'self'" in text
+    assert "@gpumon_no_store path / /index.html /api/*" in text
+
+
+def test_pages_meta_csp_and_vendored_echarts_are_pinned():
+    index = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'http-equiv="Content-Security-Policy"' in index
+    assert "script-src 'self'" in index
+    assert "unsafe-eval" not in index
+    assert 'echarts.min.js?v=6.1.0' in index
+
+    bundle = ROOT / "web" / "vendor" / "echarts.min.js"
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest() == (
+        "b66b25aeb4df84e33199dc21694014d336d222cbd9deb0e5a7c14bd6aa0d0fd0"
+    )
+    assert (ROOT / "web" / "vendor" / "ECHARTS-LICENSE.txt").is_file()
+    assert (ROOT / "web" / "vendor" / "ECHARTS-NOTICE.txt").is_file()

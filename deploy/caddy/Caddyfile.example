@@ -34,12 +34,36 @@
 
 
 # ---------------------------------------------------------------------------
+# 所有入口共用的浏览器安全头。
+#
+# style-src 暂时保留 'unsafe-inline'：ECharts tooltip 和现有组件会生成行内样式；
+# script-src 不允许 inline/eval。HSTS 只应加到可信域名入口，不能用于自签 IP 入口。
+# ---------------------------------------------------------------------------
+(gpumon_security_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		X-Frame-Options "DENY"
+	}
+
+	# 页面和 API 含实时/用户数据，禁止浏览器及共享代理落盘缓存。
+	@gpumon_no_store path / /index.html /api/*
+	header @gpumon_no_store Cache-Control "no-store"
+}
+
+
+# ---------------------------------------------------------------------------
 # 方式 A（推荐）：有域名，且公网入站 80/443 可达
 #
 # Caddy 自动申请并自动续期 Let's Encrypt 证书（HTTP-01 / TLS-ALPN-01），
 # 绿锁零配置。这就是全部配置，没有更简的写法了。
 # ---------------------------------------------------------------------------
 <YOUR_DOMAIN> {
+	import gpumon_security_headers
+	header Strict-Transport-Security "max-age=31536000"
+
 	basic_auth {
 		# 用户名随意（如 team）；第二个字段是口令 hash，来自环境变量
 		team {$GPUMON_BASIC_HASH}
@@ -69,6 +93,9 @@
 # 换别的 DNS 商就换插件名（cloudflare / alidns / tencentcloud ...）。
 # ---------------------------------------------------------------------------
 #<YOUR_SUBDOMAIN>.duckdns.org:8443 {
+#	import gpumon_security_headers
+#	header Strict-Transport-Security "max-age=31536000"
+#
 #	tls {
 #		dns duckdns {env.DUCKDNS_TOKEN}
 #		# 显式指定解析器，避开本机 DNS 缓存导致的 TXT 记录校验失败
@@ -104,6 +131,8 @@
 # ---------------------------------------------------------------------------
 #https://<SERVER_IP>:8443 {
 #	tls internal
+#	import gpumon_security_headers
+#	# 自签 IP 入口不能加 HSTS，否则浏览器可能记住一个无法自动信任的证书入口。
 #
 #	basic_auth {
 #		team {$GPUMON_BASIC_HASH}
