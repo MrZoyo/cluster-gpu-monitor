@@ -2,9 +2,23 @@
 
 简体中文 | [English](README.en.md)
 
-[![Tests](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml/badge.svg)](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml)
-[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.3.2">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.3.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.3.2">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/MrZoyo/cluster-gpu-monitor/test.yml?branch=main&amp;style=for-the-badge&amp;label=TESTS&amp;logo=githubactions&amp;logoColor=white" alt="测试状态">
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/PYTHON-3.12%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.12 或更高版本">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/LICENSE-MIT-2EA44F?style=for-the-badge&amp;logo=opensourceinitiative&amp;logoColor=white" alt="MIT 许可证">
+  </a>
+</p>
 
 用一台中心机，通过 SSH 采集多台 NVIDIA / AMD GPU 服务器，把长期利用率、用户 GPU·小时和
 空占情况存进 SQLite。目标节点无需安装 agent，也不要求 Slurm、Kubernetes 或 root 权限。

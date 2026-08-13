@@ -2,9 +2,23 @@
 
 [简体中文](README.md) | English
 
-[![Tests](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml/badge.svg)](https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml)
-[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.3.2">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.3.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.3.2">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/MrZoyo/cluster-gpu-monitor/test.yml?branch=main&amp;style=for-the-badge&amp;label=TESTS&amp;logo=githubactions&amp;logoColor=white" alt="Test status">
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/PYTHON-3.12%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.12 or newer">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/LICENSE-MIT-2EA44F?style=for-the-badge&amp;logo=opensourceinitiative&amp;logoColor=white" alt="MIT License">
+  </a>
+</p>
 
 Monitor NVIDIA and AMD GPU servers from one central host over SSH. Cluster GPU Monitor stores
 long-term utilization, per-user GPU hours, and idle-but-occupied cards in SQLite. Target nodes
