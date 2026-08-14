@@ -22,7 +22,10 @@
 #   status      active（默认） / planned / retired
 #               planned = 待接入占位（网页显示占位卡）；
 #               retired = 已退役（采集器不再探测、网页不再显示，DB 行与历史保留供对账）
-#   note        备注，仅在 status: planned 时显示在网页（悬停 tooltip）
+#   note        集群备注显示在总览/集群页；主机备注在 planned 占位行悬停显示
+#   多语言文案  badge 的 text/tooltip、算力域 description、集群/主机 note
+#               可写普通字符串，也可写 { zh: "中文", en: "English" }。
+#               当前界面语言缺失时，按 YAML 顺序使用第一条已有翻译。
 #   badges      自定义标签，可挂多枚，网页显示在算力域标题与集群卡片标题上。
 #               两种写法可以混用：
 #                 - 写 badge_library 里的 key（字符串）→ 复用同一枚标签
@@ -47,10 +50,14 @@ defaults:
 # 想改「自建」的说明文案？改这一处，所有挂了它的地方一起变。
 badge_library:
   - key: self-built
-    text: "自建"
+    text:
+      zh: "自建"                  # 中文放第一项，也就是缺少目标语言时的回退文案
+      en: "Self-built"
     mark: "◆"
     tone: cyan
-    tooltip: "本地自行装机，账号自助申请"
+    tooltip:
+      zh: "本地自行装机，账号自助申请"
+      en: "Built locally; request access through the self-service flow"
   - key: infiniband
     text: "InfiniBand"
     tone: green
@@ -72,6 +79,9 @@ capacity_groups:
     name: "自有算力"
     sort_order: 1
     palette: lime
+    description:
+      zh: "自购自管"
+      en: "Owned and managed in-house"
     badges: [self-built]         # 算力域也能挂标签，写法与集群一致
   - key: rented
     name: "租用算力"
@@ -139,7 +149,9 @@ clusters:
     sort_order: 101
     capacity_group: partner
     status: planned
-    note: "拿到 SSH 权限后在 hosts 下添加设备"
+    note:
+      zh: "拿到 SSH 权限后在 hosts 下添加设备"
+      en: "Once SSH access is approved, add the device under hosts"
     hosts:
       # 待接入占位：需写 gpu_model，网页才能显示"8 张 NVIDIA H100"
       - key: partner-1

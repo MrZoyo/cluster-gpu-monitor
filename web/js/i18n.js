@@ -354,6 +354,26 @@ window.I18n = {
     return text.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? '');
   },
 
+  // inventory 自定义文案支持旧字符串和 {locale: text} 两种形状。
+  // 优先当前 locale，其次匹配同一基础语言，最后按配置顺序取第一条翻译。
+  localize(value, locale) {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    const entries = Object.entries(value).filter(([, text]) =>
+      typeof text === 'string' && text.length > 0);
+    if (!entries.length) return '';
+
+    const wanted = String(locale || this.locale || '').toLowerCase();
+    const exact = entries.find(([key]) => key.toLowerCase() === wanted);
+    if (exact) return exact[1];
+
+    const base = wanted.split('-')[0];
+    const baseExact = entries.find(([key]) => key.toLowerCase() === base);
+    if (baseExact) return baseExact[1];
+    const sameLanguage = entries.find(([key]) => key.toLowerCase().split('-')[0] === base);
+    return sameLanguage ? sameLanguage[1] : entries[0][1];
+  },
+
   getLocale() {
     return this.locale;
   },

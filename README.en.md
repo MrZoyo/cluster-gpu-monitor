@@ -57,8 +57,8 @@ fleets, second-level alerts, quotas, or billing.
 - **Per-user GPU hours:** aggregate operating-system usernames across machines and break usage
   down by capacity domain, cluster, and host.
 - **Idle-but-occupied detection:** flag GPUs that hold VRAM while recent utilization stays below 5%.
-- **Multi-cluster topology:** model capacity domain → cluster → host, with badges, planned capacity,
-  and soft retirement.
+- **Multi-cluster topology:** model capacity domain → cluster → host, with localized badges and
+  notes, planned capacity, and soft retirement.
 - **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`.
 - **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
   build step.

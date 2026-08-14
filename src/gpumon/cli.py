@@ -15,6 +15,13 @@ import argparse
 import sys
 
 
+def _format_localized_text(value: str | dict[str, str]) -> str:
+    """CLI 没有界面语言，按配置顺序列出全部翻译。"""
+    if isinstance(value, str):
+        return value
+    return " / ".join(f"{locale}: {text}" for locale, text in value.items())
+
+
 def _cmd_config_check(args: argparse.Namespace) -> int:
     from .config import ROOT, db_path, load_inventory, load_settings
 
@@ -48,11 +55,12 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
         group_name = group_names.get(gk, gk)
         print(f"\n[{c.key}] {c.name}  ({group_name}, status={c.status})")
         if c.note:
-            print(f"  note: {c.note}")
-        badges = c.resolved_badges()
+            print(f"  note: {_format_localized_text(c.note)}")
+        badges = inv.cluster_badges(c)
         if badges:
             print("  标签: " + "  ".join(
-                f"[{(b.mark + ' ') if b.mark else ''}{b.text}]({b.tone})" for b in badges))
+                f"[{(b.mark + ' ') if b.mark else ''}{_format_localized_text(b.text)}]"
+                f"({b.tone})" for b in badges))
         if not c.hosts:
             print("  - 暂无主机")
         for _, h, gc in [(c, h, (h.gpu_count or inv.defaults.gpu_count)) for h in c.hosts]:
@@ -61,7 +69,7 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
             print(f"  - {h.key:18s} alias={alias:16s} {h.display_name}  "
                   f"status={h.status}  期望 {gc} 卡{vend}")
             if h.note:
-                print(f"    note: {h.note}")
+                print(f"    note: {_format_localized_text(h.note)}")
             n_hosts += 1
             n_gpus += gc
     print(f"\n合计: {len(inv.clusters)} 集群 / {n_hosts} 机 / {n_gpus} 卡")

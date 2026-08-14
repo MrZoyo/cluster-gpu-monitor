@@ -166,7 +166,8 @@ window.Views.overview = (function () {
         metric(I18n.t('capacity_metrics_avg'), fmtPct(st.avg)),
       ]),
     ]));
-    if (group.description) section.appendChild(el("div", { class: "capacity-note" }, [group.description]));
+    const description = I18n.localize(group.description);
+    if (description) section.appendChild(el("div", { class: "capacity-note" }, [description]));
     section.appendChild(el("div", { class: "cluster-tabs" },
       group.clusters.map((c, i) => clusterTab(c, i, group.key, nC))));
     group.clusters.forEach((c, i) => section.appendChild(clusterBlock(c, i, group.key, nC)));
@@ -223,7 +224,7 @@ window.Views.overview = (function () {
     details.appendChild(summary);
     if (c.note) {
       const noteColor = `color-mix(in srgb, ${col} 65%, var(--bg))`;
-      details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [c.note]));
+      details.appendChild(el("div", { class: "cluster-note", style: `--note-accent:${noteColor}` }, [I18n.localize(c.note)]));
     }
     if (!c.hosts.length) {
       details.appendChild(el("div", { class: "empty-state" }, [I18n.t('no_devices')]));
@@ -254,7 +255,7 @@ window.Views.overview = (function () {
       el("div", { class: "cards" }, cards),
     ]);
     if (h.last_error && h.status !== "planned") row.title = `${c.name}: ${h.last_error}`;
-    if (h.note && h.status === "planned") row.title = h.note;
+    if (h.note && h.status === "planned") row.title = I18n.localize(h.note);
     return row;
   }
 

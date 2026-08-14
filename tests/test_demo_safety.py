@@ -1,12 +1,14 @@
 """Demo 生成/静态导出不得覆盖或误导出真实文件。"""
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.append(str(SCRIPTS))
@@ -107,6 +109,13 @@ def test_generated_demo_is_marked_and_exportable(tmp_path):
     assert static_output_is_marked(out)
     assert (out / "index.html").is_file()
     assert (out / "api/live.json").read_text(encoding="utf-8") == '{"ok":true,"status":"alive"}'
+    inventory_data = yaml.safe_load(inventory.read_text(encoding="utf-8"))
+    assert inventory_data["badge_library"][0]["text"] == {
+        "zh": "自建",
+        "en": "Self-built",
+    }
+    meta = json.loads((out / "api/meta.json").read_text(encoding="utf-8"))
+    assert list(meta["capacity_groups"][0]["description"]) == ["zh", "en"]
 
 
 def test_static_export_rejects_unmarked_database_without_deleting_output(tmp_path):

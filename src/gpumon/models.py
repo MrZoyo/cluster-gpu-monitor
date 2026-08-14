@@ -37,6 +37,26 @@ BadgeTone = Literal["cyan", "gold", "green", "violet", "neutral"]
 Palette = Literal["lime", "violet", "azure", "amber", "rose", "teal", "indigo", "slate"]
 HardwareId = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 OptionalShortText = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+# 面向网页的自定义文案既可以沿用单字符串，也可以按前端 locale 配多种翻译。
+# dict 保留 YAML 声明顺序；当前语言缺失时，前端据此回退到第一条翻译。
+LanguageCode = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=35,
+        pattern=r"^[A-Za-z][A-Za-z0-9]{0,7}(?:-[A-Za-z0-9]{1,8})*$",
+    ),
+]
+ShortLocalizedString = Annotated[str, StringConstraints(min_length=1, max_length=128)]
+LongLocalizedString = Annotated[str, StringConstraints(min_length=1, max_length=2048)]
+LocalizedShortText = ShortLocalizedString | Annotated[
+    dict[LanguageCode, ShortLocalizedString],
+    Field(min_length=1, max_length=32),
+]
+LocalizedLongText = LongLocalizedString | Annotated[
+    dict[LanguageCode, LongLocalizedString],
+    Field(min_length=1, max_length=32),
+]
 MAX_GPUS_PER_HOST = 1024
 MAX_PROCESSES_PER_HOST = 4096
 MAX_SSH_OUTPUT_PER_HOST_BYTES = 16 * 1024 * 1024
@@ -64,7 +84,7 @@ class HostCfg(ConfigModel):
     display_name: str = Field(min_length=1, max_length=256)
     gpu_count: int | None = Field(default=None, ge=1, le=4096)  # 缺省时取 defaults
     status: Status = "active"
-    note: str | None = Field(default=None, max_length=2048)
+    note: LocalizedLongText | None = None
     # GPU 厂商：留空 = 远端自动探测（先 nvidia-smi 再 rocm-smi）。
     # 只有自动探测判错时才需要显式写 nvidia / amd。
     vendor: Vendor | None = None
@@ -81,9 +101,9 @@ class BadgeCfg(ConfigModel):
     按名字引用，达到一处定义、多处复用。直接内联写在 badges 下的标签不用填 key。
     """
     key: ConfigKey | None = None
-    text: str = Field(min_length=1, max_length=128)
+    text: LocalizedShortText
     mark: str | None = Field(default=None, max_length=16)  # 前缀符号，如 "◆"
-    tooltip: str | None = Field(default=None, max_length=2048)
+    tooltip: LocalizedLongText | None = None
     tone: BadgeTone = "cyan"
 
 
@@ -91,7 +111,7 @@ class CapacityGroupCfg(ConfigModel):
     key: ConfigKey
     name: str = Field(min_length=1, max_length=256)
     sort_order: int = Field(default=0, ge=-1_000_000, le=1_000_000)
-    description: str | None = Field(default=None, max_length=2048)
+    description: LocalizedLongText | None = None
     # 色带名（lime/violet/azure/amber/rose/teal/indigo/slate）。
     # 留空则按 sort_order 自动轮转分配，不会撞成灰色。
     palette: Palette | None = None
@@ -106,7 +126,7 @@ class ClusterCfg(ConfigModel):
     # 留空 = 落到 defaults.fallback_group_key
     capacity_group: OptionalConfigKey = ""
     status: Status = "active"
-    note: str | None = Field(default=None, max_length=2048)
+    note: LocalizedLongText | None = None
     # 每项可以是标签库的 key（字符串，复用）或内联的完整定义
     badges: list[ConfigKey | BadgeCfg] = Field(default_factory=list, max_length=64)
     hosts: list[HostCfg] = Field(default_factory=list, max_length=4096)

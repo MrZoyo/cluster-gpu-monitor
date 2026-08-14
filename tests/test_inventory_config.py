@@ -94,6 +94,51 @@ def test_inline_badges_keep_declared_order():
     assert badges[0].tone == "gold"
 
 
+def test_localized_badge_and_notes_keep_translation_order():
+    """语言映射原样保序，API 才能按第一条已配置翻译回退。"""
+    text = {"zh": "自建", "en": "Self-built"}
+    detail = {"en": "Built here", "fr": "Construit ici"}
+    badge = BadgeCfg(text=text, tooltip=detail)
+    group = CapacityGroupCfg(key="g", name="G", description=detail)
+    host = HostCfg(key="h", ssh_alias="h", display_name="H", note=text)
+    cluster = ClusterCfg(key="c", name="C", note=detail, hosts=[host])
+
+    assert badge.text == text
+    assert list(badge.model_dump()["text"]) == ["zh", "en"]
+    assert badge.tooltip == detail
+    assert group.description == detail
+    assert cluster.note == detail
+    assert cluster.hosts[0].note == text
+
+
+def test_one_translation_is_valid():
+    badge = BadgeCfg(text={"en": "Only translation"}, tooltip={"zh": "唯一说明"})
+
+    assert badge.text == {"en": "Only translation"}
+    assert badge.tooltip == {"zh": "唯一说明"}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"zh": ""},
+        {"zh_CN": "中文"},
+        {"zh": "x" * 129},
+    ],
+)
+def test_invalid_localized_badge_text_is_rejected(value):
+    with pytest.raises(ValidationError):
+        BadgeCfg(text=value)
+
+
+def test_localized_notes_reject_empty_or_oversized_translations():
+    with pytest.raises(ValidationError):
+        CapacityGroupCfg(key="g", name="G", description={})
+    with pytest.raises(ValidationError):
+        ClusterCfg(key="c", name="C", note={"en": "x" * 2049})
+
+
 def test_no_badges_yields_empty_list():
     assert ClusterCfg(key="c1", name="c1").resolved_badges() == []
 

@@ -68,6 +68,34 @@ defaults:
   fallback_group_name: "未分组"    # 该兜底域在网页上的显示名
 ```
 
+### 多语言自定义文案
+
+下列字段既可写普通字符串，也可写「语言代码 → 翻译」映射：
+
+| 位置 | 字段 |
+| --- | --- |
+| 标签库与内联标签 | `text`、`tooltip` |
+| 算力域 | `description` |
+| 集群、主机 | `note` |
+
+语言代码应与前端 `web/js/i18n.js` 使用的 locale 一致；项目默认是 `zh` 和 `en`。
+也可使用 `zh-CN` 这类带地区的代码。旧的单字符串写法完全兼容，会在所有界面语言下原样显示。
+
+```yaml
+badge_library:
+  - key: self-built
+    text:
+      zh: "自建"                 # 第一条，也是缺少目标语言时的回退文案
+      en: "Self-built"
+    tooltip:
+      zh: "本地自行装机"
+      en: "Built locally"
+```
+
+前端先找当前 locale 的精确翻译，再找同一基础语言（如 `zh-CN` → `zh`），最后按 YAML
+顺序使用第一条已有翻译。每个字段独立回退：例如 `text` 有两种翻译、`tooltip` 只写一种也能用。
+映射和其中的翻译都不能为空。
+
 ### capacity_groups（算力域）
 
 ```yaml
@@ -76,7 +104,7 @@ capacity_groups:
     name: "自有算力"          # 网页显示名，随便改
     sort_order: 1             # 排序，小的在前
     palette: lime             # 可选：指定色系
-    description: "自购自管"   # 可选：显示在域标题下
+    description: "自购自管"   # 可选：显示在域标题下；也可写语言映射
     badges: [self-built]      # 可选：域级标签，见下面 badges 一节
 ```
 
@@ -106,7 +134,7 @@ clusters:
     sort_order: 1
     capacity_group: own       # 引用上面的域 key；留空 = 兜底域
     status: active            # active（默认） / planned / retired
-    note: "备注，仅在 status: planned 时显示（网页悬停 tooltip）"
+    note: "集群备注，显示在总览与集群页；也可写语言映射"
     badges: [...]             # 见下节
     hosts: [...]
 ```
@@ -122,10 +150,10 @@ clusters:
 ```yaml
 badge_library:
   - key: self-built
-    text: "自建"                       # 必填
+    text: "自建"                       # 必填；也可写语言映射
     mark: "◆"                          # 可选：前缀符号
     tone: cyan                         # 可选：cyan/gold/green/violet/neutral
-    tooltip: "本地装机，账号自助申请"    # 可选：悬停说明
+    tooltip: "本地装机，账号自助申请"    # 可选：悬停说明；也可写语言映射
   - key: infiniband
     text: "InfiniBand"
     tone: green
@@ -168,7 +196,7 @@ clusters:
         gpu_count: 8                   # 期望卡数，缺省取 defaults
         status: active                 # active（默认） / planned / retired
         vendor: amd                    # 可选，留空=自动探测（nvidia-smi → rocm-smi）
-        note: "备注，仅在 status: planned 时显示（网页悬停 tooltip）"
+        note: "待接入主机的悬停备注；也可写语言映射"
         meta:
           gpu_model: "AMD Instinct MI300X"   # 待接入占位卡上显示的型号
 ```

@@ -33,6 +33,12 @@ STATUSES = ("active", "planned", "retired")
 VENDORS = ("nvidia", "amd")
 STYLES = ("trainer", "squatter", "burster", "tourist")
 
+
+def localized(zh: str, en: str) -> dict[str, str]:
+    """按回退优先级生成 demo 文案；中文故意放第一项。"""
+    return {"zh": zh, "en": en}
+
+
 # Linux 用户名字符集：小写字母开头，总长 ≤32
 USERNAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
@@ -46,28 +52,72 @@ SMALL_GPUS = 48
 # 只在真正一次性的标签上才内联写（见 CLUSTERS 里的少数几处）。
 # ---------------------------------------------------------------------------
 BADGE_LIBRARY: list[dict] = [
-    {"key": "self-built", "text": "自建", "mark": "◆", "tone": "cyan",
-     "tooltip": "自己装的机，账号找隔壁工位申请"},
-    {"key": "rented", "text": "租用", "mark": "◆", "tone": "gold",
-     "tooltip": "按小时计费，跑完记得把进程杀干净"},
-    {"key": "partner", "text": "合作方", "mark": "◆", "tone": "cyan",
-     "tooltip": "对方运维代管，报修走工单"},
-    {"key": "non-blocking", "text": "无阻塞网络", "mark": None, "tone": "green",
-     "tooltip": "跨机训练不掉速，理论上"},
-    {"key": "liquid-cooling", "text": "液冷", "mark": None, "tone": "violet",
-     "tooltip": "水管走在天花板上，抬头请注意"},
-    {"key": "legacy", "text": "祖传", "mark": "◆", "tone": "gold",
-     "tooltip": "上一任的上一任装的，驱动没人敢升"},
-    {"key": "summer-cap", "text": "夏季限功耗", "mark": "▲", "tone": "gold",
-     "tooltip": "空调压不住时自动降频，别以为是卡坏了"},
-    {"key": "no-mining", "text": "禁止挖矿", "mark": None, "tone": "neutral",
-     "tooltip": "写在墙上了，但还是有人试"},
-    {"key": "small-vram", "text": "显存偏小", "mark": None, "tone": "neutral",
-     "tooltip": "跑大模型会 OOM，跑小实验正好"},
-    {"key": "door-permit", "text": "门禁报备", "mark": None, "tone": "neutral",
-     "tooltip": "进机房要提前三天报备，刷卡进不去"},
-    {"key": "book-ahead", "text": "需预约", "mark": None, "tone": "gold",
-     "tooltip": "长期满载，用之前先在群里喊一声"},
+    {"key": "self-built",
+     "text": localized("自建", "Self-built"),
+     "mark": "◆", "tone": "cyan",
+     "tooltip": localized(
+         "自己装的机，账号找隔壁工位申请",
+         "Built in-house; ask the next desk over for access.")},
+    {"key": "rented",
+     "text": localized("租用", "Rented"),
+     "mark": "◆", "tone": "gold",
+     "tooltip": localized(
+         "按小时计费，跑完记得把进程杀干净",
+         "Billed by the hour. Stop your jobs when you're done.")},
+    {"key": "partner",
+     "text": localized("合作方", "Partner"),
+     "mark": "◆", "tone": "cyan",
+     "tooltip": localized(
+         "对方运维代管，报修走工单",
+         "Managed by partner ops; submit a ticket for repairs.")},
+    {"key": "non-blocking",
+     "text": localized("无阻塞网络", "Non-blocking fabric"),
+     "mark": None, "tone": "green",
+     "tooltip": localized(
+         "跨机训练不掉速，理论上",
+         "Cross-node training keeps its speed—in theory.")},
+    {"key": "liquid-cooling",
+     "text": localized("液冷", "Liquid-cooled"),
+     "mark": None, "tone": "violet",
+     "tooltip": localized(
+         "水管走在天花板上，抬头请注意",
+         "Pipes overhead—mind your head.")},
+    {"key": "legacy",
+     "text": localized("祖传", "Heirloom"),
+     "mark": "◆", "tone": "gold",
+     "tooltip": localized(
+         "上一任的上一任装的，驱动没人敢升",
+         "Installed two maintainers ago. Nobody dares update the drivers.")},
+    {"key": "summer-cap",
+     "text": localized("夏季限功耗", "Summer power cap"),
+     "mark": "▲", "tone": "gold",
+     "tooltip": localized(
+         "空调压不住时自动降频，别以为是卡坏了",
+         "Auto-throttles when the AC falls behind; the GPUs are fine.")},
+    {"key": "no-mining",
+     "text": localized("禁止挖矿", "No mining"),
+     "mark": None, "tone": "neutral",
+     "tooltip": localized(
+         "写在墙上了，但还是有人试",
+         "It's on the wall. Someone still tries.")},
+    {"key": "small-vram",
+     "text": localized("显存偏小", "Small VRAM"),
+     "mark": None, "tone": "neutral",
+     "tooltip": localized(
+         "跑大模型会 OOM，跑小实验正好",
+         "Too small for giant models; just right for small experiments.")},
+    {"key": "door-permit",
+     "text": localized("门禁报备", "Access notice"),
+     "mark": None, "tone": "neutral",
+     "tooltip": localized(
+         "进机房要提前三天报备，刷卡进不去",
+         "Apply three days ahead; an unplanned badge tap won't get you in.")},
+    {"key": "book-ahead",
+     "text": localized("需预约", "Reservation required"),
+     "mark": None, "tone": "gold",
+     "tooltip": localized(
+         "长期满载，用之前先在群里喊一声",
+         "Usually full; give the team a heads-up before use.")},
 ]
 
 # ---------------------------------------------------------------------------
@@ -81,7 +131,10 @@ DOMAINS: list[dict] = [
         "name": "银山算力域",
         "palette": "lime",
         "sort_order": 1,
-        "description": "自建机房。空调是去年双十一买的，夏天限功耗跑。",
+        "description": localized(
+            "自建机房。空调是去年双十一买的，夏天限功耗跑。",
+            "Self-built server room. The AC was last year's Singles' Day deal, "
+            "so summer workloads run with a power cap."),
         "badges": ["self-built", "summer-cap"],
     },
     {
@@ -89,7 +142,9 @@ DOMAINS: list[dict] = [
         "name": "阿外妈妈算力域",
         "palette": "violet",
         "sort_order": 2,
-        "description": "租的。按小时计费，月底账单一出全组集体沉默。",
+        "description": localized(
+            "租的。按小时计费，月底账单一出全组集体沉默。",
+            "Rented by the hour. When the month-end bill arrives, the whole team goes quiet."),
         "badges": ["rented"],
     },
     {
@@ -97,7 +152,9 @@ DOMAINS: list[dict] = [
         "name": "龙国电信算力域",
         "palette": "azure",
         "sort_order": 3,
-        "description": "合作方提供，带宽管够，进机房要提前三天报备。",
+        "description": localized(
+            "合作方提供，带宽管够，进机房要提前三天报备。",
+            "Partner-provided, with bandwidth to spare. Server-room visits need three days' notice."),
         "badges": ["partner", "door-permit"],
     },
     {
@@ -105,7 +162,9 @@ DOMAINS: list[dict] = [
         "name": "草台算力域",
         "palette": "amber",
         "sort_order": 4,
-        "description": "各处捡来的边角料，型号全不一样，能跑就行。",
+        "description": localized(
+            "各处捡来的边角料，型号全不一样，能跑就行。",
+            "Spare parts gathered from everywhere. No two models alike; if it runs, it stays."),
     },
 ]
 
@@ -141,7 +200,9 @@ CLUSTERS: list[dict] = [
         # 5 枚全部走库引用，验证 ">3 枚折叠成 +N" 同时验证复用
         "badges": ["self-built", "non-blocking", "liquid-cooling",
                    "summer-cap", "no-mining"],
-        "note": "全域最好的卡，也是最抢不到的卡。",
+        "note": localized(
+            "全域最好的卡，也是最抢不到的卡。",
+            "The best GPUs in the group—and the hardest to reserve."),
     },
 
     # 银山 2/3：双机 16 卡整机，标签 0 枚（验证卡片标题无标签时的排版）
@@ -159,7 +220,9 @@ CLUSTERS: list[dict] = [
             {"key": "ys-b666-2", "name": "六六大顺-02"},
         ],
         "badges": [],
-        "note": "一机双托盘 16 卡，进机房要走货梯。",
+        "note": localized(
+            "一机双托盘 16 卡，进机房要走货梯。",
+            "Sixteen GPUs on two trays per host. Use the freight elevator."),
     },
 
     # 银山 3/3：祖传老卡，八卡机，显存小，专门用来演示「显存打满但利用率 0」
@@ -178,7 +241,9 @@ CLUSTERS: list[dict] = [
             {"key": "ys-zc-3", "name": "祖传-03（重启大师）"},
         ],
         "badges": ["legacy", "small-vram"],
-        "note": "谁也说不清是哪年买的，但它一直在跑。",
+        "note": localized(
+            "谁也说不清是哪年买的，但它一直在跑。",
+            "Nobody knows when it was bought, but it keeps running."),
     },
 
     # 阿外妈妈 1/1：全演示站最大的一坨，13 机 104 卡。
@@ -210,10 +275,16 @@ CLUSTERS: list[dict] = [
         "badges": [
             "rented",
             "book-ahead",
-            {"text": "月底到期", "mark": None, "tone": "neutral",
-             "tooltip": "续不续要等审批，别把长任务排到下月"},
+            {"text": localized("月底到期", "Expires month-end"),
+             "mark": None, "tone": "neutral",
+             "tooltip": localized(
+                 "续不续要等审批，别把长任务排到下月",
+                 "Renewal is pending; don't schedule long jobs into next month.")},
         ],
-        "note": "卡多但按小时烧钱，空占检测主要就是给它用的。",
+        "note": localized(
+            "卡多但按小时烧钱，空占检测主要就是给它用的。",
+            "Plenty of GPUs, all billed by the hour. "
+            "Idle-allocation detection earns its keep here."),
     },
 
     # 龙国电信 1/2：小而稳，SMALL 集合的主力
@@ -235,7 +306,9 @@ CLUSTERS: list[dict] = [
             "non-blocking",
             "door-permit",
         ],
-        "note": "机房在楼下，但门禁要提前三天报备。",
+        "note": localized(
+            "机房在楼下，但门禁要提前三天报备。",
+            "The server room is downstairs, but access needs three days' notice."),
     },
 
     # 龙国电信 2/2：唯一的 AMD 集群，ROCm 路径专用
@@ -255,11 +328,18 @@ CLUSTERS: list[dict] = [
         "badges": [
             "partner",
             {"text": "ROCm", "mark": None, "tone": "gold",
-             "tooltip": "得装 ROCm 版框架，CUDA 代码搬过来要改"},
-            {"text": "试水", "mark": None, "tone": "neutral",
-             "tooltip": "先跑一台看看，好用再加"},
+             "tooltip": localized(
+                 "得装 ROCm 版框架，CUDA 代码搬过来要改",
+                 "Requires a ROCm build; CUDA workloads may need changes.")},
+            {"text": localized("试水", "Trial run"),
+             "mark": None, "tone": "neutral",
+             "tooltip": localized(
+                 "先跑一台看看，好用再加",
+                 "Start with one machine; scale out if it behaves.")},
         ],
-        "note": "全站唯一 AMD，采集走 rocm-smi 分支。",
+        "note": localized(
+            "全站唯一 AMD，采集走 rocm-smi 分支。",
+            "The demo's only AMD cluster; collection uses the rocm-smi path."),
     },
 
     # 草台 1/3：4 卡野卡机，卡数不是 8 的整数倍，用来抓「默认 8 卡」的硬编码
@@ -276,10 +356,15 @@ CLUSTERS: list[dict] = [
             {"key": "ct-yeka-1", "name": "野卡-01（放在工位下）"},
         ],
         "badges": [
-            {"text": "非机房", "mark": "▲", "tone": "gold",
-             "tooltip": "就在工位底下，有人踢到电源线过"},
+            {"text": localized("非机房", "Outside server room"),
+             "mark": "▲", "tone": "gold",
+             "tooltip": localized(
+                 "就在工位底下，有人踢到电源线过",
+                 "It lives under a desk; the power cable has met a few shoes.")},
         ],
-        "note": "卡数 4 不是 8，专门用来抓写死 8 卡的地方。",
+        "note": localized(
+            "卡数 4 不是 8，专门用来抓写死 8 卡的地方。",
+            "Four GPUs, not eight—built to catch hard-coded assumptions."),
     },
 
     # 草台 2/3：已退役。采集器不再探测，但 DB 行和历史保留供对账
@@ -297,10 +382,15 @@ CLUSTERS: list[dict] = [
             {"key": "ct-t404-2", "name": "退役-02"},
         ],
         "badges": [
-            {"text": "已退役", "mark": None, "tone": "neutral",
-             "tooltip": "机器已搬走，历史数据留着对账"},
+            {"text": localized("已退役", "Retired"),
+             "mark": None, "tone": "neutral",
+             "tooltip": localized(
+                 "机器已搬走，历史数据留着对账",
+                 "Hardware removed; historical data kept for reference.")},
         ],
-        "note": "退役集群：不再采集，但排行榜里的历史卡时还算它。",
+        "note": localized(
+            "退役集群：不再采集，但排行榜里的历史卡时还算它。",
+            "Collection has stopped, but historical GPU-hours remain in the ranking."),
     },
 
     # 草台 3/3：待接入。hosts 列出来了但还没权限，网页显示占位卡
@@ -320,12 +410,20 @@ CLUSTERS: list[dict] = [
             {"key": "ct-hb-4", "name": "画饼-04"},
         ],
         "badges": [
-            {"text": "待接入", "mark": "…", "tone": "neutral",
-             "tooltip": "机器到了，SSH 权限还在走流程"},
-            {"text": "下季度", "mark": None, "tone": "cyan",
-             "tooltip": "口头承诺，日期以邮件为准"},
+            {"text": localized("待接入", "Pending"),
+             "mark": "…", "tone": "neutral",
+             "tooltip": localized(
+                 "机器到了，SSH 权限还在走流程",
+                 "Hardware is here; access is still being arranged.")},
+            {"text": localized("下季度", "Next quarter"),
+             "mark": None, "tone": "cyan",
+             "tooltip": localized(
+                 "口头承诺，日期以邮件为准",
+                 "Tentatively next quarter; check the email for the final date.")},
         ],
-        "note": "planned：占位卡场景 —— 有 hosts、无采集数据。",
+        "note": localized(
+            "planned：占位卡场景 —— 有 hosts、无采集数据。",
+            "Planned placeholder: hosts are listed, but there's no telemetry yet."),
     },
 ]
 
@@ -482,16 +580,28 @@ def validate() -> None:
     # --- 算力域 ---
     dom_keys = [d["key"] for d in DOMAINS]
     assert len(dom_keys) == len(set(dom_keys)), f"算力域 key 重复: {dom_keys}"
+
+    def check_localized_text(value, where: str) -> None:
+        """demo 的映射固定为中英双语，且中文排第一以覆盖顺序回退。"""
+        if isinstance(value, str):
+            assert value, f"{where} 不能为空"
+            return
+        assert isinstance(value, dict) and value, f"{where} 应为字符串或翻译映射"
+        assert tuple(value) == ("zh", "en"), f"{where} 应按 zh/en 排列"
+        assert all(isinstance(text, str) and text for text in value.values()), (
+            f"{where} 的翻译不能为空")
+
     # --- 标签库：key 唯一、字段合法 ---
     lib_keys: set[str] = set()
     for b in BADGE_LIBRARY:
         assert b["key"] not in lib_keys, f"标签库 key 重复: {b['key']}"
         lib_keys.add(b["key"])
         assert re.fullmatch(r"[a-z][a-z0-9-]*", b["key"]), f"标签 key 非法: {b['key']}"
-        assert b["text"], f"标签 {b['key']} 缺 text"
+        check_localized_text(b["text"], f"标签 {b['key']} text")
         assert b["tone"] in TONES, f"标签 {b['key']} tone 非法: {b['tone']}"
         assert b["mark"] is None or isinstance(b["mark"], str)
-        assert b["tooltip"] is None or isinstance(b["tooltip"], str)
+        if b["tooltip"] is not None:
+            check_localized_text(b["tooltip"], f"标签 {b['key']} tooltip")
 
     def check_badges(items, where: str) -> None:
         """badges 每项要么是库里的 key，要么是内联的完整定义。"""
@@ -499,17 +609,19 @@ def validate() -> None:
             if isinstance(it, str):
                 assert it in lib_keys, f"{where} 引用了不存在的标签 {it}"
                 continue
-            assert it["text"], f"{where} 有内联标签缺 text"
+            check_localized_text(it["text"], f"{where} 内联标签 text")
             assert it["tone"] in TONES, f"{where} 内联标签 tone 非法: {it['tone']}"
             assert it.get("mark") is None or isinstance(it["mark"], str)
-            assert it.get("tooltip") is None or isinstance(it["tooltip"], str)
+            if it.get("tooltip") is not None:
+                check_localized_text(it["tooltip"], f"{where} 内联标签 tooltip")
 
     for d in DOMAINS:
         assert re.fullmatch(r"[a-z][a-z0-9-]*", d["key"]), f"域 key 非法: {d['key']}"
         assert d["palette"] in PALETTES, f"域 {d['key']} 的 palette 非法: {d['palette']}"
         assert d["name"], f"域 {d['key']} 缺 name"
         assert isinstance(d["sort_order"], int), f"域 {d['key']} 的 sort_order 应为 int"
-        assert d["description"] is None or isinstance(d["description"], str)
+        if d["description"] is not None:
+            check_localized_text(d["description"], f"域 {d['key']} description")
         check_badges(d.get("badges", []), f"域 {d['key']}")
 
     # --- 集群 + 主机（主机 key 要求全局唯一，不只是集群内唯一）---
@@ -525,7 +637,8 @@ def validate() -> None:
         assert c["gpus_per_host"] > 0, f"集群 {c['key']} 每机卡数须为正"
         assert isinstance(c["sort_order"], int)
         assert c["gpu_model"], f"集群 {c['key']} 缺 gpu_model"
-        assert c["note"] is None or isinstance(c["note"], str)
+        if c["note"] is not None:
+            check_localized_text(c["note"], f"集群 {c['key']} note")
         for h in c["hosts"]:
             assert h["key"] not in host_keys, f"主机 key 全局重复: {h['key']}"
             host_keys.add(h["key"])

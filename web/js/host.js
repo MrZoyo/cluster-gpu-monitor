@@ -39,7 +39,7 @@ window.Views.host = (function () {
     if (host.status === "planned" || !host.gpus.length) {
       root.appendChild(el("div", { class: "panel" }, [
         el("h3", {}, [I18n.t('cluster_access_status')]),
-        el("div", { class: "note" }, [host.note || I18n.t('host_planned_note')]),
+        el("div", { class: "note" }, [I18n.localize(host.note) || I18n.t('host_planned_note')]),
       ]));
       return;
     }

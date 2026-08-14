@@ -25,7 +25,7 @@ window.Views.cluster = (function () {
     // 各主机一行迷你卡 + 系统
     const hostsPanel = el("div", { class: "panel", style: `border-left:5px solid ${accent}` },
       [el("h3", { class: "panel-head" }, [el("span", {}, [c.name + " · " + I18n.t('cluster_hosts_title')]), badgeRow(c)].filter(Boolean))]);
-    if (c.note) hostsPanel.appendChild(el("div", { class: "note" }, [c.note]));
+    if (c.note) hostsPanel.appendChild(el("div", { class: "note" }, [I18n.localize(c.note)]));
     c.hosts.forEach((h) => {
       const sys = h.system;
       const sysText = h.status === "planned"

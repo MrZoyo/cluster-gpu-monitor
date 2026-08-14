@@ -300,12 +300,14 @@ window.UI = (function () {
 
   function badge(b) {
     const tone = TONES.includes(b.tone) ? b.tone : "cyan";
+    const text = I18n.localize(b.text);
+    const tooltip = I18n.localize(b.tooltip);
     return el("span", {
       class: "cfg-badge tone-" + tone,
-      title: b.tooltip || b.text,
+      title: tooltip || text,
     }, [
       b.mark ? el("span", { class: "cfg-badge-mark" }, [b.mark]) : null,
-      el("span", { class: "cfg-badge-who" }, [b.text]),
+      el("span", { class: "cfg-badge-who" }, [text]),
     ].filter(Boolean));
   }
 
@@ -319,8 +321,12 @@ window.UI = (function () {
     if (rest.length) {
       kids.push(el("span", {
         class: "cfg-badge tone-neutral badge-more",
-        title: rest.map((b) => (b.mark ? b.mark + " " : "") + b.text +
-          (b.tooltip ? "  —  " + b.tooltip : "")).join("\n"),
+        title: rest.map((b) => {
+          const text = I18n.localize(b.text);
+          const tooltip = I18n.localize(b.tooltip);
+          return (b.mark ? b.mark + " " : "") + text +
+            (tooltip ? "  —  " + tooltip : "");
+        }).join("\n"),
       }, ["+" + rest.length]));
     }
     return el("span", { class: "badge-row" }, kids);

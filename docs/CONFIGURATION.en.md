@@ -66,6 +66,35 @@ defaults:
   fallback_group_name: "Ungrouped"    # Display name for that fallback domain
 ```
 
+### Localized Custom Text
+
+The following fields accept either a plain string or a `locale → translation` map:
+
+| Location | Fields |
+| --- | --- |
+| Badge library and inline badges | `text`, `tooltip` |
+| Capacity group | `description` |
+| Cluster and host | `note` |
+
+Locale keys should match those used by `web/js/i18n.js`; this project includes `zh` and `en` by
+default. Region-specific keys such as `zh-CN` also work. Existing plain strings remain compatible
+and display unchanged in every UI language.
+
+```yaml
+badge_library:
+  - key: self-built
+    text:
+      zh: "自建"                 # First entry and fallback when the current locale is absent
+      en: "Self-built"
+    tooltip:
+      zh: "本地自行装机"
+      en: "Built locally"
+```
+
+The frontend first looks for the exact locale, then the same base language (`zh-CN` → `zh`), and
+finally the first translation in YAML order. Each field falls back independently, so `text` may
+have two translations while `tooltip` has only one. Maps and translation values cannot be empty.
+
 ### capacity_groups (Capacity Domains)
 
 ```yaml
@@ -74,7 +103,7 @@ capacity_groups:
     name: "Self-owned Capacity"  # Display name, change freely
     sort_order: 1             # Ordering, smaller first
     palette: lime             # Optional: specify color family
-    description: "Self-purchased and managed"   # Optional: shown under domain header
+    description: "Self-purchased and managed"   # Optional; string or locale map
     badges: [self-built]      # Optional: domain-level badges, see badges section below
 ```
 
@@ -102,7 +131,7 @@ clusters:
     sort_order: 1
     capacity_group: own       # References domain key above; empty = fallback domain
     status: active            # active (default) / planned / retired
-    note: "Remark, only shown when status: planned (web hover tooltip)"
+    note: "Cluster note shown on overview and cluster pages; string or locale map"
     badges: [...]             # See next section
     hosts: [...]
 ```
@@ -116,10 +145,10 @@ Recommended practice: Define badges in top-level `badge_library`, reference by k
 ```yaml
 badge_library:
   - key: self-built
-    text: "Self-built"                 # Required
+    text: "Self-built"                 # Required; string or locale map
     mark: "◆"                          # Optional: prefix symbol
     tone: cyan                         # Optional: cyan/gold/green/violet/neutral
-    tooltip: "On-prem installation, self-service account signup"    # Optional: hover text
+    tooltip: "On-prem installation, self-service account signup"    # Optional; string or locale map
   - key: infiniband
     text: "InfiniBand"
     tone: green
@@ -159,7 +188,7 @@ Badges used in only one place don't need the library, can be inlined; both style
         gpu_count: 8                   # Expected GPU count, defaults to defaults.gpu_count
         status: active                 # active (default) / planned / retired
         vendor: amd                    # Optional, empty=auto-detect (nvidia-smi → rocm-smi)
-        note: "Remark, only shown when status: planned (web hover tooltip)"
+        note: "Hover note for a planned host; string or locale map"
         meta:
           gpu_model: "AMD Instinct MI300X"   # Model shown on planned placeholder cards
 ```

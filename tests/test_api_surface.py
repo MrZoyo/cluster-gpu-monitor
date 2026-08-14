@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from gpumon.api import routes
 from gpumon.api.app import app, create_app
+from gpumon.models import BadgeCfg, CapacityGroupCfg, ClusterCfg, HostCfg, Inventory
 
 
 def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
@@ -46,6 +47,43 @@ def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
     gpu = host["gpus"][0]
     assert "uuid" not in gpu
     assert "secret" not in gpu
+
+
+def test_inventory_ui_metadata_preserves_localized_text(monkeypatch):
+    inv = Inventory(
+        badge_library=[BadgeCfg(
+            key="self-built",
+            text={"zh": "自建", "en": "Self-built"},
+            tooltip={"en": "Built here"},
+        )],
+        capacity_groups=[CapacityGroupCfg(
+            key="own",
+            name="Own",
+            description={"zh": "自建机房", "en": "On-prem"},
+            badges=["self-built"],
+        )],
+        clusters=[ClusterCfg(
+            key="c1",
+            name="C1",
+            capacity_group="own",
+            note={"en": "Cluster note", "zh": "集群备注"},
+            badges=["self-built"],
+            hosts=[HostCfg(
+                key="h1",
+                ssh_alias="h1",
+                display_name="H1",
+                note={"fr": "Note d'hôte"},
+            )],
+        )],
+    )
+    monkeypatch.setattr(routes, "load_inventory", lambda: inv)
+
+    groups, clusters, hosts = routes._inventory_ui_meta()
+
+    assert list(groups[0]["description"]) == ["zh", "en"]
+    assert groups[0]["badges"][0]["text"] == {"zh": "自建", "en": "Self-built"}
+    assert clusters["c1"]["note"] == {"en": "Cluster note", "zh": "集群备注"}
+    assert hosts["h1"]["note"] == {"fr": "Note d'hôte"}
 
 
 def test_snapshot_and_interactive_docs_are_disabled_by_default():
