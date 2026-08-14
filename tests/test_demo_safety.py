@@ -115,7 +115,9 @@ def test_generated_demo_is_marked_and_exportable(tmp_path):
         "en": "Self-built",
     }
     meta = json.loads((out / "api/meta.json").read_text(encoding="utf-8"))
-    assert list(meta["capacity_groups"][0]["description"]) == ["zh", "en"]
+    group = meta["capacity_groups"][0]
+    assert group["description"] == "自建机房。空调是去年双十一买的，夏天限功耗跑。"
+    assert list(group["description_i18n"]) == ["zh", "en"]
 
 
 def test_static_export_rejects_unmarked_database_without_deleting_output(tmp_path):

@@ -16,6 +16,8 @@ def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
         "key": "cluster",
         "name": "Cluster",
         "sort_order": 0,
+        "note": "集群备注",
+        "note_i18n": {"zh": "集群备注", "en": "Cluster note"},
         "secret": "cluster-secret",
         "hosts": [{
             "id": 2,
@@ -24,6 +26,8 @@ def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
             "ssh_alias": "private-jump-alias",
             "display_name": "Host",
             "gpu_count": 1,
+            "note": "主机备注",
+            "note_i18n": {"zh": "主机备注", "en": "Host note"},
             "secret": "host-secret",
             "gpus": [{
                 "id": 3,
@@ -40,8 +44,10 @@ def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
     public = routes._public_topology(topology)
 
     assert public[0]["key"] == "cluster"
+    assert public[0]["note_i18n"] == {"zh": "集群备注", "en": "Cluster note"}
     assert "secret" not in public[0]
     host = public[0]["hosts"][0]
+    assert host["note_i18n"] == {"zh": "主机备注", "en": "Host note"}
     assert "ssh_alias" not in host
     assert "secret" not in host
     gpu = host["gpus"][0]
@@ -49,7 +55,7 @@ def test_public_topology_drops_collection_only_identifiers_and_unknown_fields():
     assert "secret" not in gpu
 
 
-def test_inventory_ui_metadata_preserves_localized_text(monkeypatch):
+def test_inventory_ui_metadata_keeps_legacy_strings_and_i18n_maps(monkeypatch):
     inv = Inventory(
         badge_library=[BadgeCfg(
             key="self-built",
@@ -80,10 +86,26 @@ def test_inventory_ui_metadata_preserves_localized_text(monkeypatch):
 
     groups, clusters, hosts = routes._inventory_ui_meta()
 
-    assert list(groups[0]["description"]) == ["zh", "en"]
-    assert groups[0]["badges"][0]["text"] == {"zh": "自建", "en": "Self-built"}
-    assert clusters["c1"]["note"] == {"en": "Cluster note", "zh": "集群备注"}
-    assert hosts["h1"]["note"] == {"fr": "Note d'hôte"}
+    assert groups[0]["description"] == "自建机房"
+    assert groups[0]["description_i18n"] == {"zh": "自建机房", "en": "On-prem"}
+    badge = groups[0]["badges"][0]
+    assert badge["text"] == "自建"
+    assert badge["text_i18n"] == {"zh": "自建", "en": "Self-built"}
+    assert badge["tooltip"] == "Built here"
+    assert badge["tooltip_i18n"] == {"en": "Built here"}
+    assert clusters["c1"]["note"] == "Cluster note"
+    assert clusters["c1"]["note_i18n"] == {"en": "Cluster note", "zh": "集群备注"}
+    assert hosts["h1"]["note"] == "Note d'hôte"
+    assert hosts["h1"]["note_i18n"] == {"fr": "Note d'hôte"}
+
+
+def test_mutable_static_assets_require_browser_revalidation():
+    client = TestClient(create_app())
+
+    for path in ("/", "/index.html", "/js/components.js", "/css/style.css"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-cache"
 
 
 def test_snapshot_and_interactive_docs_are_disabled_by_default():

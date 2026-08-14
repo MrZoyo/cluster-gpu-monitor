@@ -12,6 +12,15 @@ from ..config import CODE_ROOT
 from .routes import router
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """可变前端资源允许缓存，但浏览器每次使用前必须向服务器确认版本。"""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(*, enable_docs: bool = False) -> FastAPI:
     docs_url = "/docs" if enable_docs else None
     openapi_url = "/openapi.json" if enable_docs else None
@@ -29,7 +38,7 @@ def create_app(*, enable_docs: bool = False) -> FastAPI:
     web_dir = CODE_ROOT / "web"
     if web_dir.exists():
         application.mount(
-            "/", StaticFiles(directory=str(web_dir), html=True), name="static"
+            "/", RevalidatingStaticFiles(directory=str(web_dir), html=True), name="static"
         )
     return application
 

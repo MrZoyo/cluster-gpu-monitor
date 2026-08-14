@@ -59,10 +59,10 @@ assert.equal(i18n.localize({ en: "Only translation" }, "fr"), "Only translation"
 assert.equal(i18n.localize({ zh: "简体" }, "zh-CN"), "简体");
 assert.equal(i18n.localize({ "zh-CN": "简体" }, "zh"), "简体");
 assert.equal(i18n.localize(null, "zh"), "");
-assert.match(componentsSource, /I18n\.localize\(b\.text\)/);
-assert.match(componentsSource, /I18n\.localize\(b\.tooltip\)/);
-assert.match(overviewSource, /I18n\.localize\(group\.description\)/);
-assert.match(overviewSource, /I18n\.localize\(c\.note\)/);
-assert.match(overviewSource, /I18n\.localize\(h\.note\)/);
-assert.match(clusterSource, /I18n\.localize\(c\.note\)/);
-assert.match(hostSource, /I18n\.localize\(host\.note\)/);
+assert.match(componentsSource, /I18n\.localize\(b\.text_i18n \?\? b\.text\)/);
+assert.match(componentsSource, /I18n\.localize\(b\.tooltip_i18n \?\? b\.tooltip\)/);
+assert.match(overviewSource, /I18n\.localize\(group\.description_i18n \?\? group\.description\)/);
+assert.match(overviewSource, /I18n\.localize\(c\.note_i18n \?\? c\.note\)/);
+assert.match(overviewSource, /I18n\.localize\(h\.note_i18n \?\? h\.note\)/);
+assert.match(clusterSource, /I18n\.localize\(c\.note_i18n \?\? c\.note\)/);
+assert.match(hostSource, /I18n\.localize\(host\.note_i18n \?\? host\.note\)/);

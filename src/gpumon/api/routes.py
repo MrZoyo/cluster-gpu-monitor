@@ -32,15 +32,34 @@ BUSY_THRESHOLD = 10
 
 _TOPOLOGY_CLUSTER_FIELDS = (
     "id", "key", "name", "sort_order", "capacity_group",
-    "capacity_group_name", "capacity_group_sort", "status", "note", "badges",
+    "capacity_group_name", "capacity_group_sort", "status", "note", "note_i18n", "badges",
 )
 _TOPOLOGY_HOST_FIELDS = (
     "id", "cluster_id", "key", "display_name", "gpu_count", "sort_order",
-    "status", "note", "vendor", "meta",
+    "status", "note", "note_i18n", "vendor", "meta",
 )
 _TOPOLOGY_GPU_FIELDS = (
     "id", "host_id", "gpu_index", "name", "mem_total_mib",
 )
+
+
+def _localized_api_fields(name: str, value: str | dict[str, str] | None) -> dict:
+    """同时下发旧字符串字段和完整翻译，兼容部署前仍打开的浏览器标签页。
+
+    旧前端会把 ``text``/``note`` 直接交给 DOM，只能接收字符串；新前端优先读取
+    ``*_i18n``。映射的第一条翻译就是配置约定的最终回退值。
+    """
+    if isinstance(value, dict):
+        fallback = next(iter(value.values()), "")
+        return {name: fallback, f"{name}_i18n": value}
+    return {name: value, f"{name}_i18n": None}
+
+
+def _badge_api_payload(badge) -> dict:
+    payload = badge.model_dump()
+    payload.update(_localized_api_fields("text", badge.text))
+    payload.update(_localized_api_fields("tooltip", badge.tooltip))
+    return payload
 
 
 def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
@@ -52,9 +71,9 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
             "key": g.key,
             "name": g.name,
             "sort_order": g.sort_order,
-            "description": g.description,
+            **_localized_api_fields("description", g.description),
             "palette": g.palette,
-            "badges": [b.model_dump() for b in inv.group_badges(g)],
+            "badges": [_badge_api_payload(b) for b in inv.group_badges(g)],
         }
         for g in inv.resolved_groups()
     }
@@ -67,13 +86,13 @@ def _inventory_ui_meta() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
             "capacity_group_name": groups[gk]["name"],
             "capacity_group_sort": groups[gk]["sort_order"],
             "status": c.status,
-            "note": c.note,
-            "badges": [b.model_dump() for b in inv.cluster_badges(c)],
+            **_localized_api_fields("note", c.note),
+            "badges": [_badge_api_payload(b) for b in inv.cluster_badges(c)],
         }
         for h in c.hosts:
             hosts[h.key] = {
                 "status": h.status,
-                "note": h.note,
+                **_localized_api_fields("note", h.note),
                 "vendor": h.vendor,
                 "meta": h.meta,
             }
@@ -94,6 +113,7 @@ def _orphan_cluster_meta() -> dict:
         "capacity_group_sort": 999,
         "status": "active",
         "note": None,
+        "note_i18n": None,
         "badges": [],
     }
 
@@ -325,7 +345,8 @@ def topology():
         c.update(cluster_meta.get(c["key"], _orphan_cluster_meta()))
         for h in c["hosts"]:
             h.update(host_meta.get(h["key"],
-                                   {"status": "active", "note": None, "vendor": None, "meta": {}}))
+                                   {"status": "active", "note": None, "note_i18n": None,
+                                    "vendor": None, "meta": {}}))
     return {"capacity_groups": groups, "clusters": _public_topology(topo)}
 
 
@@ -350,7 +371,9 @@ def overview(window: str = Query("24h")):
     for c in topo:
         hosts_out = []
         for h in c["hosts"]:
-            h_meta = host_meta.get(h["key"], {"status": "active", "note": None, "meta": {}})
+            h_meta = host_meta.get(h["key"], {
+                "status": "active", "note": None, "note_i18n": None, "meta": {},
+            })
             st = status_by_host.get(h["key"], {})
             host_online = st.get("online", False)
             sys_row = snap["hosts"].get(h["id"])
@@ -397,7 +420,8 @@ def overview(window: str = Query("24h")):
             hosts_out.append({
                 "id": h["id"],
                 "key": h["key"], "display_name": h["display_name"],
-                "status": h_meta["status"], "note": h_meta["note"], "meta": h_meta["meta"],
+                "status": h_meta["status"], "note": h_meta["note"],
+                "note_i18n": h_meta["note_i18n"], "meta": h_meta["meta"],
                 "gpu_count": h["gpu_count"], "online": st.get("online", False),
                 "gpus_seen": st.get("gpus_seen"), "consec_fail": st.get("consec_fail", 0),
                 "last_error": st.get("last_error"),
@@ -581,7 +605,9 @@ def collector_status():
     hosts = get_store().get_collector_status()
     known = {h["key"] for h in hosts}
     for h in hosts:
-        meta = host_meta.get(h["key"], {"status": "active", "note": None, "meta": {}})
+        meta = host_meta.get(h["key"], {
+            "status": "active", "note": None, "note_i18n": None, "meta": {},
+        })
         h.update(meta)
     inv = load_inventory()
     for c in inv.clusters:
@@ -599,7 +625,7 @@ def collector_status():
                 "last_error": None,
                 "online": False,
                 "status": h.status,
-                "note": h.note,
+                **_localized_api_fields("note", h.note),
                 "meta": h.meta,
             })
     hosts = [h for h in hosts if h.get("status") != "retired"]  # 退役机器不进健康灯/状态列表

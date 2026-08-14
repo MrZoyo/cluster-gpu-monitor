@@ -300,8 +300,8 @@ window.UI = (function () {
 
   function badge(b) {
     const tone = TONES.includes(b.tone) ? b.tone : "cyan";
-    const text = I18n.localize(b.text);
-    const tooltip = I18n.localize(b.tooltip);
+    const text = I18n.localize(b.text_i18n ?? b.text);
+    const tooltip = I18n.localize(b.tooltip_i18n ?? b.tooltip);
     return el("span", {
       class: "cfg-badge tone-" + tone,
       title: tooltip || text,
@@ -322,8 +322,8 @@ window.UI = (function () {
       kids.push(el("span", {
         class: "cfg-badge tone-neutral badge-more",
         title: rest.map((b) => {
-          const text = I18n.localize(b.text);
-          const tooltip = I18n.localize(b.tooltip);
+          const text = I18n.localize(b.text_i18n ?? b.text);
+          const tooltip = I18n.localize(b.tooltip_i18n ?? b.tooltip);
           return (b.mark ? b.mark + " " : "") + text +
             (tooltip ? "  —  " + tooltip : "");
         }).join("\n"),
