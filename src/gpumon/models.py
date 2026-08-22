@@ -85,8 +85,7 @@ class HostCfg(ConfigModel):
     gpu_count: int | None = Field(default=None, ge=1, le=4096)  # 缺省时取 defaults
     status: Status = "active"
     note: LocalizedLongText | None = None
-    # GPU 厂商：留空 = 远端自动探测（先 nvidia-smi 再 rocm-smi）。
-    # 只有自动探测判错时才需要显式写 nvidia / amd。
+    # GPU 厂商：已知且固定时显式填写可跳过每轮远端自动探测；留空时按工具顺序识别。
     vendor: Vendor | None = None
     meta: dict[str, Any] = Field(default_factory=dict, max_length=128)
 

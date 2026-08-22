@@ -48,9 +48,11 @@ Each round processes only `active` hosts:
 4. Parse and validate the output centrally, then write the round in one SQLite transaction.
 5. Record a failed host independently without blocking successful hosts.
 
-When `vendor` is unset, the remote probe tries NVIDIA and AMD tools in order. Pinning the vendor is
-for environments where auto-detection is unsuitable. The NVIDIA path has production history. The
-AMD parser has synthetic fixtures but still needs validation on real hardware.
+When `vendor` is unset, the remote probe tries NVIDIA and AMD tools in order on every round. A
+working NVIDIA host therefore runs one extra `nvidia-smi -L`. Set a known, stable vendor to reduce
+SMI calls on the target; leave it unset when the vendor is unknown or the hardware may change. The
+NVIDIA path has production history. The AMD parser has synthetic fixtures but still needs
+validation on real hardware.
 
 Remote output is untrusted input. SSH has connection, total-time, and byte limits, and parsed GPU
 and process objects have per-host and per-round limits. Abnormal process volume may be omitted

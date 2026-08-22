@@ -195,7 +195,7 @@ clusters:
         display_name: "节点 1"         # 显示名，随时可改
         gpu_count: 8                   # 期望卡数，缺省取 defaults
         status: active                 # active（默认） / planned / retired
-        vendor: amd                    # 可选，留空=自动探测（nvidia-smi → rocm-smi）
+        vendor: amd                    # 可选；已知厂商时填写可跳过每轮自动探测
         note: "待接入主机的悬停备注；也可写语言映射"
         meta:
           gpu_model: "AMD Instinct MI300X"   # 待接入占位卡上显示的型号
@@ -250,14 +250,18 @@ Host my-node-1
 ### vendor 与 AMD
 
 `vendor` 留空时，远端探测脚本按顺序试 `nvidia-smi` → `amd-smi` → `rocm-smi`，
-哪个真能跑通就用哪个。只有自动探测判错时才需要显式写：
+哪个真能跑通就用哪个。这个判断每轮都会执行，不会缓存：正常 NVIDIA 主机会因此额外执行
+一次 `nvidia-smi -L`；AMD 主机还可能先尝试排在前面的工具。
+
+厂商已知且固定时，建议显式填写 `nvidia` 或 `amd`，减少目标机上的 SMI 调用。只有厂商未知、
+硬件可能更换，或需要同一份 inventory 自动适配不同机器时才留空：
 
 ```yaml
+      - { key: nvidia-1, ssh_alias: nvidia-1, display_name: "NVIDIA-1", vendor: nvidia }
       - { key: amd-1, ssh_alias: amd-1, display_name: "AMD-1", vendor: amd }
 ```
 
-典型的需要写死的场景：机器装了 NVIDIA 驱动包但卡是 AMD 的，
-或者装了驱动但当前没有可用卡导致探测结果不稳。
+显式填写还可以避免误判，例如机器同时装有多套厂商工具，或者驱动存在但当前没有可用卡。
 
 > AMD 支持是按 `rocm-smi` / `amd-smi` 的官方输出格式实现并用构造样本做了单测的，
 > **尚未在真实 AMD 硬件上验证**。接第一台 AMD 机器时，建议先跑

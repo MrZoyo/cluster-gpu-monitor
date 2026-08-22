@@ -187,7 +187,7 @@ Badges used in only one place don't need the library, can be inlined; both style
         display_name: "Node 1"         # Display name, change anytime
         gpu_count: 8                   # Expected GPU count, defaults to defaults.gpu_count
         status: active                 # active (default) / planned / retired
-        vendor: amd                    # Optional, empty=auto-detect (nvidia-smi → rocm-smi)
+        vendor: amd                    # Optional; set a known vendor to skip per-round detection
         note: "Hover note for a planned host; string or locale map"
         meta:
           gpu_model: "AMD Instinct MI300X"   # Model shown on planned placeholder cards
@@ -232,13 +232,16 @@ After marking `retired`, restart **both** services: `gpumon-collector` (stop pro
 
 ### vendor and AMD
 
-When `vendor` is empty, remote probe script tries in order: `nvidia-smi` → `amd-smi` → `rocm-smi`, uses whichever succeeds. Only explicitly write when auto-detection guesses wrong:
+When `vendor` is empty, the remote probe tries `nvidia-smi` → `amd-smi` → `rocm-smi` in order and uses the first tool that succeeds. It repeats this detection every round rather than caching it. A working NVIDIA host therefore runs one extra `nvidia-smi -L`; an AMD host may also try the tools listed before its working tool.
+
+For a known, stable GPU vendor, set `nvidia` or `amd` explicitly to reduce SMI calls on the target host. Leave it empty only when the vendor is unknown, the hardware may change, or one inventory must adapt to different hosts:
 
 ```yaml
+      - { key: nvidia-1, ssh_alias: nvidia-1, display_name: "NVIDIA-1", vendor: nvidia }
       - { key: amd-1, ssh_alias: amd-1, display_name: "AMD-1", vendor: amd }
 ```
 
-Typical scenario requiring hardcoding: machine has NVIDIA driver packages but AMD cards, or has drivers but currently no working cards causing unstable detection.
+Setting the vendor also avoids false detection when a host has tools from multiple vendors installed, or when drivers exist but no card is currently usable.
 
 > AMD support is implemented per `rocm-smi` / `amd-smi` official output format and unit-tested with synthetic samples, **not yet validated on real AMD hardware**. When connecting first AMD machine, recommend running `./scripts/probe_one.sh <alias>` to check raw output, confirm `##VENDOR` / `##AMDSMI_*` sections have content.
 

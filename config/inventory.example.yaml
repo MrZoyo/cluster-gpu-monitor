@@ -16,8 +16,8 @@
 #               迁到别的部署机时只改这个，key 不变 → 历史曲线连续
 #   display_name  网页显示名，可以随便改，不影响数据
 #   gpu_count   期望卡数，用于"断卡/掉线"检测（缺省取 defaults.gpu_count）
-#   vendor      主机级 GPU 厂商，留空 = 远端自动探测（nvidia-smi → rocm-smi）。
-#               只有自动探测判错时才需要显式写 nvidia / amd
+#   vendor      主机级 GPU 厂商。已知且固定时建议写 nvidia / amd；留空会在每轮远端
+#               自动探测，NVIDIA 主机会额外执行一次 nvidia-smi -L
 #   capacity_group  算力域，用于网页分组展示；留空则落到 defaults 的兜底域
 #   status      active（默认） / planned / retired
 #               planned = 待接入占位（网页显示占位卡）；
@@ -104,11 +104,14 @@ clusters:
       - key: a-1
         ssh_alias: my-a-1
         display_name: "A-1"
+        vendor: nvidia
       - key: a-2
         ssh_alias: my-a-2
         display_name: "A-2"
+        vendor: nvidia
 
-  # 精简示例：只写必填字段，其余取默认值（status=active，gpu_count=8）
+  # 精简示例：只写必填字段，其余取默认值（status=active，gpu_count=8）。
+  # 这里故意省略 vendor，演示未知厂商时的每轮自动探测。
   - key: cluster-b
     name: "B 集群（精简示例）"
     sort_order: 2
@@ -118,7 +121,7 @@ clusters:
         ssh_alias: my-b-1
         display_name: "B-1"
 
-  # AMD 集群示例：vendor 留空即自动探测，写死也可以
+  # AMD 集群示例：已知厂商时显式填写，跳过每轮自动探测
   - key: cluster-amd
     name: "C 集群（AMD 示例）"
     sort_order: 3

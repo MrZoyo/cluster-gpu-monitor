@@ -59,7 +59,8 @@ fleets, second-level alerts, quotas, or billing.
 - **Idle-but-occupied detection:** flag GPUs that hold VRAM while recent utilization stays below 5%.
 - **Multi-cluster topology:** model capacity domain → cluster → host, with localized badges and
   notes, planned capacity, and soft retirement.
-- **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`.
+- **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`; set `vendor` in the
+  inventory for known hosts to skip the extra per-round detection.
 - **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
   build step.
 

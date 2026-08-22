@@ -53,7 +53,8 @@
 - **用户 GPU·小时**：按操作系统用户名跨机器聚合，并按算力域、集群和主机拆分。
 - **空占检测**：标出占用显存但近期利用率低于 5% 的 GPU。
 - **多集群拓扑**：算力域 → 集群 → 主机三层结构，支持多语言标签与备注、待接入和软退役。
-- **NVIDIA 与 AMD**：自动探测 `nvidia-smi`、`amd-smi` 或 `rocm-smi`。
+- **NVIDIA 与 AMD**：支持自动探测 `nvidia-smi`、`amd-smi` 或 `rocm-smi`；已知厂商时可在
+  inventory 填写 `vendor`，跳过每轮额外探测。
 - **轻量自托管**：SQLite、FastAPI、原生 JavaScript 和本地 ECharts，无前端构建步骤。
 
 ## 快速开始
