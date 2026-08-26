@@ -56,6 +56,16 @@ SCOPES = tuple(_SCOPE_GROUP)
 USER_TOP_SORTS = ("gpu_hours", "mem_gb_peak")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """完成事务上下文后关闭临时查询连接。"""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def pick_table(window_seconds: int) -> tuple[str, int]:
     """按窗口选聚合表：≤24h 用 5 分钟桶，否则用 1 小时桶。返回 (表名, 桶宽秒)。"""
     if window_seconds <= 24 * 3600:
@@ -100,15 +110,16 @@ class Store:
         self._host_id: dict[str, int] = {}   # host.key -> host.id 缓存
 
     # ---- 连接 ---------------------------------------------------------------
-    def _new_conn(self) -> sqlite3.Connection:
+    def _new_conn(self, *, close_on_exit: bool = False) -> sqlite3.Connection:
+        factory = _ClosingConnection if close_on_exit else sqlite3.Connection
         if self.read_only:
             # mode=ro 是 SQLite 文件层面的强制只读；as_uri() 会安全转义路径里的
             # 空格、问号等 URI 特殊字符。只读进程不得顺手创建目录或空数据库。
             uri = f"{self.path.resolve().as_uri()}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=15)
+            conn = sqlite3.connect(uri, uri=True, timeout=15, factory=factory)
         else:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(self.path, timeout=15)
+            conn = sqlite3.connect(self.path, timeout=15, factory=factory)
         conn.row_factory = sqlite3.Row
         if self.read_only:
             # 即使以后连接构造方式被误改，query_only 仍会拦住该连接上的 SQL 写入。
@@ -138,12 +149,13 @@ class Store:
         return self._write_conn
 
     def connect(self) -> sqlite3.Connection:
-        """查询用途的新连接（调用方负责 close，或用 with）。
+        """打开临时查询连接；``with`` 退出时提交/回滚并关闭。
 
         只有以 ``read_only=True`` 构造的 Store 才会由 SQLite 强制只读；采集器的
-        普通 Store 仍允许在同一数据库上完成读写事务。
+        普通 Store 仍允许在同一数据库上完成读写事务。直接调用方仍可手工关闭，
+        但内部查询必须使用 ``with``，避免连接及其 mmap 等待垃圾回收。
         """
-        return self._new_conn()
+        return self._new_conn(close_on_exit=True)
 
     # ---- 建库与拓扑 ---------------------------------------------------------
     def init_schema(self) -> None:

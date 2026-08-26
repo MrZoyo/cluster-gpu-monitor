@@ -33,6 +33,8 @@ def test_read_only_store_can_query_but_cannot_write(tmp_path):
             conn.execute(
                 "INSERT INTO cluster(key, name, sort_order) VALUES('bad', 'Bad', 1)"
             )
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
 
     # 保持写连接存活，覆盖生产中 collector 写、Web 并发读的 WAL 场景。
     assert writer.write_conn().execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -40,6 +42,19 @@ def test_read_only_store_can_query_but_cannot_write(tmp_path):
         reader.write_conn()
     with pytest.raises(RuntimeError, match="只读 Store"):
         reader.init_schema()
+
+
+def test_query_connection_closes_when_context_body_raises(tmp_path):
+    path = tmp_path / "monitor.db"
+    _seed(path)
+    reader = Store(path=path, read_only=True)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        with reader.connect() as conn:
+            raise RuntimeError("stop")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
 
 
 def test_read_only_store_does_not_create_missing_database_or_parent(tmp_path):
@@ -65,6 +80,8 @@ def test_read_only_store_interrupts_queries_after_deadline(tmp_path):
                 )
                 SELECT SUM(x) FROM n
             """).fetchone()
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
 
 
 def test_api_dependency_constructs_read_only_store(tmp_path, monkeypatch):
