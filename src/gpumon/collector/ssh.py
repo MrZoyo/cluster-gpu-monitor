@@ -128,7 +128,7 @@ def _ssh_opts() -> list[str]:
 
 
 async def probe(host_key: str, ssh_alias: str, vendor: str | None = None) -> ProbeResult:
-    """采集一台主机；任何失败都收敛成 ok=False 的 ProbeResult，绝不抛给上层。
+    """采集一台主机；预期的 SSH 与远端数据失败收敛成 ok=False。
 
     vendor 来自 inventory（可选）：给了就跳过远端自动探测，异构机房里更稳。
     """
@@ -163,7 +163,4 @@ async def probe(host_key: str, ssh_alias: str, vendor: str | None = None) -> Pro
         msg = (err.decode(errors="replace").strip() or f"ssh 返回码 {proc.returncode}")
         return _failed(host_key, msg[:500])
 
-    try:
-        return parse_probe(host_key, out.decode(errors="replace"))
-    except Exception as e:
-        return _failed(host_key, f"解析失败: {e}")
+    return parse_probe(host_key, out.decode(errors="replace"))

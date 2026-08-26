@@ -46,16 +46,6 @@ window.Views.ranking = (function () {
         });
       });
     });
-    // topology 缺失的机器（防御）补末尾。正常情况下不会走到——后端已按 inventory
-    // 过滤掉退役机器；这里只兜"DB 有、清单已删"的极端情况。
-    machines.forEach((m) => {
-      if (order.some((o) => o.key === m.key)) return;
-      order.push({ key: m.key, name: m.name, color: Palette.groupAccent("_other"),
-        groupKey: "_other", groupName: I18n.t('ranking_other'), clusterKey: "_other",
-        clusterName: I18n.t('ranking_other'), clusterColor: Palette.groupAccent("_other"),
-        firstInGroup: false, firstInCluster: false });
-      groupColor._other = groupColor._other || { color: Palette.groupAccent("_other"), tint: Palette.groupTint("_other") };
-    });
     // 表头算力域跨列
     const groupSpans = [];
     order.forEach((o) => {

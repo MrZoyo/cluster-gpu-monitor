@@ -292,25 +292,3 @@ def test_parse_probe_vendor_none_is_ok_with_zero_gpus():
     assert r.vendor == "none"
     assert r.gpus == []
     assert r.procs == []
-
-
-def test_parse_probe_without_vendor_section_defaults_nvidia():
-    """向后兼容：老探测脚本没有 ##VENDOR 段时按 NVIDIA 解析。"""
-    text = "\n".join([
-        "##META", "1700000000", "oldnode", "64",
-        "##LOADAVG", "1.0 1.0 1.0 1/1 1",
-        "##MEMINFO", "MemTotal:       1048576 kB", "MemAvailable:    524288 kB",
-        "##CPU1", "cpu  1 0 1 10 0 0 0 0",
-        "##CPU2", "cpu  2 0 2 20 0 0 0 0",
-        "##GPU", "0, GPU-abc, NVIDIA H100, 75, 30, 40960, 81559, 62, 350.5",
-        "##APPS", "GPU-abc, 999, 40000",
-        "##PSMAP", "999 carol python3",
-        "##END",
-    ])
-    r = parse_probe("nv-1", text)
-    assert r.ok
-    assert r.vendor == "nvidia"
-    assert len(r.gpus) == 1
-    assert r.gpus[0].vendor == "nvidia"
-    assert r.gpus[0].util_gpu == 75
-    assert r.procs[0].username == "carol"

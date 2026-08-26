@@ -11,6 +11,8 @@ MemAvailable:   1048576 kB
 cpu  100 0 50 1000 20 0 5 0 0 0
 ##CPU2
 cpu  200 0 100 1700 30 0 10 0 0 0
+##VENDOR
+nvidia
 ##GPU
 0, GPU-aaa, NVIDIA H800, 100, 40, 81000, 81559, 65, 350.50
 1, GPU-bbb, NVIDIA H800, 0, 0, 1, 81559, 30, [N/A]

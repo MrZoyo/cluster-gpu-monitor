@@ -75,20 +75,8 @@ async def _probe_all(host_filter: str | None = None) -> tuple[int, list[ProbeRes
             return budget.apply(result)
 
     tasks = [one(k, a, v) for k, a, v in host_specs]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    # gather 的异常兜底（probe 内部已尽量自包，这里再防一层）
-    clean: list[ProbeResult] = []
-    host_keys = [k for k, _, _ in host_specs]
-    for key, r in zip(host_keys, results):
-        if isinstance(r, ProbeResult):
-            clean.append(r)
-        else:
-            clean.append(ProbeResult(
-                host_key=key,
-                ok=False,
-                error=f"任务异常: {r}"[:512],
-            ))
-    return ts, clean
+    results = await asyncio.gather(*tasks)
+    return ts, results
 
 
 def _summary(ts: int, results: list[ProbeResult]) -> str:
@@ -133,10 +121,7 @@ def run_forever() -> int:
         nonlocal next_tick, last_roll5m, last_roll1h, last_cleanup
         while True:
             ts, results = await _probe_all()
-            try:
-                store.record_round(ts, results)
-            except Exception as e:  # 写库异常不应杀死采集循环
-                print(f"写库失败: {e}")
+            store.record_round(ts, results)
 
             now_m = time.monotonic()
             if now_m - last_roll5m >= 60:

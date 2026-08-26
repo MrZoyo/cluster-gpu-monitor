@@ -209,9 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             if h.get("id") is not None:
                 host_ids.append(h["id"])
             for g in h.get("gpus", []):
-                # /api/topology 的卡行来自 gpu_card 表，主键列叫 id；
-                # /api/overview 里同一张卡叫 gpu_id。两边都兼容，别假设只有一种。
-                gid = g.get("gpu_id", g.get("id"))
+                gid = g.get("id")
                 if gid is not None:
                     gpu_ids.append(gid)
 

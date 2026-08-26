@@ -167,7 +167,6 @@ window.I18n = {
       'ranking_detail_expanded': '明细 · 按算力域 / 集群分组（GPU·小时，跨设备）',
       'ranking_detail_collapsed': '明细 · 按算力域 / 集群汇总（GPU·小时）',
       'ranking_collapsed_note': '机器较多（{n} 台），已按集群合并列以免横向溢出；点右上角可展开到单机。',
-      'ranking_other': '其他',
 
       // Demo Banner
       'demo_banner_title': '演示站点',
@@ -339,7 +338,6 @@ window.I18n = {
       'ranking_detail_expanded': 'Detail · Grouped by Capacity / Cluster (GPU·hours, cross-device)',
       'ranking_detail_collapsed': 'Detail · Aggregated by Capacity / Cluster (GPU·hours)',
       'ranking_collapsed_note': 'Many machines ({n} hosts), collapsed by cluster to avoid overflow. Click button above to expand to per-host.',
-      'ranking_other': 'Other',
 
       // Demo Banner
       'demo_banner_title': 'Demo Site',

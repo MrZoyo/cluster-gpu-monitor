@@ -523,28 +523,19 @@ def users_ranking(window: str = Query("24h")):
     """全局用户占用排行：同 username 跨设备聚合，按设备拆分 gpu_hours（堆叠条用）。
     退役机器(status=retired)彻底移除，其 GPU·h 不计入合计。"""
     window = valid_window(window)
-    retired = _retired_inventory_host_keys()
+    excluded = tuple(sorted(_retired_inventory_host_keys()))
     limit = load_settings().web.ranking_user_limit
-    data = _get_users_ranking(
-        get_store(), window, tuple(sorted(retired)), limit
-    )
+    data = _get_users_ranking(get_store(), window, excluded, limit)
 
-    # 过滤 retired 机器，并补充 capacity_group
+    # Store 已排除退役机器；路由只补充 UI 所需的 capacity_group。
     _, cluster_meta, _ = _inventory_ui_meta()
     data["machines"] = [
         {**m, "capacity_group": cluster_meta.get(m["cluster_key"], {}).get("capacity_group")}
         for m in data["machines"]
-        if m["key"] not in retired
     ]
 
-    # 过滤每个用户的 by_machine，重算 total
     for u in data["users"]:
-        u["by_machine"] = {k: v for k, v in u["by_machine"].items() if k not in retired}
-        u["total"] = round(sum(u["by_machine"].values()), 1)
         u["username"] = mask_username(u["username"])
-
-    # 移除 total=0 的用户（所有使用量都在退役机器上）
-    data["users"] = [u for u in data["users"] if u["total"] > 0]
 
     return data
 

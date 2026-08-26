@@ -159,9 +159,11 @@ def _parse_probe(host_key: str, raw: str) -> ProbeResult:
     if cpu1 and cpu2:
         host.cpu_util_pct = _cpu_util(cpu1[0], cpu2[0])
 
-    # 厂商：远端 ##VENDOR 段给出。老版本探测脚本没有该段 → 按 nvidia 处理（向后兼容）。
+    # 厂商：远端探测完成自动识别后，通过 ##VENDOR 段明确给出。
     vendor_lines = sec.get("VENDOR", [])
-    vendor = (vendor_lines[0].strip().lower() if vendor_lines else "") or "nvidia"
+    vendor = vendor_lines[0].strip().lower() if vendor_lines else ""
+    if vendor not in {"nvidia", "amd", "none"}:
+        raise ProbeDataError("VENDOR 段缺失、为空或值不受支持")
 
     # GPU + 进程：按厂商分派。AMD 走 parse_amd（JSON），NVIDIA 走下面的 CSV。
     if vendor == "amd":

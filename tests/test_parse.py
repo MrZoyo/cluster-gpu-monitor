@@ -19,6 +19,17 @@ def test_parse_basic():
     assert r.host.mem_used_mib == 1024
 
 
+def test_parse_requires_supported_vendor_section():
+    variants = [
+        FIXTURE.replace("##VENDOR\nnvidia\n", ""),
+        FIXTURE.replace("##VENDOR\nnvidia\n", "##VENDOR\n"),
+        FIXTURE.replace("##VENDOR\nnvidia\n", "##VENDOR\nintel\n"),
+    ]
+    for raw in variants:
+        r = parse_probe("hx", raw)
+        assert not r.ok and "VENDOR" in r.error
+
+
 def test_parse_cpu_util():
     # idle_a=1020 tot_a=1175 ; idle_b=1730 tot_b=2040 ; util=100*(1-710/865)=17.9
     r = parse_probe("hx", FIXTURE)
