@@ -1,6 +1,6 @@
 // 应用入口：全局状态、hash 路由、顶栏时间窗切换、健康灯、自动刷新、图表尺寸管理。
 window.GM = (function () {
-  const state = { meta: { windows: ["12h", "24h", "48h", "72h", "1w", "2w", "1m"] }, window: "24h", theme: "dark" };
+  const state = { meta: null, window: "24h", theme: "dark" };
   let charts = [];        // 当前视图的 ECharts 实例，切换视图前统一 dispose
   let refreshTimer = null;
 
@@ -177,7 +177,17 @@ window.GM = (function () {
     I18n.init();
     state.theme = localStorage.getItem("gpumon.theme") === "light" ? "light" : "dark";
     applyTheme();
-    try { state.meta = await API.meta(); } catch (e) {}
+    try {
+      state.meta = await API.meta();
+    } catch (e) {
+      const root = document.getElementById("view");
+      root.appendChild(UI.el("div", { class: "panel" }, [
+        UI.el("h3", {}, [I18n.t('load_failed')]),
+        UI.el("div", { class: "note" }, [I18n.t('service_unreachable')]),
+      ]));
+      console.error(e);
+      return;
+    }
     // 把"算力域 → 色带"映射交给 Palette，之后所有身份色都按 inventory 配置走
     UI.Palette.setGroups(state.meta.capacity_groups);
     // 恢复保存的时间窗，默认 24h

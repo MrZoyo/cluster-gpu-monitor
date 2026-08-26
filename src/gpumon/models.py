@@ -131,10 +131,7 @@ class ClusterCfg(ConfigModel):
     hosts: list[HostCfg] = Field(default_factory=list, max_length=4096)
 
     def resolved_badges(self, library: dict[str, BadgeCfg] | None = None) -> list[BadgeCfg]:
-        """最终标签序列：badges 里的字符串按标签库查表展开，内联项原样保留。
-
-        查不到的 key 会被跳过（load_inventory 已在启动时校验过，正常运行不会出现）。
-        """
+        """最终标签序列：badges 里的字符串按标签库查表展开，内联项原样保留。"""
         return _expand_badges(self.badges, library)
 
 
@@ -145,9 +142,7 @@ def _expand_badges(items: list[ConfigKey | BadgeCfg],
     out: list[BadgeCfg] = []
     for it in items:
         if isinstance(it, str):
-            found = lib.get(it)
-            if found is not None:
-                out.append(found)
+            out.append(lib[it])
         else:
             out.append(it)
     return out
