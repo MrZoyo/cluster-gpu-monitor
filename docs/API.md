@@ -16,21 +16,26 @@ curl --fail-with-body --silent --show-error --max-time 15 \
 ```json
 {
   "as_of": 1788850000,
-  "server_time": 1788850004,
-  "window_s": 600,
-  "poll_interval_s": 30,
-  "cache_ttl_s": 30,
   "hosts": [{
     "name": "Node A",
+    "model": "Example GPU",
     "online": true,
-    "gpus": [
-      {"index": 0, "model": "Example GPU", "util_recent_pct": 0.0, "sampled_at": 1788849980},
-      {"index": 1, "model": "Example GPU", "util_recent_pct": 82.5, "sampled_at": 1788849980},
-      {"index": 2, "model": null, "util_recent_pct": null, "sampled_at": null}
-    ]
+    "sampled_at": 1788849980,
+    "util_pct": [0, 82.5, null]
   }]
 }
 ```
+
+## 响应字段
+
+- `as_of`：共享快照的计算时间（Unix epoch 秒）。
+- `hosts`：每台机器一条记录。`name` 为显示名，`online` 为在线状态。
+- `util_pct`：按卡号排列的近期利用率数组，默认数组位置就是从 0 开始的卡号。
+  若卡号不连续，额外返回同长度的 `indices` 数组，明确每个值对应哪张卡。
+- `model` 和 `sampled_at`：同机一致时各返回一个共享值；存在差异时返回与
+  `util_pct` 一一对应的数组。未知型号或采样时间为 `null`，不会用其他卡的值填补。
+- 窗口固定为 600 秒，缓存固定为 30 秒，这些常量放在文档中，不在每次响应重复。
+  利用率精度不变，整数值输出为 `0`、`80`，省去无意义的 `.0`。
 
 ## Python 调用
 
@@ -56,10 +61,10 @@ print(summary)
 
 ## 指标与时间
 
-- `util_recent_pct` 与网页 GPU 卡片使用同一个计算函数：最近 600 秒有效原始样本的均值；
+- `util_pct` 与网页 GPU 卡片使用同一个计算函数：最近 600 秒有效原始样本的均值；
   最近连续 3 个有效样本均 ≤5% 时直接归零。它不是显存占用率，也不表示 GPU 已可分配。
-- `as_of` 是本次共享快照的计算时间；`server_time` 是当前响应时间。`sampled_at` 是
-  对应 GPU 最新采样时间。采样周期可能与轮次实际耗时不同。
+- `as_of` 是本次共享快照的计算时间；`sampled_at` 是对应 GPU 最新采样时间。
+  主机内部时间不一致时逐卡保留。采样周期可能与轮次实际耗时不同。
 - 所有客户端共用最多 30 秒的进程内缓存。缓存命中不查询数据库；刷新只查拓扑、GPU 样本
   时间、10 分钟利用率和采集状态，不查询进程或长期历史聚合。
 - 主机仅在 active 且最近成功采集不超过 120 秒时为 `online=true`。GPU 样本需同时不超过

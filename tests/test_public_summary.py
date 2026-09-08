@@ -69,7 +69,7 @@ def test_cache_shared_between_clients_and_refreshed_at_thirty_seconds():
     clock.value = 1029
     second = body(service.get("b"))
     assert first["as_of"] == second["as_of"] == 1000
-    assert second["server_time"] == 1029
+    assert set(second) == {"as_of", "hosts"}
     clock.value = 1030
     assert body(service.get("c"))["as_of"] == 1030
     assert calls == [1000, 1030]
@@ -83,16 +83,16 @@ def test_freshness_expires_even_before_cached_snapshot_is_refreshed():
         return data
 
     service, clock, calls = make_service(near_expiry)
-    assert body(service.get("a"))["hosts"][0]["gpus"][1]["util_recent_pct"] == 80
+    assert body(service.get("a"))["hosts"][0]["util_pct"][1] == 80
     clock.value = 1006
     host = body(service.get("b"))["hosts"][0]
     assert host["online"] is True
-    assert host["gpus"][0]["util_recent_pct"] == 0
-    assert host["gpus"][1]["util_recent_pct"] is None
+    assert host["util_pct"][0] == 0
+    assert host["util_pct"][1] is None
     clock.value = 1011
     host = body(service.get("c"))["hosts"][0]
     assert host["online"] is False
-    assert all(g["util_recent_pct"] is None for g in host["gpus"])
+    assert all(value is None for value in host["util_pct"])
     assert calls == [1000]
 
 
@@ -165,7 +165,7 @@ def test_http_contract_and_client_cannot_choose_its_ip_with_headers():
     response = client.get(summary.PATH)
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["hosts"][0]["gpus"][1]["util_recent_pct"] == 80
+    assert response.json()["hosts"][0]["util_pct"][1] == 80
     spoof = client.get(summary.PATH, headers={
         "X-Forwarded-For": "198.51.100.2",
         "CF-Connecting-IP": "198.51.100.3",
@@ -226,9 +226,48 @@ def test_database_summary_matches_ui_smoothing_and_exposes_only_allowlisted_fiel
     monkeypatch.setattr(store, "get_snapshot", lambda: pytest.fail("process snapshot queried"))
     monkeypatch.setattr(store, "get_avg", lambda *a, **k: pytest.fail("historical rollup queried"))
     data = summary._render(summary._load_snapshot(1000), 1000)
-    assert [g["util_recent_pct"] for g in data["hosts"][0]["gpus"]] == [0, 80, None, None]
-    assert [g["sampled_at"] for g in data["hosts"][0]["gpus"]] == [970, 970, 800, None]
+    assert data["hosts"][0]["util_pct"] == [0, 80, None, None]
+    assert data["hosts"][0]["sampled_at"] == [970, 970, 800, None]
     assert "private" not in json.dumps(data)
-    assert set(data["hosts"][0]) == {"name", "online", "gpus"}
-    assert set(data["hosts"][0]["gpus"][0]) == {"index", "model", "util_recent_pct", "sampled_at"}
+    assert set(data["hosts"][0]) == {"name", "model", "online", "sampled_at", "util_pct"}
     conn.close()
+
+def test_compact_shape_preserves_model_time_and_noncontiguous_index_differences():
+    data = snapshot(1000)
+    cards = data["hosts"][0]["gpus"]
+    cards[0].update(index=2, model="Model A", sampled_at=960, util_recent_pct=12.3)
+    cards[1].update(index=7, model="Model B", sampled_at=970)
+    host = summary._render(data, 1000)["hosts"][0]
+    assert host == {
+        "name": "Node A", "model": ["Model A", "Model B"], "online": True,
+        "sampled_at": [960, 970], "util_pct": [12.3, 80], "indices": [2, 7],
+    }
+
+
+def test_common_values_are_shared_without_rounding_utilization():
+    data = snapshot(1000)
+    data["hosts"][0]["gpus"][1]["util_recent_pct"] = 93.3
+    host = summary._render(data, 1000)["hosts"][0]
+    assert host["model"] == "GPU"
+    assert host["sampled_at"] == 970
+    assert host["util_pct"] == [0, 93.3]
+    assert "indices" not in host
+
+
+def test_compact_payload_is_under_forty_percent_of_verbose_response_for_64_cards():
+    data = snapshot(1000)
+    host = data["hosts"][0]
+    host["gpus"] = [
+        {"index": i, "model": "Example GPU", "util_recent_pct": 0.0 if i % 2 else 93.3,
+         "sampled_at": 970}
+        for i in range(8)
+    ]
+    data["hosts"] = [{**host, "name": f"Node {i}"} for i in range(8)]
+    compact = summary._render(data, 1000)
+    verbose = {"as_of": 1000, "server_time": 1000, "window_s": 600,
+               "poll_interval_s": 30, "cache_ttl_s": 30,
+               "hosts": [{"name": h["name"], "online": True, "gpus": h["gpus"]}
+                         for h in data["hosts"]]}
+    encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
+    assert len(encode(compact)) < len(encode(verbose)) * 0.4
+    assert sum(len(h["util_pct"]) for h in compact["hosts"]) == 64

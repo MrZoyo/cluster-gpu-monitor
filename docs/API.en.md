@@ -11,10 +11,30 @@ curl --fail-with-body --silent --show-error --max-time 15 \
   "https://YOUR_MONITOR_DOMAIN/api/v1/gpu-summary"
 ```
 
-The response contains `as_of` (cached computation time), `server_time` (response
-time), `window_s=600`, `poll_interval_s`, `cache_ttl_s=30`, and `hosts`.
-Each host has `name`, `online`, and `gpus`. Each GPU has its zero-based `index`,
-`model`, `util_recent_pct`, and `sampled_at`. Timestamps are Unix epoch seconds.
+The response contains `as_of` (cached computation time, Unix epoch seconds) and
+`hosts`. Each host has `name`, `model`, `online`, `sampled_at`, and a
+`util_pct` array. Array positions normally correspond to zero-based GPU indices;
+when indices are not contiguous, an additional `indices` array identifies each
+position explicitly.
+
+A shared GPU model or sampling time is returned once per host. If the values
+differ, `model` or `sampled_at` becomes an array aligned with `util_pct`,
+preserving nulls for unknown values. Utilization precision is unchanged; integral
+values are encoded as integers. The 600-second window and 30-second cache are
+fixed, so these constants are documented rather than repeated in every response.
+
+```json
+{
+  "as_of": 1788850000,
+  "hosts": [{
+    "name": "Node A",
+    "model": "Example GPU",
+    "online": true,
+    "sampled_at": 1788849980,
+    "util_pct": [0, 82.5, null]
+  }]
+}
+```
 
 Utilization uses the same function as the dashboard: the mean of valid samples
 from the last 600 seconds, with an immediate reset to zero when the last three

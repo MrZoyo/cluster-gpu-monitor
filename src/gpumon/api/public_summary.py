@@ -80,27 +80,35 @@ def _load_snapshot(now: int) -> dict:
     }
 
 
+def _common_or_list(values: list):
+    """Store a shared value once; retain per-GPU differences when present."""
+    return values[0] if values and all(value == values[0] for value in values) else values
+
+
 def _render(snapshot: dict, now: int) -> dict:
     hosts = []
     for host in snapshot["hosts"]:
         last_ok = host["last_ok_ts"]
         online = bool(host["active"] and last_ok is not None and 0 <= now - last_ok <= 120)
-        gpus = []
+        indices, models, timestamps, utilization = [], [], [], []
         for gpu in host["gpus"]:
             ts = gpu["sampled_at"]
             fresh = online and ts is not None and 0 <= now - ts <= snapshot["sample_max_age_s"]
-            gpus.append({
-                "index": gpu["index"], "model": gpu["model"],
-                "util_recent_pct": gpu["util_recent_pct"] if fresh else None,
-                "sampled_at": ts,
-            })
-        hosts.append({"name": host["name"], "online": online, "gpus": gpus})
-    return {
-        "as_of": snapshot["as_of"], "server_time": now, "window_s": 600,
-        "poll_interval_s": snapshot["poll_interval_s"], "cache_ttl_s": CACHE_TTL_S,
-        "hosts": hosts,
-    }
-
+            value = gpu["util_recent_pct"] if fresh else None
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+            indices.append(gpu["index"])
+            models.append(gpu["model"])
+            timestamps.append(ts)
+            utilization.append(value)
+        row = {
+            "name": host["name"], "model": _common_or_list(models), "online": online,
+            "sampled_at": _common_or_list(timestamps), "util_pct": utilization,
+        }
+        if indices != list(range(len(indices))):
+            row["indices"] = indices
+        hosts.append(row)
+    return {"as_of": snapshot["as_of"], "hosts": hosts}
 
 class SummaryService:
     """One cache and limiter per Web process; gpumon web runs one worker.
