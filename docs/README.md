@@ -15,6 +15,7 @@ README 负责说明项目是否适合你，并提供最短可运行路径。这�
 | 生成虚构数据或静态站点 | [Demo 指南](DEMO.md) | 本地演示、GitHub Pages 导出及防误操作机制 |
 | 使用 Python + systemd 部署 | [原生部署指南](DEPLOYMENT.md) | release 布局、systemd、Caddy、备份、迁移与排障 |
 | 使用容器部署 | [Docker Compose 指南](DOCKER.md) | 非 root 镜像、权限隔离、SSH 挂载、备份与升级 |
+| 供脚本或 agent 查询近期 GPU 利用率 | [摘要 API](API.md) | 字段、限流、缓存和可选匿名入口 |
 
 ## 推荐阅读路径
 

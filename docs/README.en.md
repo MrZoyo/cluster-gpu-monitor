@@ -16,6 +16,7 @@ manual.
 | Generate fictional data or a static site | [Demo guide](DEMO.en.md) | Local demos, GitHub Pages export, and destructive-operation guards |
 | Deploy with Python + systemd | [Native deployment guide](DEPLOYMENT.en.md) | Release layout, systemd, Caddy, backups, migration, and troubleshooting |
 | Deploy with containers | [Docker Compose guide](DOCKER.en.md) | Non-root image, trust boundaries, SSH mounts, backups, and upgrades |
+| Query recent GPU utilization from scripts or agents | [Summary API](API.en.md) | Fields, rate limits, caching, and optional anonymous access |
 
 ## Suggested paths
 
