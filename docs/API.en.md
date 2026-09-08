@@ -52,6 +52,33 @@ The output is an explicit field allowlist. It omits users, processes, memory,
 SSH aliases, addresses, hardware UUIDs, notes, and error details. Display names
 and GPU models are public information when anonymous access is enabled.
 
+## Enable or disable
+
+Configure `config/settings.toml`:
+
+```toml
+[web]
+enable_gpu_summary = true
+```
+
+The default is `true`, including legacy configurations that omit the field.
+Set it to `false` and restart Web to return HTTP 404 without reading or serving
+the summary cache or executing summary queries. Other APIs and the dashboard are
+unaffected. Native deployments can use `systemctl restart gpumon-web`; restart
+the Web service for container deployments.
+
+This controls application availability. The reverse proxy still controls
+anonymous external access; an anonymous proxy exception returns only 404 while
+the feature is disabled. Configuration failures return generic 503, including
+when a cache is warm.
+
+Only the path `/api/v1/gpu-summary` is fixed in code. Operators choose the domain;
+replace `YOUR_MONITOR_DOMAIN` with the deployment's own domain.
+
+Before rolling back from v0.4.0 to a version without this setting, restore the
+previous settings backup or remove the new field. Older versions reject unknown
+configuration fields.
+
 ## Python client
 
 Set a descriptive User-Agent; some Cloudflare deployments reject Python's default

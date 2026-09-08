@@ -26,6 +26,28 @@ curl --fail-with-body --silent --show-error --max-time 15 \
 }
 ```
 
+## 启用或关闭
+
+在 `config/settings.toml` 中配置：
+
+```toml
+[web]
+enable_gpu_summary = true
+```
+
+默认值为 `true`；旧配置没有此字段时也默认开启。设为 `false` 并重启 Web 后，
+该端点返回 HTTP 404，不读取或返回缓存，不执行摘要数据库查询。网页和其他 API 不受影响。
+原生部署可执行 `systemctl restart gpumon-web`；容器部署需重启 Web 服务。
+
+这是应用功能开关。外部是否允许匿名访问仍由反向代理决定；关闭后即使代理保留匿名例外，
+也只能得到 404。配置读取失败时返回通用 503，不会继续输出已缓存的数据。
+
+代码只固定路径 `/api/v1/gpu-summary`。域名由部署方配置，文档里的
+`YOUR_MONITOR_DOMAIN` 应替换成自己的域名。
+
+从 v0.4.0 回滚到不认识此字段的旧版本时，先恢复升级前的 settings 备份或删除新增字段，
+再回滚代码；旧版本严格拒绝未知配置字段。
+
 ## 响应字段
 
 - `as_of`：共享快照的计算时间（Unix epoch 秒）。

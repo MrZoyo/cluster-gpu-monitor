@@ -110,6 +110,7 @@ def _render(snapshot: dict, now: int) -> dict:
         hosts.append(row)
     return {"as_of": snapshot["as_of"], "hosts": hosts}
 
+
 class SummaryService:
     """One cache and limiter per Web process; gpumon web runs one worker.
 
@@ -164,6 +165,12 @@ class SummaryService:
 
 @router.get(PATH, include_in_schema=True)
 def gpu_summary(request: Request):
+    try:
+        enabled = load_settings().web.enable_gpu_summary
+    except Exception:
+        raise _unavailable() from None
+    if not enabled:
+        raise HTTPException(404, "Not Found", headers={"Cache-Control": "no-store"})
     if request.query_params:
         raise HTTPException(400, "This endpoint does not accept query parameters",
                             headers={"Cache-Control": "no-store"})

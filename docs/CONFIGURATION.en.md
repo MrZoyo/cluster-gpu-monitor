@@ -270,6 +270,7 @@ path = "data/gpumon.db"     # Relative to project root
 host = "127.0.0.1"          # Keep 127.0.0.1 behind reverse proxy; change to 0.0.0.0 for direct access
 port = 8848
 enable_docs = false          # Disable /docs, /redoc, and /openapi.json in production
+enable_gpu_summary = true   # Recent GPU summary API; restart Web after changing
 max_query_concurrency = 4    # Maximum concurrent expensive queries
 query_queue_timeout_s = 1    # Queue wait before returning 503
 query_timeout_s = 12         # Per-connection SQLite execution deadline
@@ -295,6 +296,10 @@ Keep these defaults on small hosts; benchmark a database copy before raising the
 
 `enable_docs=false` disables only FastAPI's interactive documentation and OpenAPI JSON, not the
 dashboard API. Set it to `true` explicitly in development when API exploration is needed.
+
+`enable_gpu_summary=true` enables the recent GPU summary by default. Set it to `false`
+and restart Web to return 404 without cached data. Missing fields in legacy configurations
+default to enabled. See the [summary API guide](API.en.md).
 
 ### Backup Configuration
 

@@ -271,3 +271,64 @@ def test_compact_payload_is_under_forty_percent_of_verbose_response_for_64_cards
     encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
     assert len(encode(compact)) < len(encode(verbose)) * 0.4
     assert sum(len(h["util_pct"]) for h in compact["hosts"]) == 64
+
+def test_summary_switch_defaults_on_for_legacy_toml_and_accepts_another_domain(tmp_path, monkeypatch):
+    import gpumon.config as config
+
+    directory = tmp_path / "config"
+    directory.mkdir()
+    (directory / "settings.toml").write_text("[web]\nport = 8848\n")
+    monkeypatch.setattr(config, "ROOT", tmp_path)
+    config.load_settings.cache_clear()
+    try:
+        assert config.load_settings().web.enable_gpu_summary is True
+        app = create_app()
+        app.state.gpu_summary, _, calls = make_service()
+        client = TestClient(app, base_url="https://another-monitor.test",
+                            client=("198.51.100.1", 12000))
+        assert client.get(summary.PATH).status_code == 200
+        assert calls == [1000]
+        (directory / "settings.toml").write_text("[web]\nenable_gpu_summary = false\n")
+        config.load_settings.cache_clear()
+        assert config.load_settings().web.enable_gpu_summary is False
+        assert client.get(summary.PATH).status_code == 404
+        assert client.get("/api/live").status_code == 200
+        assert calls == [1000]
+    finally:
+        config.load_settings.cache_clear()
+
+
+def test_disabled_summary_rejects_before_client_validation_or_cache_access(monkeypatch):
+    from gpumon.models import Settings
+
+    monkeypatch.setattr(summary, "load_settings",
+                        lambda: Settings.model_validate({"web": {"enable_gpu_summary": False}}))
+    monkeypatch.setattr(summary, "_client_ip",
+                        lambda _: pytest.fail("disabled endpoint inspected requester"))
+    app = create_app()
+    app.state.gpu_summary, _, calls = make_service()
+    client = TestClient(app)
+    for path in (summary.PATH, summary.PATH + "?refresh=true"):
+        response = client.get(path)
+        assert response.status_code == 404
+        assert response.headers["cache-control"] == "no-store"
+    assert calls == []
+
+
+def test_config_failure_cannot_expose_a_warm_summary(monkeypatch):
+    from gpumon.models import Settings
+
+    monkeypatch.setattr(summary, "load_settings", lambda: Settings())
+    app = create_app()
+    app.state.gpu_summary, _, calls = make_service()
+    client = TestClient(app, client=("198.51.100.1", 12000))
+    assert client.get(summary.PATH).status_code == 200
+
+    def broken_config():
+        raise RuntimeError("private settings path and secret detail")
+
+    monkeypatch.setattr(summary, "load_settings", broken_config)
+    response = client.get(summary.PATH)
+    assert response.status_code == 503
+    assert "private" not in response.text and "secret" not in response.text
+    assert calls == [1000]
