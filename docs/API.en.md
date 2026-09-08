@@ -32,6 +32,30 @@ The output is an explicit field allowlist. It omits users, processes, memory,
 SSH aliases, addresses, hardware UUIDs, notes, and error details. Display names
 and GPU models are public information when anonymous access is enabled.
 
+## Python client
+
+Set a descriptive User-Agent; some Cloudflare deployments reject Python's default
+User-Agent. This example connects directly, for environments that do not require
+an HTTP proxy:
+
+```python
+import json
+import urllib.request
+
+request = urllib.request.Request(
+    "https://YOUR_MONITOR_DOMAIN/api/v1/gpu-summary",
+    headers={"User-Agent": "gpu-monitor-agent/1.0", "Accept": "application/json"},
+)
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+with opener.open(request, timeout=15) as response:
+    summary = json.load(response)
+print(summary)
+```
+
+Honor `Retry-After` for 429/503. A 403 from an upstream proxy or edge policy is
+different from the application's rate limit; verify the deployed client's proxy
+configuration and User-Agent.
+
 ## Cache and rate limit
 
 All clients share one in-process snapshot for up to 30 seconds. Refresh reads

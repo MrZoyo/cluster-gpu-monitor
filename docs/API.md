@@ -32,6 +32,28 @@ curl --fail-with-body --silent --show-error --max-time 15 \
 }
 ```
 
+## Python 调用
+
+使用能识别客户端的 User-Agent；部分 Cloudflare 部署会拒绝 Python 默认的 User-Agent。
+下面的示例使用直连，适用于运行环境无需 HTTP 代理的情况：
+
+```python
+import json
+import urllib.request
+
+request = urllib.request.Request(
+    "https://YOUR_MONITOR_DOMAIN/api/v1/gpu-summary",
+    headers={"User-Agent": "gpu-monitor-agent/1.0", "Accept": "application/json"},
+)
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+with opener.open(request, timeout=15) as response:
+    summary = json.load(response)
+print(summary)
+```
+
+429 和 503 的重试间隔读取响应的 `Retry-After`。403 通常来自前置代理或边缘策略，
+应与应用返回的 429 区分；实际部署需验证请求使用的代理设置和 User-Agent。
+
 ## 指标与时间
 
 - `util_recent_pct` 与网页 GPU 卡片使用同一个计算函数：最近 600 秒有效原始样本的均值；
