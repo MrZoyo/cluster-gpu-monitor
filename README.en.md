@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.3.2">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.3.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.3.2">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.4.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.4.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.4.0">
   </a>
 </p>
 
@@ -63,6 +63,10 @@ fleets, second-level alerts, quotas, or billing.
   inventory for known hosts to skip the extra per-round detection.
 - **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
   build step.
+
+The recent-utilization summary API is enabled by default for scripts and agents. Set
+`[web] enable_gpu_summary = false` to disable it. See the [API guide](docs/API.en.md)
+for fields, anonymous access, and client examples.
 
 ## Quick start
 

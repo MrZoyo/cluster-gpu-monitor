@@ -265,6 +265,7 @@ class WebSettings(ConfigModel):
     host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
     port: int = Field(default=8848, ge=1, le=65_535)
     enable_docs: bool = False
+    enable_gpu_summary: bool = True
     max_query_concurrency: int = Field(default=4, ge=1, le=32)
     query_queue_timeout_s: float = Field(
         default=1.0, ge=0, le=30, allow_inf_nan=False

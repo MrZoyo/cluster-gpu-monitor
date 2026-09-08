@@ -1,6 +1,6 @@
 """FastAPI 应用：挂载 /api 路由 + 把 web/ 作为静态站点 serve。
 
-只监听 127.0.0.1（见 settings/web）。对外访问一律经 Caddy 反代 + Basic Auth（阶段二）。
+只监听 127.0.0.1（见 settings/web）。对外访问经 Caddy 反代；可仅为近期摘要配置匿名例外，其余路径使用 Basic Auth。
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..config import CODE_ROOT
 from .routes import router
+from .public_summary import router as public_router, SummaryService
 
 
 class RevalidatingStaticFiles(StaticFiles):
@@ -32,6 +33,8 @@ def create_app(*, enable_docs: bool = False) -> FastAPI:
         redoc_url=redoc_url,
         openapi_url=openapi_url,
     )
+    application.state.gpu_summary = SummaryService()
+    application.include_router(public_router)
     application.include_router(router)
 
     # web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。

@@ -292,6 +292,7 @@ path = "data/gpumon.db"     # 相对项目根
 host = "127.0.0.1"          # 反代后面就保持 127.0.0.1；要直接访问改 0.0.0.0
 port = 8848
 enable_docs = false          # 生产关闭 /docs、/redoc、/openapi.json
+enable_gpu_summary = true   # 默认开启近期摘要 API；修改后重启 Web
 max_query_concurrency = 4    # 昂贵查询并发上限
 query_queue_timeout_s = 1    # 查询槽位满时排队上限；超时返回 503
 query_timeout_s = 12         # 单个 SQLite 查询连接的执行上限
@@ -315,6 +316,9 @@ Web 默认只同时执行 4 个昂贵统计查询；槽位满后最多等 1 秒�
 
 `enable_docs=false` 只关闭 FastAPI 的交互式文档和 OpenAPI JSON，不影响仪表盘 API。
 开发环境需要调试接口时可显式设为 `true`。
+
+`enable_gpu_summary=true` 默认开启近期摘要接口；设为 `false` 并重启 Web 后返回 404。
+旧配置缺少此字段时仍默认开启。功能关闭时不会返回缓存数据。详见[摘要 API](API.md)。
 
 ### 备份配置
 

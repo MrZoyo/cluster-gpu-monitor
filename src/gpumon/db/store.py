@@ -329,6 +329,20 @@ class Store:
 
         return {"gpus": gpus, "hosts": hosts, "procs": procs_by_gpu}
 
+    def get_gpu_sample_times(self) -> dict[int, int]:
+        """Latest GPU timestamps through indexed seeks; no process or host samples."""
+        with self.connect() as conn:
+            gpu_ids = [r[0] for r in conn.execute("SELECT id FROM gpu_card")]
+            times = {}
+            for gid in gpu_ids:
+                row = conn.execute(
+                    "SELECT ts FROM sample_gpu WHERE gpu_id=? ORDER BY ts DESC LIMIT 1",
+                    (gid,),
+                ).fetchone()
+                if row is not None:
+                    times[gid] = row[0]
+        return times
+
     # ---- 查询：近期利用率（卡片大字/底色用） -------------------------------
     def get_util_recent(self, now: int | None = None, window_s: int = 600,
                         idle_eps: float = 5.0, idle_streak: int = 3) -> dict[int, float]:

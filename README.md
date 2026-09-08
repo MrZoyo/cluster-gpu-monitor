@@ -3,8 +3,8 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.3.2">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.3.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.3.2">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.4.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.4.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.4.0">
   </a>
 </p>
 
@@ -56,6 +56,9 @@
 - **NVIDIA 与 AMD**：支持自动探测 `nvidia-smi`、`amd-smi` 或 `rocm-smi`；已知厂商时可在
   inventory 填写 `vendor`，跳过每轮额外探测。
 - **轻量自托管**：SQLite、FastAPI、原生 JavaScript 和本地 ECharts，无前端构建步骤。
+
+摘要接口供脚本和 agent 查询近期 GPU 利用率，默认启用，可通过
+`[web] enable_gpu_summary = false` 关闭。字段、匿名入口和调用方式见[摘要 API](docs/API.md)。
 
 ## 快速开始
 
