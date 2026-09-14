@@ -13,8 +13,19 @@ from .store import Store
 
 
 class Rollup:
-    def __init__(self, store: Store | None = None):
+    def __init__(self, store: Store | None = None, *, sample_interval_s: int | None = None):
         self.store = store or Store()
+        if sample_interval_s is not None and (
+            isinstance(sample_interval_s, bool) or not isinstance(sample_interval_s, int)
+            or not 1 <= sample_interval_s <= 86_400
+        ):
+            raise ValueError("sample_interval_s 必须是 1..86400 的整数")
+        self.sample_interval_s = sample_interval_s
+
+    def _interval(self) -> int:
+        # Synthetic generation supplies its own fixed cadence and must not read
+        # deployment settings. Live collection retains the configured default.
+        return self.sample_interval_s or load_settings().collector.poll_interval_s
 
     def _get_wm(self, conn, name: str) -> int:
         row = conn.execute("SELECT watermark FROM rollup_state WHERE name=?", (name,)).fetchone()
@@ -32,7 +43,7 @@ class Rollup:
             return
         with conn:
             wm = self._get_wm(conn, "gpu_5m")
-            interval = load_settings().collector.poll_interval_s
+            interval = self._interval()
             conn.execute(f"""
                 INSERT OR REPLACE INTO rollup_gpu_5m
                   (gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max,util_mem_avg,
@@ -63,7 +74,7 @@ class Rollup:
             return
         with conn:
             wm = self._get_wm(conn, "gpu_1h")
-            interval = load_settings().collector.poll_interval_s
+            interval = self._interval()
             conn.execute(f"""
                 INSERT OR REPLACE INTO rollup_gpu_1h
                   (gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max,util_mem_avg,

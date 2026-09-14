@@ -458,7 +458,7 @@ def build_rollups(db: Path, now: int, quiet: bool = False) -> dict:
 
     store = Store(db)
     # 水位从 0 起，一次把全部历史聚上来
-    Rollup(store).roll_all(now)
+    Rollup(store, sample_interval_s=TICK).roll_all(now)
     conn = store.write_conn()
     out = {}
     for t in ("rollup_gpu_5m", "rollup_gpu_1h", "rollup_host_1h"):

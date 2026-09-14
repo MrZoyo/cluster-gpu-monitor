@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -166,3 +167,14 @@ def test_demo_health_examples_use_export_clock_and_keep_stale_data_unknown(tmp_p
     assert overview['summary']['hosts_online'] == 5
     assert overview['summary']['cards_idle'] + overview['summary']['cards_busy'] + overview['summary']['cards_unknown'] == 48
     assert all(h['last_heartbeat_ts'] <= overview['now'] for h in hosts)
+
+
+def test_generator_needs_no_runtime_settings_in_clean_environment(tmp_path):
+    runtime = tmp_path / 'no-runtime-config'
+    result = subprocess.run([sys.executable, str(SCRIPTS / 'gen_demo_db.py'),
+        '--db', str(tmp_path / 'demo.db'), '--inventory', str(tmp_path / 'inventory.demo.yaml'),
+        '--days', '.01', '--quiet'], env={**os.environ, 'GPUMON_ROOT': str(runtime)},
+        cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert not runtime.exists()
+    assert demo_database_state(tmp_path / 'demo.db') == 'complete'
