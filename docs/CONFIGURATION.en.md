@@ -232,7 +232,7 @@ After marking `retired`, restart **both** services: `gpumon-collector` (stop pro
 
 ### vendor and AMD
 
-When `vendor` is empty, the remote probe tries `nvidia-smi` → `amd-smi` → `rocm-smi` in order and uses the first tool that succeeds. It repeats this detection every round rather than caching it. A working NVIDIA host therefore runs one extra `nvidia-smi -L`; an AMD host may also try the tools listed before its working tool.
+When `vendor` is empty, the remote probe tries `nvidia-smi` → `amd-smi` → `rocm-smi` in order and uses the first tool that succeeds. The first successful detection is cached persistently. An uncached NVIDIA host therefore runs one extra `nvidia-smi -L`; an AMD host may also try the tools listed before its working tool.
 
 For a known, stable GPU vendor, set `nvidia` or `amd` explicitly to reduce SMI calls on the target host. Leave it empty only when the vendor is unknown, the hardware may change, or one inventory must adapt to different hosts:
 
@@ -251,12 +251,17 @@ Setting the vendor also avoids false detection when a host has tools from multip
 
 ```toml
 [collector]
-poll_interval_s = 30        # Interval between collection rounds. Also the GPU-hour accounting granularity
+poll_interval_s = 30        # Normal host-heartbeat and GPU polling interval
 ssh_connect_timeout_s = 8   # SSH connection timeout
-ssh_total_timeout_s = 20    # Overall timeout per host per round (includes remote sleep)
+ssh_total_timeout_s = 20    # SSH timeout baseline; also reserves GPU phase and cleanup budgets
 max_concurrency = 8         # How many simultaneous SSH connections. Increase for many machines, mind bastion capacity
 cpu_sample_gap_s = 1        # Interval between two /proc/stat reads on remote, for CPU utilization
 ssh_output_limit_bytes = 4194304 # Per-host output budget (max 16 MiB); excess terminates SSH
+gpu_slow_s = 10            # Slow GPU phase triggers cooldown
+gpu_timeout_s = 20         # GPU phase timeout, plus up to 2s for cleanup
+gpu_backoff_s = 60         # Minimum GPU interval for affected hosts
+gpu_recover_s = 5          # Recovery requires faster responses
+gpu_recover_count = 3      # Consecutive fast successes required
 
 [retention]
 raw_days = 35               # Raw sample retention days (minimum 31)
@@ -379,3 +384,5 @@ uv run gpumon config-check                      # Config level
 curl -s 127.0.0.1:8848/api/collector/status     # Each host online / GPU count / recent errors
 curl -s 127.0.0.1:8848/api/health               # How long ago was last sample
 ```
+
+See [adaptive probing](ADAPTIVE_PROBING.en.md) for behavior, dependencies, sampling weights and upgrade steps.

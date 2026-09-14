@@ -42,21 +42,18 @@ does not change database identity.
 
 Each round processes only `active` hosts:
 
-1. Assign one epoch-second timestamp to the entire round so samples align across hosts.
-2. Open one system OpenSSH connection per host within the `max_concurrency` boundary.
-3. Run `remote_probe.sh` from stdin and fetch GPU, process, CPU, memory, and load data together.
-4. Parse and validate the output centrally, then write the round in one SQLite transaction.
-5. Record a failed host independently without blocking successful hosts.
+Each active host has its own schedule within the global `max_concurrency` limit. A single SSH
+connection returns a completed host heartbeat first and queries GPUs only when that host's cooldown
+expires. Completed hosts are persisted immediately, using separate host/GPU receive timestamps.
+Slow GPU queries reduce only that host's GPU polling rate; CPU, memory and load remain independent.
 
-When `vendor` is unset, the remote probe tries NVIDIA and AMD tools in order on every round. A
-working NVIDIA host therefore runs one extra `nvidia-smi -L`. Set a known, stable vendor to reduce
-SMI calls on the target; leave it unset when the vendor is unknown or the hardware may change. The
-NVIDIA path has production history. The AMD parser has synthetic fixtures but still needs
-validation on real hardware.
+When vendor is unspecified, the first successful detection is cached persistently. Known vendors
+can be set explicitly; update inventory when replacing hardware with a different vendor. Normal
+NVIDIA collection makes two SMI calls, reusing process-query PIDs. Initial detection may make one
+additional call. AMD parsing has synthetic tests but still lacks real-hardware validation.
 
-Remote output is untrusted input. SSH has connection, total-time, and byte limits, and parsed GPU
-and process objects have per-host and per-round limits. Abnormal process volume may be omitted
-while preserving GPU and host metrics and recording a collector warning.
+Remote output remains untrusted and bounded by connection/phase timeouts, combined output bytes,
+and per-host/global object budgets. Missing process detail remains unknown rather than implying idle.
 
 ## Topology and lifecycle
 
@@ -122,7 +119,7 @@ complete retention rules.
 | UI value | Source and rule | Purpose |
 | --- | --- | --- |
 | Instantaneous | Latest raw sample for each GPU | Tooltip and single-GPU details |
-| Recent utilization | Mean of the last 10 minutes; forced to zero when the latest three samples are all `≤5%` | GPU card value, color, and busy state |
+| Recent utilization | Sampling-duration-weighted mean of the last 10 minutes; forced to zero when the latest three samples are all `≤5%` | GPU card value, color, and busy state |
 | Window average | Sample-count-weighted rollup mean over the selected window | Capacity planning and historical comparison |
 
 Training loads often oscillate between 0 and 100 between steps. The recent value avoids treating a
@@ -133,25 +130,22 @@ An idle-but-occupied card must have a user process holding more than zero VRAM a
 utilization below `5%`. A process with no VRAM does not count as a user, and a missing recent value
 is never guessed to be idle-but-occupied.
 
-`coverage` compares actual samples with expected GPUs × window length ÷ configured poll interval.
-It reveals disconnects and newly added capacity. Treat a low-coverage average as incomplete.
+`coverage` divides valid observation weights by expected inventory GPUs multiplied by the full
+window duration. Raw sample counts remain available; each metric excludes its own N/A observations.
+Low coverage must not be presented as a complete-window conclusion.
 
-### Liveness and freshness
+### Online state and freshness
 
-The current implementation retains two independent gates:
-
-- `/api/collector/status` considers a host online when its latest successful collection is no more
-  than **120 seconds** old.
-- Raw sample freshness is `max(120 seconds, 4 × poll_interval_s)`.
-
-The overview returns current values and users only when the host is online and its sample is still
-fresh. Otherwise it returns null instead of stale occupancy. These thresholds are not unified;
-changing the poll interval does not change the fixed 120-second online window.
+Host heartbeat, collector attempts, and GPU samples are checked independently. The freshness window
+is `max(120,4*poll_interval_s)` seconds. Slow/failed GPU queries do not alone make a host offline.
+An expired collector produces `unknown`, while a reachable host with slow GPU queries is `overloaded`.
+Unknown current values are not idle; previous observations remain explicitly historical.
+See [adaptive probing](ADAPTIVE_PROBING.en.md) for protocol, timing and migration details.
 
 ### GPU hours
 
 Attribution uses the operating-system username reported by `ps`. At each poll, multiple PIDs for
-the same username on the same GPU are deduplicated, then add `poll_interval_s / 3600`. If several
+the same username on the same GPU are deduplicated, then add that observation's sampling weight divided by 3600 (legacy samples retain the configured interval). If several
 users share one GPU, each receives the full interval; time is not divided among them.
 
 This is useful for usage trends, not billing. SSH failures undercount, actual round timing can

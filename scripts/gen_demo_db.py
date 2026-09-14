@@ -407,33 +407,48 @@ def generate(conn: sqlite3.Connection, cards: list[dict], days: float,
 
 
 def write_collector_status(conn: sqlite3.Connection, topo: Topology, now: int,
-                           rng: random.Random) -> None:
-    """写 collector_status，让健康灯与主机页的"在线/离线"有依据。
-
-    刻意留一台"刚掉线"的机器：离线态是最容易做错的 UI 分支
-    （必须显示"离线"而不是最后一次的陈旧占用值），演示库里得有实例可看。
-    """
+                           rng: random.Random) -> dict[str, int]:
+    """Synthetic health examples use the same frozen clock as the static exporter."""
     hosts = topo.hosts(only_active=True)
-    offline_idx = len(hosts) - 1 if len(hosts) > 3 else -1
+    latest = conn.execute("SELECT MAX(ts) FROM sample_gpu").fetchone()[0]
+    anchor = latest if latest is not None else now
+    removed = {"sample_gpu": 0, "sample_proc": 0, "sample_host": 0}
     with conn:
         for i, (c, h) in enumerate(hosts):
             hid = conn.execute("SELECT id FROM host WHERE key=?", (h["key"],)).fetchone()[0]
-            n_gpu = c["gpus_per_host"]
-            if i == offline_idx:
-                # 20 分钟前最后一次成功 → 远超 120s 在线阈值，判离线
-                last_ok = now - 1200
-                conn.execute(
-                    "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,"
-                    "consec_fail,last_error) VALUES(?,?,?,?,?,?)",
-                    (hid, now - 5, last_ok, n_gpu, 39,
-                     "超时(>20s)  # 演示数据：这台故意做成离线"))
-            else:
-                # 再留一台"少一张卡"的，用于演示掉卡检测
-                seen = n_gpu - 1 if i == 0 and n_gpu > 1 else n_gpu
-                conn.execute(
-                    "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,"
-                    "consec_fail,last_error) VALUES(?,?,?,?,?,?)",
-                    (hid, now - rng.randint(1, 25), now - rng.randint(1, 25), seen, 0, None))
+            offline = i == len(hosts) - 1 and len(hosts) > 3
+            state = "unknown" if offline else {1: "slow", 2: "timeout", 3: "recovering"}.get(i, "ok")
+            cutoff = anchor - 1200 if offline else anchor - 180 if state == "timeout" else None
+            if cutoff is not None:
+                # Only the newly generated synthetic DB is edited. Keep a real gap
+                # behind the stale-data example, including per-user history.
+                for table in ("sample_gpu", "sample_proc"):
+                    removed[table] += conn.execute(
+                        f"DELETE FROM {table} WHERE gpu_id IN (SELECT id FROM gpu_card WHERE host_id=?) AND ts>?",
+                        (hid, cutoff)).rowcount
+                if offline:
+                    removed["sample_host"] += conn.execute(
+                        "DELETE FROM sample_host WHERE host_id=? AND ts>?", (hid, cutoff)).rowcount
+            sampled = conn.execute(
+                "SELECT MAX(s.ts) FROM sample_gpu s JOIN gpu_card g ON g.id=s.gpu_id WHERE g.host_id=?", (hid,)
+            ).fetchone()[0]
+            slow = state in ("slow", "timeout", "recovering")
+            interval = 60 if slow else TICK
+            error = "GPU query timed out (synthetic demo)" if state == "timeout" else (
+                "Host heartbeat failed (synthetic demo)" if offline else None)
+            heartbeat = anchor - 1200 if offline else anchor
+            conn.execute(
+                "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,consec_fail,last_error) "
+                "VALUES(?,?,?,?,?,?)", (hid, anchor, sampled, c["gpus_per_host"], 39 if offline else int(state == "timeout"), error))
+            conn.execute("""
+                INSERT INTO host_probe_state(host_id,last_heartbeat_ts,last_gpu_try_ts,gpu_status,
+                    gpu_elapsed_s,apps_ok,metrics_ok,gpu_error,gpu_poll_interval_s,next_gpu_try_ts,fast_successes,vendor)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (hid, heartbeat, anchor, state, {"slow":12.4,"timeout":20.0,"recovering":1.2}.get(state,0.4),
+                  int(not offline and state != "timeout" and sampled is not None),
+                  int(not offline and state != "timeout" and sampled is not None), error,
+                  interval, anchor+interval, 1 if state == "recovering" else 0, None))
+    return removed
 
 
 def build_rollups(db: Path, now: int, quiet: bool = False) -> dict:
@@ -565,7 +580,8 @@ def main(argv: list[str] | None = None) -> int:
     conn = open_db(db)
     cards = write_topology(conn, topo)["cards"]
     counts = generate(conn, cards, args.days, now, rng, quiet=args.quiet)
-    write_collector_status(conn, topo, now, rng)
+    removed = write_collector_status(conn, topo, now, rng)
+    counts = {key: value - removed[key] for key, value in counts.items()}
     conn.commit()
     conn.close()
 

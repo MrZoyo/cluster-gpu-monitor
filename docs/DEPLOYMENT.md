@@ -679,7 +679,7 @@ curl -fsS http://127.0.0.1:8848/api/health
 `/api/live` 是不读取配置/数据库的进程 liveness。`/api/health` 是 readiness：配置或
 数据库不可用时返回 HTTP 503；样本超过 `stale_after_s` 时仍返回 HTTP 200，但 JSON 为
 `ok=false,status=stale`，所以历史页面仍可查看。`last_sample_age_s` 应当在
-`poll_interval_s` 附近波动，持续 stale 说明采集器挂了或全线 SSH 失败。
+`poll_interval_s` 附近波动，持续 stale 表示 GPU 数据未更新；还应检查主机心跳与 health，区分采集降级、SSH 失败和采集器停更。
 
 ```bash
 curl -fsS http://127.0.0.1:8848/api/collector/status | python3 -m json.tool
@@ -689,7 +689,8 @@ curl -fsS http://127.0.0.1:8848/api/collector/status | python3 -m json.tool
 
 | 字段 | 含义 |
 | --- | --- |
-| `online` | 最近 120 秒内成功采过 |
+| `online` | 主机心跳和采集尝试未过期；GPU 可以处于降级状态 |
+| `health` | online / overloaded / gpu_error / offline / unknown |
 | `gpus_seen` / `gpus_expected` | 实际探到的卡数 / inventory 里写的期望卡数 |
 | `consec_fail` | 连续失败次数，0 = 上一轮成功 |
 | `last_error` | 最后一次失败原因（SSH 超时、命令不存在等） |
@@ -812,7 +813,7 @@ sudo -u "$APP_USER" env GPUMON_ROOT="$ROOT" \
 | 症状 | 可能原因 | 怎么查 / 怎么修 |
 | --- | --- | --- |
 | 某机 `online: false` | SSH 不通、别名写错、密钥没分发 | 看 `last_error`；用服务账户手动跑 `sudo -u <USER> ssh -o BatchMode=yes <alias> nvidia-smi -L`。**要用服务账户跑**，你自己能连不代表它能连（密钥和 `~/.ssh/config` 不是同一份） |
-| 某机 `online: false`，`last_error` 是超时 | 跳板慢、网络抖动、节点负载高 | 调大 `settings.toml` 的 `ssh_connect_timeout_s` / `ssh_total_timeout_s`；`ssh -v <alias>` 看卡在哪一步 |
+| 主机在线但 `health: overloaded` | GPU 查询缓慢或超时 | 查看主机心跳和上次有效 GPU 时间；默认已自动降至 60 秒一次，详见采集保护 |
 | 全部机器都离线 | 采集器没跑，或 `GPUMON_ROOT` 不对 | `systemctl status gpumon-collector`；`journalctl -u gpumon-collector -n 50` |
 | `gpus_seen` 比 `gpus_expected` 少 | 卡掉了 / 掉总线，或 `gpu_count` 写错了 | 上机跑 `nvidia-smi -L \| wc -l`。真少了是硬件问题（查 `dmesg \| grep -i xid`）；数字本来就填错了就改 inventory 的 `gpu_count` |
 | `gpus_seen` 是 `0` 或 `null` | 该账户跑不了 `nvidia-smi`，或驱动没起 | `ssh <alias> 'nvidia-smi'` 看报错。AMD 机器确认 `rocm-smi`/`amd-smi` 可用，必要时在 inventory 显式写 `vendor: amd` |
@@ -855,3 +856,5 @@ sudo userdel -r <USER>
 ```
 
 数据库在 `<ROOT>/data/gpumon.db`，删目录前想留历史的话先备份走。
+
+自适应 GPU 查询版本的依赖、迁移顺序与回滚口径见[采集保护](ADAPTIVE_PROBING.md)。

@@ -28,6 +28,8 @@ window.Views.gpu = (function () {
     GM.crumb(`${I18n.t('overview')} › ${c.name} › ${h.display_name} › GPU #${g.index}`);
     root.innerHTML = "";
     root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/host/${h.key}`) }, [I18n.t('back_to', { name: h.display_name })]));
+    if (UI.hostHealth(h) !== "online") root.appendChild(
+      el("div", { class: "note probe-note" }, [UI.hostStatusDetail(h)]));
 
     const n = g.now || {};
     const kpi = [
@@ -84,7 +86,7 @@ window.Views.gpu = (function () {
     ])));
     const usersBody = us.length
       ? el("table", {}, [el("tbody", {}, userRows)])
-      : el("div", { class: "note" }, [I18n.t('gpu_idle')]);
+      : el("div", { class: "note" }, [I18n.t(g.process_data_available === false ? 'gpu_process_unknown' : 'gpu_idle')]);
     root.appendChild(el("div", { class: "panel" }, [el("h3", {}, [I18n.t('gpu_current_users')]), usersBody]));
   }
 

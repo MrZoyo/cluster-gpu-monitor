@@ -22,17 +22,19 @@ window.Views.host = (function () {
       [I18n.t('host_cpu_util'), fmtPct(sys.cpu_util_pct)],
       [I18n.t('host_load_cores'), `${sys.load1 ?? "—"} / ${sys.ncpu ?? "—"}`],
       [I18n.t('host_memory'), `${fmtGB(sys.mem_used_mib)} / ${fmtGB(sys.mem_total_mib)}`],
-      [I18n.t('host_status'), host.status === "planned" ? I18n.t('planned') : (host.online ? I18n.t('online') : I18n.t('host_offline_n', { n: host.consec_fail }))],
+      [I18n.t('host_status'), UI.hostStatus(host)],
     ];
     root.appendChild(el("div", { class: "kpis" }, kpi.map(([k, v]) =>
       el("div", { class: "kpi" }, [el("div", { class: "v" }, [String(v)]), el("div", { class: "k" }, [k])]))));
+    if (["overloaded", "gpu_error"].includes(UI.hostHealth(host))) root.appendChild(
+      el("div", { class: "note probe-note" }, [UI.hostStatusDetail(host)]));
     if (host.last_error) root.appendChild(el("div", { class: "note" }, [I18n.t('host_last_error') + host.last_error]));
 
     // 8 卡网格
     const gridOffline = host.status !== "planned" && !host.online;
-    const grid = el("div", { class: "panel" }, [el("h3", {}, [I18n.t('host_gpu_title')]),
+    const grid = el("div", { class: `panel host-${UI.hostHealth(host)}`, title: UI.hostStatusDetail(host) }, [el("h3", {}, [I18n.t('host_gpu_title')]),
       el("div", { class: "cards" }, host.gpus.length
-        ? host.gpus.map((g) => gpuCard(g, { offline: gridOffline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
+        ? host.gpus.map((g) => gpuCard(g, { host, offline: gridOffline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
         : Array.from({ length: host.gpu_count || 0 }, (_, i) => gpuPlaceholder(i, host.display_name)))]);
     root.appendChild(grid);
 
@@ -66,7 +68,7 @@ window.Views.host = (function () {
       rows.push(el("tr", {}, [el("td", {}, ["#" + u.gpu]), el("td", {}, [u.username || "?"]),
         el("td", {}, [u.comm || "—"]), el("td", { class: "num" }, [fmtGB(u.mem)])])));
     root.appendChild(el("div", { class: "panel" }, [el("h3", {}, [I18n.t('host_current_users_title')]),
-      users.length ? el("table", {}, [el("tbody", {}, rows)]) : el("div", { class: "note" }, [I18n.t('host_no_processes')])]));
+      users.length ? el("table", {}, [el("tbody", {}, rows)]) : el("div", { class: "note" }, [I18n.t(host.gpus.some((g) => g.process_data_available === false) ? "gpu_process_unknown" : "host_no_processes")])]));
   }
 
   return { render };

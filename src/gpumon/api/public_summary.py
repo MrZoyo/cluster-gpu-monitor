@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from ..config import load_settings
 from ..db.store import current_sample_max_age_s
+from ..health import host_health
 from .deps import get_store
 from .query_control import bounded_query
 from .routes import _topology_with_inventory_placeholders
@@ -70,6 +71,8 @@ def _load_snapshot(now: int) -> dict:
                 "name": host["display_name"],
                 "active": cluster_active and meta.get("status", "active") == "active",
                 "last_ok_ts": status.get("last_ok_ts"),
+                **{key: status.get(key) for key in ("last_try_ts", "last_heartbeat_ts", "gpu_status",
+                    "metrics_ok", "gpu_poll_interval_s")},
                 "gpus": gpus,
             })
     return {
@@ -88,12 +91,16 @@ def _common_or_list(values: list):
 def _render(snapshot: dict, now: int) -> dict:
     hosts = []
     for host in snapshot["hosts"]:
-        last_ok = host["last_ok_ts"]
-        online = bool(host["active"] and last_ok is not None and 0 <= now - last_ok <= 120)
+        online, health = host_health(host, now, snapshot["poll_interval_s"])
+        online = bool(host["active"] and online)
+        if not host["active"]:
+            health = "inactive"
         indices, models, timestamps, utilization = [], [], [], []
         for gpu in host["gpus"]:
             ts = gpu["sampled_at"]
-            fresh = online and ts is not None and 0 <= now - ts <= snapshot["sample_max_age_s"]
+            fresh = (online and host.get("metrics_ok") != 0 and ts is not None and
+                     0 <= now - ts <= snapshot["sample_max_age_s"] and
+                     (host.get("metrics_ok") is None or ts == host.get("last_ok_ts")))
             value = gpu["util_recent_pct"] if fresh else None
             if isinstance(value, float) and value.is_integer():
                 value = int(value)
@@ -104,6 +111,7 @@ def _render(snapshot: dict, now: int) -> dict:
         row = {
             "name": host["name"], "model": _common_or_list(models), "online": online,
             "sampled_at": _common_or_list(timestamps), "util_pct": utilization,
+            "health": health,
         }
         if indices != list(range(len(indices))):
             row["indices"] = indices

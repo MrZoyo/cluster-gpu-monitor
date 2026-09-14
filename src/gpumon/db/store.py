@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..config import db_path, load_inventory, load_settings
 from ..models import ProbeResult
+from ..health import host_health
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -161,6 +162,12 @@ class Store:
     def init_schema(self) -> None:
         conn = self.write_conn()
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # Metadata-only additions: no historical scan, backfill or index rebuild.
+        for table in ("rollup_gpu_5m", "rollup_gpu_1h"):
+            columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            for name in ("weight_s", *(f"{metric}_weight_s" for metric in _METRIC_COLS)):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} REAL")
         conn.commit()
 
     def sync_topology(self) -> None:
@@ -211,6 +218,42 @@ class Store:
         with conn:  # 单事务
             for r in results:
                 hid = self.host_id(conn, r.host_key)
+                if r.host and (r.ok or r.host_reachable):
+                    hs = r.host
+                    conn.execute(
+                        "INSERT OR IGNORE INTO sample_host(host_id,ts,ncpu,load1,load5,load15,cpu_util_pct,"
+                        "mem_total_mib,mem_avail_mib,mem_used_mib) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (hid, r.host_sample_ts or ts, hs.ncpu, hs.load1, hs.load5, hs.load15,
+                         hs.cpu_util_pct, hs.mem_total_mib, hs.mem_avail_mib, hs.mem_used_mib))
+                if r.gpu_status is not None or r.gpu_poll_interval_s is not None:
+                    attempted = r.gpu_status != "skipped"
+                    conn.execute("""
+                        INSERT INTO host_probe_state(host_id,last_heartbeat_ts,last_gpu_try_ts,
+                            gpu_status,gpu_elapsed_s,apps_ok,gpu_poll_interval_s,next_gpu_try_ts,
+                            fast_successes,vendor,metrics_ok,gpu_error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(host_id) DO UPDATE SET
+                            last_heartbeat_ts=COALESCE(excluded.last_heartbeat_ts,host_probe_state.last_heartbeat_ts),
+                            last_gpu_try_ts=COALESCE(excluded.last_gpu_try_ts,host_probe_state.last_gpu_try_ts),
+                            gpu_status=COALESCE(excluded.gpu_status,host_probe_state.gpu_status),
+                            gpu_elapsed_s=CASE WHEN excluded.last_gpu_try_ts IS NULL THEN host_probe_state.gpu_elapsed_s ELSE excluded.gpu_elapsed_s END,
+                            apps_ok=COALESCE(excluded.apps_ok,host_probe_state.apps_ok),
+                            metrics_ok=COALESCE(excluded.metrics_ok,host_probe_state.metrics_ok),
+                            gpu_error=CASE WHEN excluded.last_gpu_try_ts IS NULL THEN host_probe_state.gpu_error ELSE excluded.gpu_error END,
+                            gpu_poll_interval_s=excluded.gpu_poll_interval_s,
+                            next_gpu_try_ts=excluded.next_gpu_try_ts,
+                            fast_successes=excluded.fast_successes,
+                            vendor=COALESCE(excluded.vendor,host_probe_state.vendor)
+                    """, (hid, (r.host_sample_ts or ts) if r.host_reachable else None,
+                          ts if attempted else None, (r.gpu_status or "unknown") if attempted else None,
+                          r.gpu_elapsed_s, int(r.apps_ok) if attempted else None,
+                          r.gpu_poll_interval_s, r.next_gpu_try_ts, r.fast_successes, r.vendor if r.gpus else None,
+                          int(bool(r.gpus)) if attempted else None, r.error if attempted else None))
+                if r.gpu_status == "skipped" and r.host_reachable:
+                    conn.execute(
+                        "INSERT INTO collector_status(host_id,last_try_ts) VALUES(?,?) "
+                        "ON CONFLICT(host_id) DO UPDATE SET last_try_ts=excluded.last_try_ts, "
+                        "last_error=(SELECT gpu_error FROM host_probe_state WHERE host_id=?)", (hid, ts, hid))
+                    continue
                 if not r.ok:
                     conn.execute(
                         "INSERT INTO collector_status(host_id,last_try_ts,consec_fail,last_error) "
@@ -225,33 +268,34 @@ class Store:
                 for g in r.gpus:
                     uuid2id[g.uuid] = self._upsert_gpu(conn, hid, g)
 
+                gpu_ts = r.gpu_sample_ts or ts
+                if r.sample_interval_s is not None:
+                    for gid in uuid2id.values():
+                        previous = conn.execute(
+                            "SELECT ts FROM sample_gpu WHERE gpu_id=? ORDER BY ts DESC LIMIT 1", (gid,)
+                        ).fetchone()
+                        weight = min(r.sample_interval_s, max(1, gpu_ts - previous[0])) if previous else r.sample_interval_s
+                        conn.execute("INSERT OR IGNORE INTO sample_weight VALUES(?,?,?,?)",
+                                     (gid, gpu_ts, weight, int(r.apps_ok)))
                 conn.executemany(
                     "INSERT OR IGNORE INTO sample_gpu(gpu_id,ts,util_gpu,util_mem,mem_used_mib,temp_c,power_w) "
                     "VALUES(?,?,?,?,?,?,?)",
-                    [(uuid2id[g.uuid], ts, g.util_gpu, g.util_mem, g.mem_used_mib, g.temp_c, g.power_w)
+                    [(uuid2id[g.uuid], gpu_ts, g.util_gpu, g.util_mem, g.mem_used_mib, g.temp_c, g.power_w)
                      for g in r.gpus],
                 )
-                procs = [(uuid2id[p.gpu_uuid], ts, p.pid, p.username, p.comm, p.mem_used_mib)
+                procs = [(uuid2id[p.gpu_uuid], gpu_ts, p.pid, p.username, p.comm, p.mem_used_mib)
                          for p in r.procs if p.gpu_uuid in uuid2id]
                 if procs:
                     conn.executemany(
                         "INSERT OR IGNORE INTO sample_proc(gpu_id,ts,pid,username,comm,mem_used_mib) "
                         "VALUES(?,?,?,?,?,?)", procs)
-                if r.host:
-                    hs = r.host
-                    conn.execute(
-                        "INSERT OR IGNORE INTO sample_host(host_id,ts,ncpu,load1,load5,load15,cpu_util_pct,"
-                        "mem_total_mib,mem_avail_mib,mem_used_mib) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                        (hid, ts, hs.ncpu, hs.load1, hs.load5, hs.load15, hs.cpu_util_pct,
-                         hs.mem_total_mib, hs.mem_avail_mib, hs.mem_used_mib))
-
                 conn.execute(
                     "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,consec_fail,last_error) "
                     "VALUES(?,?,?,?,0,?) ON CONFLICT(host_id) DO UPDATE SET "
                     "last_try_ts=excluded.last_try_ts, last_ok_ts=excluded.last_ok_ts, "
                     "gpus_seen=excluded.gpus_seen, consec_fail=0, "
                     "last_error=excluded.last_error",
-                    (hid, ts, ts, len(r.gpus), (r.warning or "")[:500] or None))
+                    (hid, ts, gpu_ts, len(r.gpus), (r.error or r.warning or "")[:500] or None))
 
     # ---- 查询：拓扑 ---------------------------------------------------------
     def get_topology(self) -> list[dict]:
@@ -360,22 +404,23 @@ class Store:
         since = now - window_s
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT gpu_id, util_gpu FROM sample_gpu "
-                "WHERE ts >= ? AND ts < ? ORDER BY gpu_id, ts",
-                (since, now),
+                "SELECT s.gpu_id, s.util_gpu, COALESCE(w.seconds,?) AS weight FROM sample_gpu s "
+                "LEFT JOIN sample_weight w ON w.gpu_id=s.gpu_id AND w.ts=s.ts "
+                "WHERE s.ts >= ? AND s.ts < ? ORDER BY s.gpu_id, s.ts",
+                (load_settings().collector.poll_interval_s, since, now),
             ).fetchall()
-        by_gpu: dict[int, list[int]] = {}
+        by_gpu: dict[int, list[tuple[int, float]]] = {}
         for r in rows:
             if r["util_gpu"] is None:   # nvidia-smi 偶尔 N/A，跳过不参与均值/置零判定
                 continue
-            by_gpu.setdefault(r["gpu_id"], []).append(r["util_gpu"])
+            by_gpu.setdefault(r["gpu_id"], []).append((r["util_gpu"], r["weight"]))
         out: dict[int, float] = {}
         for gid, utils in by_gpu.items():
             tail = utils[-idle_streak:]   # 已按 ts 升序，尾部即最近几次
-            if len(tail) >= idle_streak and all(u <= idle_eps for u in tail):
+            if len(tail) >= idle_streak and all(u <= idle_eps for u, _ in tail):
                 out[gid] = 0.0
             else:
-                out[gid] = round(sum(utils) / len(utils), 1)
+                out[gid] = round(sum(u*w for u, w in utils) / sum(w for _, w in utils), 1)
         return out
 
     # ---- 查询：时间窗加权平均 ----------------------------------------------
@@ -393,7 +438,7 @@ class Store:
         table, _ = pick_table(win)
         avg_col, max_col = _METRIC_COLS[metric]
         interval = load_settings().collector.poll_interval_s
-        expected_per_gpu = win / interval
+        expected_per_gpu = win
         expected_by_host, expected_by_cluster = _active_inventory_capacity()
         active_host_keys = list(expected_by_host)
         if not active_host_keys:
@@ -406,9 +451,9 @@ class Store:
         host_placeholders = ",".join("?" for _ in active_host_keys)
         sql = f"""
             SELECT {select_id}
-                   SUM(r.{avg_col}*r.n)/NULLIF(SUM(r.n),0) AS avg,
+                   SUM(r.{avg_col}*COALESCE(r.{metric}_weight_s,r.weight_s,r.n*{interval}))/NULLIF(SUM(CASE WHEN r.{avg_col} IS NOT NULL THEN COALESCE(r.{metric}_weight_s,r.weight_s,r.n*{interval}) END),0) AS avg,
                    {max_expr} AS mx,
-                   SUM(r.n) AS sum_n,
+                   SUM(COALESCE(r.{metric}_weight_s,r.weight_s,r.n*{interval})) AS sum_n,
                    h.key AS host_key, h.display_name AS host_name,
                    c.key AS cluster_key, c.name AS cluster_name, g.gpu_index AS gpu_index
             FROM {table} r
@@ -484,6 +529,7 @@ class Store:
         since = now - win
         table, _ = pick_table(win)
         avg_col, _ = _METRIC_COLS[metric]
+        interval = load_settings().collector.poll_interval_s
         filt, params = "", [since, now]
         if scope == "gpu":
             filt = "AND g.id=?"
@@ -495,7 +541,7 @@ class Store:
             filt = "AND c.id=?"
             params.append(entity_id)
         sql = f"""
-            SELECT r.bucket_ts AS b, SUM(r.{avg_col}*r.n)/NULLIF(SUM(r.n),0) AS v
+            SELECT r.bucket_ts AS b, SUM(r.{avg_col}*COALESCE(r.{metric}_weight_s,r.weight_s,r.n*{interval}))/NULLIF(SUM(CASE WHEN r.{avg_col} IS NOT NULL THEN COALESCE(r.{metric}_weight_s,r.weight_s,r.n*{interval}) END),0) AS v
             FROM {table} r
             JOIN gpu_card g ON g.id=r.gpu_id
             JOIN host h ON h.id=g.host_id
@@ -550,7 +596,7 @@ class Store:
                 GROUP BY p.username, p.gpu_id, p.ts
             )
             SELECT username,
-                   COUNT(*) * ? / 3600.0 AS gpu_hours,
+                   SUM(COALESCE((SELECT w.seconds FROM sample_weight w WHERE w.gpu_id=occupied.gpu_id AND w.ts=occupied.ts), ?)) / 3600.0 AS gpu_hours,
                    COUNT(DISTINCT gpu_id) AS distinct_gpus,
                    MAX(mem_used_mib)/1024.0 AS mem_gb_peak
             FROM occupied
@@ -567,10 +613,18 @@ class Store:
         now = int(now or time.time())
         freshness_s = freshness_s if freshness_s is not None else current_sample_max_age_s()
         snap = self.get_snapshot()
+        with self.connect() as conn:
+            rows = conn.execute("""
+                SELECT g.id,p.metrics_ok,p.apps_ok,p.last_heartbeat_ts,s.last_try_ts
+                FROM gpu_card g JOIN host_probe_state p ON p.host_id=g.host_id
+                LEFT JOIN collector_status s ON s.host_id=g.host_id
+            """).fetchall()
+        unavailable = {r["id"] for r in rows if r["metrics_ok"] == 0 or r["apps_ok"] == 0 or
+                       not host_health(dict(r), now, load_settings().collector.poll_interval_s)[0]}
         agg: dict[str, dict] = {}
         for gpu_id, procs in snap["procs"].items():
             gpu_sample = snap["gpus"].get(gpu_id)
-            if gpu_sample is None or now - gpu_sample["ts"] > freshness_s:
+            if gpu_id in unavailable or gpu_sample is None or not 0 <= now - gpu_sample["ts"] <= freshness_s:
                 continue
             for p in procs:
                 if (p["mem_used_mib"] or 0) <= 0:
@@ -616,7 +670,7 @@ class Store:
                 GROUP BY p.username, p.gpu_id, p.ts, h.id, h.key
             ), by_user_host AS (
                 SELECT username, host_id, host_key,
-                       COUNT(*) * ? / 3600.0 AS gpu_hours
+                       SUM(COALESCE((SELECT w.seconds FROM sample_weight w WHERE w.gpu_id=occupied.gpu_id AND w.ts=occupied.ts), ?)) / 3600.0 AS gpu_hours
                 FROM occupied
                 GROUP BY username, host_id, host_key
             ), user_totals AS (
@@ -672,24 +726,32 @@ class Store:
         }
 
     # ---- 查询：采集状态 -----------------------------------------------------
-    def get_collector_status(self, online_window_s: int = 120, now: int | None = None) -> list[dict]:
+    def get_collector_status(self, online_window_s: int | None = None, now: int | None = None) -> list[dict]:
         now = int(now or time.time())
         with self.connect() as conn:
             rows = conn.execute("""
                 SELECT h.key, h.display_name, h.gpu_count,
-                       s.last_try_ts, s.last_ok_ts, s.gpus_seen, s.consec_fail, s.last_error
+                       s.last_try_ts, s.last_ok_ts, s.gpus_seen, s.consec_fail, s.last_error,
+                       p.last_heartbeat_ts,p.last_gpu_try_ts,p.gpu_status,p.gpu_elapsed_s,
+                       p.apps_ok,p.metrics_ok,p.gpu_poll_interval_s,p.next_gpu_try_ts,p.fast_successes,p.vendor
                 FROM host h LEFT JOIN collector_status s ON s.host_id=h.id
+                LEFT JOIN host_probe_state p ON p.host_id=h.id
                 ORDER BY h.sort_order, h.id
             """).fetchall()
         out = []
         for r in rows:
             last_ok = r["last_ok_ts"]
-            online = bool(last_ok and (now - last_ok) <= online_window_s)
+            online, health = host_health(dict(r), now, load_settings().collector.poll_interval_s,
+                                         window_s=online_window_s)
             out.append({
                 "key": r["key"], "display_name": r["display_name"],
                 "gpus_expected": r["gpu_count"], "gpus_seen": r["gpus_seen"],
                 "last_ok_ts": last_ok, "last_try_ts": r["last_try_ts"],
                 "consec_fail": r["consec_fail"] or 0, "last_error": r["last_error"],
                 "online": online,
+                "health": health,
+                **{k: r[k] for k in ("last_heartbeat_ts", "last_gpu_try_ts", "gpu_status",
+                    "gpu_elapsed_s", "apps_ok", "metrics_ok", "gpu_poll_interval_s", "next_gpu_try_ts",
+                    "fast_successes", "vendor")},
             })
         return out

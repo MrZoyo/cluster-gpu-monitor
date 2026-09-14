@@ -229,7 +229,7 @@ def test_database_summary_matches_ui_smoothing_and_exposes_only_allowlisted_fiel
     assert data["hosts"][0]["util_pct"] == [0, 80, None, None]
     assert data["hosts"][0]["sampled_at"] == [970, 970, 800, None]
     assert "private" not in json.dumps(data)
-    assert set(data["hosts"][0]) == {"name", "model", "online", "sampled_at", "util_pct"}
+    assert set(data["hosts"][0]) == {"name", "model", "online", "sampled_at", "util_pct", "health"}
     conn.close()
 
 def test_compact_shape_preserves_model_time_and_noncontiguous_index_differences():
@@ -240,7 +240,7 @@ def test_compact_shape_preserves_model_time_and_noncontiguous_index_differences(
     host = summary._render(data, 1000)["hosts"][0]
     assert host == {
         "name": "Node A", "model": ["Model A", "Model B"], "online": True,
-        "sampled_at": [960, 970], "util_pct": [12.3, 80], "indices": [2, 7],
+        "sampled_at": [960, 970], "util_pct": [12.3, 80], "indices": [2, 7], "health": "online",
     }
 
 

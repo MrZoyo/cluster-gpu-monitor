@@ -141,3 +141,28 @@ def test_static_export_rejects_unmarked_database_without_deleting_output(tmp_pat
 
     assert rc == 2
     assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_demo_health_examples_use_export_clock_and_keep_stale_data_unknown(tmp_path):
+    db = tmp_path / 'demo.db'
+    inventory = tmp_path / 'inventory.demo.yaml'
+    out = tmp_path / 'site'
+    assert gen_demo_db.main(['--db',str(db),'--inventory',str(inventory),'--days','.03','--quiet']) == 0
+    result = subprocess.run([sys.executable,str(SCRIPTS/'export_static_demo.py'),
+        '--db',str(db),'--inventory',str(inventory),'--settings',str(REPO_ROOT/'config/settings.example.toml'),
+        '--out',str(out)],capture_output=True,text=True,timeout=30)
+    assert result.returncode == 0, result.stderr
+    overview = json.loads((out/'api/overview.24h.json').read_text())
+    hosts = [h for c in overview['clusters'] for h in c['hosts']]
+    assert len(hosts) == 6
+    assert [h['health'] for h in hosts] == ['online','overloaded','overloaded','overloaded','online','offline']
+    assert hosts[1]['gpu_status'] == 'slow' and hosts[1]['online']
+    assert all(g['now'] is not None for g in hosts[1]['gpus'])
+    assert hosts[2]['gpu_status'] == 'timeout' and hosts[2]['online']
+    assert all(g['now'] is None and g['last_sample']['ts'] <= overview['now']-180 for g in hosts[2]['gpus'])
+    assert hosts[3]['gpu_status'] == 'recovering'
+    assert overview['summary']['cards_unknown'] == 16
+    assert overview['summary']['hosts_overloaded'] == 3
+    assert overview['summary']['hosts_online'] == 5
+    assert overview['summary']['cards_idle'] + overview['summary']['cards_busy'] + overview['summary']['cards_unknown'] == 48
+    assert all(h['last_heartbeat_ts'] <= overview['now'] for h in hosts)

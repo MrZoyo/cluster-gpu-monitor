@@ -161,12 +161,12 @@ window.GM = (function () {
       const total = activeHosts.length;
       const age = hl.last_sample_age_s;
       let cls = "green";
-      if (online === 0 || age == null) cls = "red";
-      else if (online < total || (age != null && age > 90)) cls = "yellow";
+      if (total > 0 && activeHosts.every((h) => UI.hostHealth(h) === "offline")) cls = "red";
+      else if (online < total || age == null || activeHosts.some((h) => UI.hostHealth(h) !== "online") || age > 90) cls = "yellow";
       dot.className = "dot " + cls;
       txt.textContent = I18n.t('health_online', {online, total, time: UI.ago(hl.last_sample_ts)});
       dot.parentElement.title = activeHosts.map((h) =>
-        `${h.display_name}: ${h.online ? I18n.t('health_host_online') : I18n.t('health_host_offline')} ${I18n.t('health_cards', {seen: h.gpus_seen ?? 0, expected: h.gpus_expected})}` +
+        `${h.display_name}: ${UI.hostStatus(h)} ${I18n.t('health_cards', {seen: h.gpus_seen ?? 0, expected: h.gpus_expected})}` +
         (h.last_error ? " (" + h.last_error + ")" : "")).join("\n");
     } catch (e) {
       dot.className = "dot red"; txt.textContent = I18n.t('service_unreachable');

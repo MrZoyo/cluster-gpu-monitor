@@ -31,15 +31,15 @@ window.Views.cluster = (function () {
       const sysText = h.status === "planned"
         ? I18n.t('host_planned_info', { gpu_model: (h.meta && h.meta.gpu_model) || "GPU", count: h.gpu_count })
         : sys ? I18n.t('host_system_info', { cpu: fmtPct(sys.cpu_util_pct), load: sys.load1 ?? "—", mem_used: fmtGB(sys.mem_used_mib), mem_total: fmtGB(sys.mem_total_mib) }) : I18n.t('no_system_data');
-      const statusText = h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline'));
+      const statusText = UI.hostStatus(h);
       const name = el("div", { class: "host-name", onclick: () => GM.go(`/host/${h.key}`) },
         [el("div", { class: "hn" }, [h.display_name]), el("div", { class: "hs" }, [statusText])]);
       const offline = h.status !== "planned" && !h.online;
       const cards = el("div", { class: "cards" },
         h.gpus.length
-          ? h.gpus.map((g) => gpuCard(g, { offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
+          ? h.gpus.map((g) => gpuCard(g, { host: h, offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
           : Array.from({ length: h.gpu_count || 0 }, (_, i) => gpuPlaceholder(i, h.display_name)));
-      hostsPanel.appendChild(el("div", { class: "host-row" }, [name, el("div", { class: "host-sys" }, [sysText]), cards]));
+      hostsPanel.appendChild(el("div", { class: `host-row host-${UI.hostHealth(h)}`, title: UI.hostStatusDetail(h) }, [name, el("div", { class: "host-sys" }, [sysText]), cards]));
     });
     root.appendChild(hostsPanel);
 

@@ -195,7 +195,7 @@ clusters:
         display_name: "节点 1"         # 显示名，随时可改
         gpu_count: 8                   # 期望卡数，缺省取 defaults
         status: active                 # active（默认） / planned / retired
-        vendor: amd                    # 可选；已知厂商时填写可跳过每轮自动探测
+        vendor: amd                    # 可选；已知厂商时填写可跳过首次自动探测
         note: "待接入主机的悬停备注；也可写语言映射"
         meta:
           gpu_model: "AMD Instinct MI300X"   # 待接入占位卡上显示的型号
@@ -250,8 +250,8 @@ Host my-node-1
 ### vendor 与 AMD
 
 `vendor` 留空时，远端探测脚本按顺序试 `nvidia-smi` → `amd-smi` → `rocm-smi`，
-哪个真能跑通就用哪个。这个判断每轮都会执行，不会缓存：正常 NVIDIA 主机会因此额外执行
-一次 `nvidia-smi -L`；AMD 主机还可能先尝试排在前面的工具。
+哪个真能跑通就用哪个。首次成功后会持久缓存厂商；首次识别 NVIDIA 时可能额外执行
+一次 `nvidia-smi -L`，AMD 主机还可能先尝试排在前面的工具。更换 GPU 厂商时应更新 inventory 的 vendor。
 
 厂商已知且固定时，建议显式填写 `nvidia` 或 `amd`，减少目标机上的 SMI 调用。只有厂商未知、
 硬件可能更换，或需要同一份 inventory 自动适配不同机器时才留空：
@@ -273,12 +273,17 @@ Host my-node-1
 
 ```toml
 [collector]
-poll_interval_s = 30        # 每轮采集间隔。也是 GPU·小时的计量粒度
+poll_interval_s = 30        # 正常采集与主机心跳间隔
 ssh_connect_timeout_s = 8   # SSH 建连超时
-ssh_total_timeout_s = 20    # 单台机一轮的整体超时（含远端 sleep）
+ssh_total_timeout_s = 20    # SSH 超时基线；GPU 阶段会加上建连与清理预算
 max_concurrency = 8         # 同时 SSH 几台。机器多可以调大，注意跳板机承受能力
 cpu_sample_gap_s = 1        # 远端两次读 /proc/stat 的间隔，用于算 CPU 利用率
 ssh_output_limit_bytes = 4194304 # 单机单轮输出上限（最高 16 MiB），超限终止 SSH
+gpu_slow_s = 10            # GPU 阶段达到此耗时后降频
+gpu_timeout_s = 20         # GPU 阶段整体超时，随后最多 2 秒清理
+gpu_backoff_s = 60         # 异常主机 GPU 查询的最小间隔
+gpu_recover_s = 5          # 恢复必须小于此耗时
+gpu_recover_count = 3      # 连续快速成功次数
 
 [retention]
 raw_days = 35               # 原始样本保留天数（最低 31 天）
@@ -395,3 +400,5 @@ uv run gpumon config-check                      # 配置层面
 curl -s 127.0.0.1:8848/api/collector/status     # 每台机在线 / 卡数 / 最近错误
 curl -s 127.0.0.1:8848/api/health               # 最近一次采样多久之前
 ```
+
+详细行为、依赖、统计口径与升级步骤见 [GPU 响应慢时的采集保护](ADAPTIVE_PROBING.md)。

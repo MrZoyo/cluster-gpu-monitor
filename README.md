@@ -3,8 +3,8 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.4.0">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.4.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.4.0">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.5.0">
   </a>
 </p>
 
@@ -54,7 +54,7 @@
 - **空占检测**：标出占用显存但近期利用率低于 5% 的 GPU。
 - **多集群拓扑**：算力域 → 集群 → 主机三层结构，支持多语言标签与备注、待接入和软退役。
 - **NVIDIA 与 AMD**：支持自动探测 `nvidia-smi`、`amd-smi` 或 `rocm-smi`；已知厂商时可在
-  inventory 填写 `vendor`，跳过每轮额外探测。
+  inventory 填写 `vendor`，跳过首次额外探测。
 - **轻量自托管**：SQLite、FastAPI、原生 JavaScript 和本地 ECharts，无前端构建步骤。
 
 摘要接口供脚本和 agent 查询近期 GPU 利用率，默认启用，可通过
@@ -117,7 +117,8 @@ SQLite：原始样本 → 5 分钟聚合 → 1 小时聚合
 FastAPI /api/* → 原生 HTML + JavaScript + 本地 ECharts
 ```
 
-- 远端脚本从 stdin 执行，不在节点落文件。
+- 远端脚本从 stdin 执行；仅保留私有查询锁，不保存脚本或遥测数据。
+- 主机心跳独立于 GPU 查询；响应慢时显示疑似过载并自动降频，见[采集保护](docs/ADAPTIVE_PROBING.md)。
 - 原始样本支持用户归属；两级聚合让长时间窗查询保持轻量。
 - GPU 卡片同时区分近期状态与所选时间窗均值，避免训练步间的瞬时抖动误导判断。
 - Web 与采集器可以使用不同系统账户；Web 只读 SQLite，也不需要读取 SSH 密钥。

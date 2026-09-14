@@ -30,6 +30,7 @@ def test_round_process_budget_drops_only_overflowing_host_details(monkeypatch):
 
     assert first.ok and len(first.procs) == 2
     assert overflow.ok and len(overflow.gpus) == 1 and overflow.procs == []
+    assert not overflow.apps_ok
     assert "已省略本机进程明细" in (overflow.warning or "")
     assert budget.procs == 2
 

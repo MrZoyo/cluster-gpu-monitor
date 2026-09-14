@@ -11,6 +11,7 @@ README 负责说明项目是否适合你，并提供最短可运行路径。这�
 | --- | --- | --- |
 | 第一次运行项目 | [README 快速开始](../README.md#快速开始) | 安装依赖、准备配置、试采一轮、打开网页 |
 | 添加机器或调整运行参数 | [配置参考](CONFIGURATION.md) | inventory、settings、状态、标签、保留期与并发 |
+| 区分 GPU 查询慢与主机离线 | [采集保护](ADAPTIVE_PROBING.md) | 心跳、降频、恢复、统计权重与升级 |
 | 理解数据口径 | [架构与设计取舍](ARCHITECTURE.md) | SSH 采集、SQLite、聚合、在线状态、GPU·小时与安全边界 |
 | 生成虚构数据或静态站点 | [Demo 指南](DEMO.md) | 本地演示、GitHub Pages 导出及防误操作机制 |
 | 使用 Python + systemd 部署 | [原生部署指南](DEPLOYMENT.md) | release 布局、systemd、Caddy、备份、迁移与排障 |

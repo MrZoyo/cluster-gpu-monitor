@@ -12,7 +12,7 @@ curl --fail-with-body --silent --show-error --max-time 15 \
 ```
 
 The response contains `as_of` (cached computation time, Unix epoch seconds) and
-`hosts`. Each host has `name`, `model`, `online`, `sampled_at`, and a
+`hosts`. Each host has `name`, `model`, `online`, `health`, `sampled_at`, and a
 `util_pct` array. Array positions normally correspond to zero-based GPU indices;
 when indices are not contiguous, an additional `indices` array identifies each
 position explicitly.
@@ -30,18 +30,20 @@ fixed, so these constants are documented rather than repeated in every response.
     "name": "Node A",
     "model": "Example GPU",
     "online": true,
+    "health": "online",
     "sampled_at": 1788849980,
     "util_pct": [0, 82.5, null]
   }]
 }
 ```
 
-Utilization uses the same function as the dashboard: the mean of valid samples
+Utilization uses the same function as the dashboard: the sampling-duration-weighted mean of valid samples
 from the last 600 seconds, with an immediate reset to zero when the last three
 valid samples are all at most 5%. This is utilization, not free memory or a
 guarantee that a GPU can be allocated.
 
-A host is online only when active and successfully sampled within 120 seconds.
+A host is online when active and both its heartbeat and collector attempts remain within
+`max(120, 4 * poll_interval_s)` seconds. GPU query failures are reported separately through `health`.
 GPU samples must also be no older than `max(120, 4 * poll_interval_s)` seconds.
 Offline, stale, missing, and inactive GPU readings are `null`, not zero.
 Freshness is checked on every response, including cache hits. Expected but
@@ -163,3 +165,13 @@ to spoofed forwarding headers. Use bounded, serial production checks.
 
 Anonymous access lets anyone repeatedly retrieve this summary. Public code and
 examples contain no deployment credentials, actual domains, or private topology.
+
+## Adaptive collection health
+
+Each host now includes `health`: `online`, `overloaded`, `gpu_error`, `offline`, `unknown`,
+or `inactive`. `online` represents recent host reachability, independently of GPU query success.
+An overloaded host can have `online=true` and `util_pct=[null,...]`; neither implies free GPUs.
+GPU failures or expired samples yield null utilization while `sampled_at` retains the last actual
+observation. Host heartbeats and collection attempts expire after `max(120,4*poll_interval_s)` seconds,
+including cached responses. Recent averages use per-observation sampling weights.
+See [adaptive probing](ADAPTIVE_PROBING.en.md) for settings, dependencies and upgrade notes.

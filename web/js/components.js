@@ -166,6 +166,28 @@ window.UI = (function () {
     return (util != null && util < 5) ? "held" : "active";
   }
 
+  function hostHealth(h) {
+    if (h.status === "planned") return "planned";
+    return ["online", "overloaded", "gpu_error", "offline", "unknown"].includes(h.health)
+      ? h.health : (h.online ? "online" : "offline");
+  }
+
+  function hostStatus(h) {
+    const health = hostHealth(h);
+    if (health === "overloaded" && h.gpu_status === "recovering") return I18n.t("gpu_recovering");
+    return I18n.t({online: "online", offline: "offline", planned: "planned",
+      overloaded: "gpu_overloaded", gpu_error: "gpu_error", unknown: "monitor_unknown"}[health]);
+  }
+
+  function hostStatusDetail(h) {
+    const health = hostHealth(h);
+    if (health === "overloaded" || health === "gpu_error") {
+      return hostStatus(h) + " · " + I18n.t("gpu_probe_cadence", {seconds: h.gpu_poll_interval_s || 60}) +
+        " · " + I18n.t("gpu_last_sample", {time: ago(h.last_ok_ts)});
+    }
+    return hostStatus(h);
+  }
+
   function gpuCard(g, opts) {
     opts = opts || {};
     // 大字/底色显示近期(10min)平均利用率（含"连续空闲即置零"），抹平瞬时抖动；瞬时值仅留在 tooltip。
@@ -173,18 +195,24 @@ window.UI = (function () {
     const { bg } = utilColor(util);
     const pct = util == null ? 0 : Math.max(0, Math.min(100, Math.round(util)));
     // 离线：主机断连，实时值已陈旧（后端已置空 now）。显示"离线"而非"—"，与从未采到的 nodata 区分。
-    const offline = !!opts.offline;
+    const health = opts.host ? hostHealth(opts.host) : (opts.offline ? "offline" : "online");
+    const offline = health === "offline";
+    const unknown = health === "unknown";
+    const degraded = health === "overloaded" || health === "gpu_error";
     // 空占：占着显存但 GPU 空闲。低调标记，与"完全没人用"区分。
-    const held = !offline && usageState(g) === "held";
+    const held = !offline && !unknown && !degraded && usageState(g) === "held";
     const cls = "card" + (bg == null ? " nodata" : "") +
-      (offline ? " offline" : "") + (held ? " held" : "");
-    const nowText = offline ? I18n.t('offline') : (util == null ? "—" : Math.round(util));
+      (offline ? " offline" : "") + (unknown ? " unknown" : "") + (degraded ? " degraded" : "") + (held ? " held" : "");
+    const nowText = offline ? I18n.t('offline') : unknown ? I18n.t('unknown_short') :
+      (util == null ? (degraded ? I18n.t('gpu_delayed_short') : "—") : Math.round(util));
     // 满载 100 是利用率唯一的 3 位数，18px 下会撞上左上角 #index 与右上角状态点 → 收窄一档。
     const nowCls = "now" + (String(nowText).length >= 3 ? " now-wide" : "");
     const node = el("div", {
       class: cls,
       style: bg ? `--util-color:${bg};--util-pct:${pct}%` : "",
-      title: offline ? I18n.t('gpu_offline', {index: g.index, name: g.name ? " " + g.name : ""}) : tooltipFor(g),
+      title: (opts.host ? hostStatusDetail(opts.host) + "\n" : "") +
+        (g.last_sample ? I18n.t("gpu_last_value", {value: fmtPct(g.last_sample.util_gpu), time: ago(g.last_sample.ts)}) :
+          offline ? I18n.t('gpu_offline', {index: g.index, name: g.name ? " " + g.name : ""}) : tooltipFor(g)),
       onclick: () => opts.onClick && opts.onClick(g),
     }, [
       el("span", { class: "idx" }, ["#" + g.index]),
@@ -254,7 +282,7 @@ window.UI = (function () {
       tooltip: { trigger: "axis", axisPointer: { type: "line" }, backgroundColor: theme.tooltipBg, borderColor: theme.tooltipBorder, textStyle: { color: cssVar("--ink", "#f7f7f7") } },
       legend: { type: "scroll", top: 0, textStyle: { color: theme.text } },
       grid: { left: 50, right: 20, top: 36, bottom: 30 },
-      xAxis: { type: "time", axisLine: { lineStyle: { color: theme.axis } }, axisLabel: { color: theme.text }, splitLine: { lineStyle: { color: theme.split } } },
+      xAxis: { type: "time", axisLine: { lineStyle: { color: theme.axis } }, axisLabel: { color: theme.text, hideOverlap: true }, splitLine: { lineStyle: { color: theme.split } } },
       yAxis: { type: "value", min: 0, max: opts.max, name: opts.yName || "%", nameTextStyle: { color: theme.text }, axisLabel: { color: theme.text }, splitLine: { lineStyle: { color: theme.split } } },
       series: series.map((s) => ({
         name: s.name, type: "line", showSymbol: false, connectNulls: false,
@@ -332,5 +360,5 @@ window.UI = (function () {
     return el("span", { class: "badge-row" }, kids);
   }
 
-  return { utilColor, fmtPct, fmtGB, clusterVar, escapeHtml, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
+  return { hostHealth, hostStatus, hostStatusDetail, utilColor, fmtPct, fmtGB, clusterVar, escapeHtml, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
 })();

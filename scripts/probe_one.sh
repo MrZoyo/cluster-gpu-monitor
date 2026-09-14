@@ -6,7 +6,11 @@ set -euo pipefail
 alias="${1:?用法: probe_one.sh <ssh别名> [cpu间隔秒] [vendor]}"
 gap="${2:-1}"
 vendor="${3:-}"          # 留空 = 让远端自动探测
+[[ "$alias" =~ ^[A-Za-z0-9][A-Za-z0-9._:@%+-]*$ ]] || { echo '非法 SSH alias' >&2; exit 2; }
+[[ "$gap" =~ ^[0-9]+$ && "$gap" -ge 1 && "$gap" -le 60 ]] || { echo 'CPU 间隔须为 1..60 秒' >&2; exit 2; }
+[[ -z "$vendor" || "$vendor" == nvidia || "$vendor" == amd ]] || { echo '非法 GPU 厂商' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-sed -e "s/__CPU_GAP__/$gap/" -e "s/__VENDOR_HINT__/$vendor/" \
+sed -e "s/__CPU_GAP__/$gap/g" -e "s/__VENDOR_HINT__/$vendor/g" \
+  -e "s/__GPU_ENABLED__/1/g" -e "s/__GPU_TIMEOUT__/20/g" -e "s/__OUTPUT_LIMIT__/4194304/g" \
   "$ROOT/src/gpumon/collector/remote_probe.sh" \
-  | ssh -o BatchMode=yes -o ConnectTimeout=8 "$alias" bash -s
+  | timeout -k 2 "$((8 + 10#$gap + 25))" ssh -o BatchMode=yes -o ConnectTimeout=8 "$alias" bash -s

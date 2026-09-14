@@ -55,7 +55,7 @@ Monitor host:
 
 Target GPU nodes:
 
-- **Install nothing.** No agent, no daemon, no files written. Collector script is piped via `ssh <alias> bash -s` from stdin, runs in remote memory and vanishes.
+- **No agent or daemon.** The collector script is piped via `ssh <alias> bash -s`. Targets need timeout and flock; only a private lock file is retained, never scripts or telemetry. See [adaptive probing](ADAPTIVE_PROBING.en.md).
 - Regular user account sufficient, **no root needed**. Account just needs to run `nvidia-smi` (or `rocm-smi` / `amd-smi`) and `ps`, read `/proc/stat` and `/proc/meminfo` — all open to regular users by default.
 - Requires `bash` and coreutils, basically "is a Linux machine."
 
@@ -667,7 +667,7 @@ curl -fsS http://127.0.0.1:8848/api/health
 is readiness: unavailable configuration/database returns HTTP 503; samples older than
 `stale_after_s` still return HTTP 200 with `ok=false,status=stale`, keeping historical views
 available. `last_sample_age_s` should normally fluctuate around `poll_interval_s`; persistent
-staleness means the collector is down or all SSH targets failed.
+staleness means GPU data is not advancing. Check host heartbeats and health to distinguish GPU degradation, unreachable hosts and a stopped collector.
 
 ```bash
 curl -fsS http://127.0.0.1:8848/api/collector/status | python3 -m json.tool
@@ -677,7 +677,8 @@ One entry per host, look at these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `online` | Successfully collected within last 120 seconds |
+| `online` | Recent host heartbeat and collector attempts; GPU collection may be degraded |
+| `health` | online / overloaded / gpu_error / offline / unknown |
 | `gpus_seen` / `gpus_expected` | Actually detected GPU count / expected count in inventory |
 | `consec_fail` | Consecutive failure count, 0 = last round succeeded |
 | `last_error` | Last failure reason (SSH timeout, command not found, etc.) |
@@ -836,3 +837,5 @@ sudo userdel -r <USER>
 ```
 
 Database at `<ROOT>/data/gpumon.db`, backup before deleting directory if want to keep history.
+
+For additive schema migration, target dependencies and rollback semantics, see [adaptive probing](ADAPTIVE_PROBING.en.md).

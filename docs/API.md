@@ -20,6 +20,7 @@ curl --fail-with-body --silent --show-error --max-time 15 \
     "name": "Node A",
     "model": "Example GPU",
     "online": true,
+    "health": "online",
     "sampled_at": 1788849980,
     "util_pct": [0, 82.5, null]
   }]
@@ -51,7 +52,7 @@ enable_gpu_summary = true
 ## 响应字段
 
 - `as_of`：共享快照的计算时间（Unix epoch 秒）。
-- `hosts`：每台机器一条记录。`name` 为显示名，`online` 为在线状态。
+- `hosts`：每台机器一条记录。`name` 为显示名，`online` 表示主机心跳仍有效；`health` 区分 `online`、`overloaded`、`gpu_error`、`offline`、`unknown`、`inactive`。
 - `util_pct`：按卡号排列的近期利用率数组，默认数组位置就是从 0 开始的卡号。
   若卡号不连续，额外返回同长度的 `indices` 数组，明确每个值对应哪张卡。
 - `model` 和 `sampled_at`：同机一致时各返回一个共享值；存在差异时返回与
@@ -83,15 +84,17 @@ print(summary)
 
 ## 指标与时间
 
-- `util_pct` 与网页 GPU 卡片使用同一个计算函数：最近 600 秒有效原始样本的均值；
+- `util_pct` 与网页 GPU 卡片使用同一个计算函数：最近 600 秒有效原始样本按采样周期加权的均值；
   最近连续 3 个有效样本均 ≤5% 时直接归零。它不是显存占用率，也不表示 GPU 已可分配。
 - `as_of` 是本次共享快照的计算时间；`sampled_at` 是对应 GPU 最新采样时间。
   主机内部时间不一致时逐卡保留。采样周期可能与轮次实际耗时不同。
 - 所有客户端共用最多 30 秒的进程内缓存。缓存命中不查询数据库；刷新只查拓扑、GPU 样本
   时间、10 分钟利用率和采集状态，不查询进程或长期历史聚合。
-- 主机仅在 active 且最近成功采集不超过 120 秒时为 `online=true`。GPU 样本需同时不超过
-  `max(120, 4 × poll_interval_s)` 秒，否则利用率为 `null`。每次响应都会重新检查时效，
-  即使快照仍在缓存期内。
+- 主机在 active、采集尝试仍在更新且主机心跳未过期时为 `online=true`；过期窗口为
+  `max(120, 4 × poll_interval_s)` 秒。GPU 查询降级不会单独令主机离线。
+  GPU 查询失败或样本过期时利用率为 `null`，`sampled_at` 保留上次真实观测时间。
+  每次响应重新检查时效，包括仍在缓存期内的快照。兼容性变更：新增 `health` 字段，
+  `online` 现在描述主机可达性；调用方不可把 `online=true` 当成 GPU 数据有效或空闲。
 - `null` 表示未知、过期或尚未采到，不是 0%。预期但未探测到的 GPU 也保留未知条目；
   退役机器按网页的拓扑规则移除。非 active 机器不下发当前利用率。
 - 响应字段按白名单构造，不包含用户、进程、显存、SSH alias、地址、硬件 UUID、备注或错误详情。

@@ -6,6 +6,7 @@ known_hosts，代码里不出现任何 IP/端口/key。换部署机只需改 ssh
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 from ..config import load_settings
@@ -47,6 +48,8 @@ async def _kill_process(proc: asyncio.subprocess.Process) -> None:
 async def _read_limited(
     reader: asyncio.StreamReader,
     budget: _OutputBudget,
+    partial: bytearray | None = None,
+    received: dict | None = None,
 ) -> bytes:
     chunks: list[bytes] = []
     while True:
@@ -54,7 +57,15 @@ async def _read_limited(
         if not chunk:
             return b"".join(chunks)
         budget.claim(len(chunk))
-        chunks.append(chunk)
+        if partial is None:
+            chunks.append(chunk)
+        else:
+            partial.extend(chunk)
+            if received is not None:
+                for marker, key in ((b"\n##HOST_END\n", "host"), (b"\n##GPU_END\n", "gpu")):
+                    if key not in received and marker in partial:
+                        received[key] = int(time.time())
+            chunks = [partial]
 
 
 async def _feed_stdin(writer: asyncio.StreamWriter, data: bytes) -> None:
@@ -76,11 +87,13 @@ async def _communicate_limited(
     proc: asyncio.subprocess.Process,
     data: bytes,
     limit: int,
+    partial: bytearray | None = None,
+    received: dict | None = None,
 ) -> tuple[bytes, bytes]:
     """并发排空两个 pipe，但 stdout+stderr 最多只在内存中保留 ``limit`` 字节。"""
     assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
     budget = _OutputBudget(limit)
-    stdout_task = asyncio.create_task(_read_limited(proc.stdout, budget))
+    stdout_task = asyncio.create_task(_read_limited(proc.stdout, budget, partial, received))
     stderr_task = asyncio.create_task(_read_limited(proc.stderr, budget))
     stdin_task = asyncio.create_task(_feed_stdin(proc.stdin, data))
     tasks = (stdout_task, stderr_task, stdin_task)
@@ -101,14 +114,18 @@ def _failed(host_key: str, message: str) -> ProbeResult:
     return ProbeResult(host_key=host_key, ok=False, error=message[:512])
 
 
-def _build_script(vendor_hint: str | None = None) -> str:
-    gap = load_settings().collector.cpu_sample_gap_s
+def _build_script(vendor_hint: str | None = None, *, gpu_enabled: bool = True) -> str:
+    cfg = load_settings().collector
+    gap = cfg.cpu_sample_gap_s
     # vendor 只允许白名单值：这段字符串会被塞进远端 shell 变量赋值，
     # 不做校验等于把 inventory 的任意内容送去远端执行。
     hint = vendor_hint if vendor_hint in ("nvidia", "amd") else ""
     return (_PROBE_TEMPLATE.read_text(encoding="utf-8")
             .replace("__CPU_GAP__", str(int(gap)))
-            .replace("__VENDOR_HINT__", hint))
+            .replace("__VENDOR_HINT__", hint)
+            .replace("__GPU_ENABLED__", "1" if gpu_enabled else "0")
+            .replace("__GPU_TIMEOUT__", str(cfg.gpu_timeout_s))
+            .replace("__OUTPUT_LIMIT__", str(cfg.ssh_output_limit_bytes)))
 
 
 def _ssh_opts() -> list[str]:
@@ -127,14 +144,17 @@ def _ssh_opts() -> list[str]:
     ]
 
 
-async def probe(host_key: str, ssh_alias: str, vendor: str | None = None) -> ProbeResult:
+async def probe(host_key: str, ssh_alias: str, vendor: str | None = None,
+                *, gpu_enabled: bool = True) -> ProbeResult:
     """采集一台主机；预期的 SSH 与远端数据失败收敛成 ok=False。
 
     vendor 来自 inventory（可选）：给了就跳过远端自动探测，异构机房里更稳。
     """
-    script = _build_script(vendor).encode()
+    script = _build_script(vendor, gpu_enabled=gpu_enabled).encode()
     collector = load_settings().collector
-    total_timeout = collector.ssh_total_timeout_s
+    total_timeout = max(collector.ssh_total_timeout_s,
+                        collector.ssh_connect_timeout_s + collector.cpu_sample_gap_s +
+                        (collector.gpu_timeout_s + 5 if gpu_enabled else 5))
     output_limit = collector.ssh_output_limit_bytes
     argv = ["ssh", *_ssh_opts(), ssh_alias, "bash", "-s"]
     try:
@@ -147,20 +167,31 @@ async def probe(host_key: str, ssh_alias: str, vendor: str | None = None) -> Pro
     except Exception as e:  # ssh 不存在等
         return _failed(host_key, f"启动 ssh 失败: {e}")
 
+    partial = bytearray()
+    received: dict[str, int] = {}
+    transport_error = None
     try:
         out, err = await asyncio.wait_for(
-            _communicate_limited(proc, script, output_limit),
+            _communicate_limited(proc, script, output_limit, partial, received),
             timeout=total_timeout,
         )
     except TimeoutError:
-        return _failed(host_key, f"超时(>{total_timeout}s)")
+        out, err = bytes(partial), b""
+        transport_error = f"SSH 采集超时(>{total_timeout}s)"
     except OutputLimitExceeded:
         return _failed(host_key, f"SSH 输出超过上限({output_limit} bytes)")
     except Exception as e:
         return _failed(host_key, f"ssh 异常: {e}")
 
-    if proc.returncode != 0:
+    if proc.returncode != 0 and transport_error is None:
         msg = (err.decode(errors="replace").strip() or f"ssh 返回码 {proc.returncode}")
-        return _failed(host_key, msg[:500])
+        transport_error = msg[:500]
 
-    return parse_probe(host_key, out.decode(errors="replace"))
+    result = parse_probe(host_key, out.decode(errors="replace"))
+    if transport_error and not result.host_reachable:
+        return _failed(host_key, transport_error)
+    result.host_sample_ts = received.get("host")
+    result.gpu_sample_ts = received.get("gpu", int(time.time())) if result.gpus else None
+    if result.gpu_status == "ok" and (result.gpu_elapsed_s or 0) >= collector.gpu_slow_s:
+        result.gpu_status = "slow"
+    return result

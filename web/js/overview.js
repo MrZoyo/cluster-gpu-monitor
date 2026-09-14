@@ -116,7 +116,9 @@ window.Views.overview = (function () {
   function alertPanel(ov) {
     const activeHosts = ov.clusters.flatMap((c) => c.hosts.map((h) => ({ ...h, cluster: c.name })))
       .filter((h) => h.status !== "planned");
-    const offline = activeHosts.filter((h) => !h.online);
+    const offline = activeHosts.filter((h) => UI.hostHealth(h) === "offline");
+    const degraded = activeHosts.filter((h) => ["overloaded", "gpu_error"].includes(UI.hostHealth(h)));
+    const unknown = activeHosts.filter((h) => UI.hostHealth(h) === "unknown");
     const hot = ov.clusters.flatMap((c) => c.hosts.flatMap((h) => (h.gpus || []).map((g) => ({ g, h, c }))))
       .filter((x) => x.g.util_recent != null && x.g.util_recent >= 90)
       .sort((a, b) => b.g.util_recent - a.g.util_recent);
@@ -124,6 +126,10 @@ window.Views.overview = (function () {
     const rows = [];
     rows.push(el("div", { class: offline.length ? "alert bad" : "alert ok" },
       [el("b", {}, [String(offline.length)]), el("span", {}, [I18n.t('offline_active_hosts')])]));
+    if (degraded.length) rows.push(el("div", { class: "alert probe-alert" },
+      [el("b", {}, [String(degraded.length)]), el("span", {}, [I18n.t('gpu_degraded_hosts')])]));
+    if (unknown.length) rows.push(el("div", { class: "alert probe-alert" },
+      [el("b", {}, [String(unknown.length)]), el("span", {}, [I18n.t('monitor_unknown')])]));
     rows.push(el("div", { class: hot.length ? "alert hot" : "alert ok" },
       [el("b", {}, [String(hot.length)]), el("span", {}, [I18n.t('full_load_gpus')])]));
     if (planned.length) {
@@ -241,12 +247,12 @@ window.Views.overview = (function () {
       : sys
         ? I18n.t('host_system_info', {cpu: fmtPct(sys.cpu_util_pct), load: sys.load1 ?? "-", mem_used: fmtGB(sys.mem_used_mib), mem_total: fmtGB(sys.mem_total_mib)})
         : I18n.t('no_system_data');
-    const statusLabel = h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline_n_times', {n: h.consec_fail || 0}));
+    const statusLabel = UI.hostStatus(h);
     const offline = h.status !== "planned" && !h.online;
     const cards = (h.gpus && h.gpus.length)
-      ? h.gpus.map((g) => gpuCard(g, { offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
+      ? h.gpus.map((g) => gpuCard(g, { host: h, offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
       : Array.from({ length: h.gpu_count || 0 }, (_, i) => gpuPlaceholder(i, h.display_name));
-    const row = el("div", { class: `host-row ${h.status === "planned" ? "planned-host" : ""}` }, [
+    const row = el("div", { class: `host-row host-${UI.hostHealth(h)} ${h.status === "planned" ? "planned-host" : ""}` }, [
       el("div", { class: "host-name", onclick: () => GM.go(`/host/${h.key}`) }, [
         el("div", { class: "hn" }, [h.display_name]),
         el("div", { class: "hs" }, [`${statusLabel} · ${I18n.t('cards_seen', {seen: h.gpus_seen ?? 0, expected: h.gpu_count})}`]),
@@ -254,7 +260,8 @@ window.Views.overview = (function () {
       el("div", { class: "host-sys" }, [sysText]),
       el("div", { class: "cards" }, cards),
     ]);
-    if (h.last_error && h.status !== "planned") row.title = `${c.name}: ${h.last_error}`;
+    row.title = UI.hostStatusDetail(h);
+    if (h.last_error && h.status !== "planned") row.title += `\n${c.name}: ${h.last_error}`;
     if (h.note && h.status === "planned") row.title = I18n.localize(h.note_i18n ?? h.note);
     return row;
   }
@@ -273,7 +280,7 @@ window.Views.overview = (function () {
       const tds = [
         el("td", {}, [el("a", { onclick: () => GM.go(`/host/${h.key}`), href: "javascript:;" }, [h.display_name])]),
         el("td", {}, [c.name]),
-        el("td", {}, [h.status === "planned" ? I18n.t('planned') : (h.online ? I18n.t('online') : I18n.t('offline'))]),
+        el("td", {}, [UI.hostStatus(h)]),
       ];
       wins.forEach((w) => {
         const it = byWin[w][h.key];

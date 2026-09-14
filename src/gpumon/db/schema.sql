@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS rollup_gpu_5m (
   mem_used_avg  REAL, mem_used_max INTEGER,
   temp_avg      REAL, temp_max INTEGER,
   power_avg     REAL,
+  weight_s      REAL,
+  util_gpu_weight_s REAL,
+  util_mem_weight_s REAL,
+  mem_used_weight_s REAL,
+  temp_weight_s REAL,
+  power_weight_s REAL,
   PRIMARY KEY (gpu_id, bucket_ts)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ix_rollup_gpu_5m_bucket ON rollup_gpu_5m(bucket_ts);
@@ -119,6 +125,12 @@ CREATE TABLE IF NOT EXISTS rollup_gpu_1h (
   mem_used_avg  REAL, mem_used_max INTEGER,
   temp_avg      REAL, temp_max INTEGER,
   power_avg     REAL,
+  weight_s      REAL,
+  util_gpu_weight_s REAL,
+  util_mem_weight_s REAL,
+  mem_used_weight_s REAL,
+  temp_weight_s REAL,
+  power_weight_s REAL,
   PRIMARY KEY (gpu_id, bucket_ts)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ix_rollup_gpu_1h_bucket ON rollup_gpu_1h(bucket_ts);
@@ -144,6 +156,33 @@ CREATE TABLE IF NOT EXISTS collector_status (
   consec_fail  INTEGER NOT NULL DEFAULT 0,
   last_error   TEXT
 );
+
+-- Adaptive probe state is separate from historical full-sample success.
+CREATE TABLE IF NOT EXISTS host_probe_state (
+  host_id INTEGER PRIMARY KEY REFERENCES host(id),
+  last_heartbeat_ts INTEGER,
+  last_gpu_try_ts INTEGER,
+  gpu_status TEXT,
+  gpu_elapsed_s REAL,
+  apps_ok INTEGER,
+  metrics_ok INTEGER,
+  gpu_error TEXT,
+  gpu_poll_interval_s INTEGER,
+  next_gpu_try_ts REAL,
+  fast_successes INTEGER NOT NULL DEFAULT 0,
+  vendor TEXT
+);
+
+-- Sampling weights apply only to real observations. Missing/cooldown rounds
+-- do not create GPU or process samples. Old samples retain the legacy interval.
+CREATE TABLE IF NOT EXISTS sample_weight (
+  gpu_id INTEGER NOT NULL REFERENCES gpu_card(id),
+  ts INTEGER NOT NULL,
+  seconds REAL NOT NULL,
+  apps_ok INTEGER NOT NULL,
+  PRIMARY KEY (gpu_id, ts)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_sample_weight_ts ON sample_weight(ts);
 
 -- 聚合进度水位（避免每次全表扫；记录已聚合到的 bucket）
 CREATE TABLE IF NOT EXISTS rollup_state (

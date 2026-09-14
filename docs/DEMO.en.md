@@ -98,3 +98,10 @@ Both tools fail closed by default:
 
 Use `--allow-unmarked-inputs` only for deliberately constructed data that you have verified contains
 no real information. Do not use it as a shortcut for production data.
+
+## Adaptive status examples
+
+Generated demo data includes a reachable host with slow GPU queries, a GPU timeout with stale
+observations, a recovering host, and an unreachable host. The static exporter freezes the same
+clock used by these states. Orange borders, card stripes, cooldown text and unknown utilization
+are rendered by the production UI code. All examples are synthetic; no GPU queries are sent.

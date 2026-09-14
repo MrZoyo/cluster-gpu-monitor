@@ -125,6 +125,8 @@ def parse_probe(host_key: str, raw: str) -> ProbeResult:
 
 def _parse_probe(host_key: str, raw: str) -> ProbeResult:
     sec = _split_sections(raw)
+    if "HOST_END" in sec:
+        return _parse_adaptive(host_key, raw, sec)
     if "END" not in sec:
         return ProbeResult(host_key=host_key, ok=False,
                            error="输出被截断（未见 ##END）")
@@ -220,3 +222,69 @@ def _parse_probe(host_key: str, raw: str) -> ProbeResult:
     return ProbeResult(host_key=host_key, ok=True, vendor=vendor,
                        remote_hostname=remote_hostname,
                        gpus=gpus, procs=procs, host=host)
+
+
+def _parse_adaptive(host_key: str, raw: str, sec: dict[str, list[str]]) -> ProbeResult:
+    """Only accept explicitly completed sections; never bless a truncated GPU CSV."""
+    host_sections = ("META", "LOADAVG", "MEMINFO", "CPU1", "CPU2")
+    if any(not sec.get(k) for k in host_sections):
+        raise ProbeDataError("主机心跳段不完整")
+    host_raw = "\n".join("##" + k + "\n" + "\n".join(sec[k]) for k in host_sections)
+    result = _parse_probe(host_key, host_raw + "\n##VENDOR\nnone\n##END\n")
+    result.host_reachable = True
+    result.vendor = None
+    result.ok = False
+    result.apps_ok = False
+    if "GPU_SKIPPED" in sec:
+        result.gpu_status = "skipped"
+        return result
+    done = sec.get("GPU_DONE", [])
+    rc, elapsed = None, None
+    if done:
+        try:
+            fields = done[0].split()
+            if len(fields) != 2:
+                raise ValueError
+            rc, elapsed = int(fields[0]), float(fields[1])
+            result.gpu_elapsed_s = elapsed
+        except (ValueError, ValidationError):
+            result.gpu_status = "error"
+            result.error = "GPU 结果段无效"
+            return result
+    result.gpu_status = "ok" if rc == 0 else (
+        "timeout" if rc in (124, 137, 75) else "unknown" if rc is None else "error")
+    result.error = {
+        75: "前一次 GPU 查询尚未退出，已跳过本次查询",
+        69: "GPU 查询工具或 timeout/flock 不可用",
+        73: "GPU 查询锁不可用",
+    }.get(rc, "GPU 查询超时" if result.gpu_status == "timeout" else
+          "GPU 查询响应中断" if rc is None else f"GPU 查询失败（返回码 {rc}）" if rc else None)
+    vendor = (sec.get("VENDOR") or [None])[0]
+    if vendor in ("nvidia", "amd"):
+        result.vendor = vendor
+    metrics_complete = sec.get("GPU_END", []) == ["0"] or (vendor == "amd" and rc == 0)
+    if metrics_complete:
+        # Reuse strict legacy parsing, but only after a completed metrics section.
+        complete_raw = raw.replace("##HOST_END", "##HOST_LEGACY") + "\n##END\n"
+        metrics_raw = "\n".join("##" + k + "\n" + "\n".join(v) for k, v in sec.items()
+                                if k not in ("HOST_END", "APPS", "PSMAP")) + "\n##END\n"
+        parsed = parse_probe(host_key, metrics_raw)
+        if parsed.ok and parsed.gpus:
+            result.gpus = parsed.gpus
+            result.ok = True
+            result.apps_ok = sec.get("APPS_END", []) == ["0"]
+            if result.apps_ok:
+                processes = parse_probe(host_key, complete_raw)
+                if processes.ok:
+                    result.procs = processes.procs
+                else:
+                    result.apps_ok = False
+                    result.gpu_status = "error"
+                    result.error = "GPU 进程数据无效，已保留有效 GPU 指标"
+        else:
+            result.gpu_status = "error"
+            result.error = parsed.error or "GPU 查询没有返回有效设备"
+    elif rc == 0:
+        result.gpu_status = "error"
+        result.error = "GPU 指标段不完整"
+    return result

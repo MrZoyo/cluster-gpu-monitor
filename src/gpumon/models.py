@@ -230,6 +230,17 @@ class CollectorSettings(ConfigModel):
     ssh_total_timeout_s: int = Field(default=20, ge=1, le=3600)
     max_concurrency: int = Field(default=8, ge=1, le=512)
     cpu_sample_gap_s: int = Field(default=1, ge=1, le=60)
+    gpu_slow_s: float = Field(default=10, gt=0, le=300, allow_inf_nan=False)
+    gpu_timeout_s: int = Field(default=20, ge=1, le=600)
+    gpu_backoff_s: int = Field(default=60, ge=1, le=3600)
+    gpu_recover_s: float = Field(default=5, gt=0, le=300, allow_inf_nan=False)
+    gpu_recover_count: int = Field(default=3, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_gpu_timing(self) -> CollectorSettings:
+        if not self.gpu_recover_s < self.gpu_slow_s <= self.gpu_timeout_s:
+            raise ValueError("需要 gpu_recover_s < gpu_slow_s <= gpu_timeout_s")
+        return self
     # stdout + stderr 共用这一预算；超限立即终止 ssh，防止异常目标耗尽本机内存。
     ssh_output_limit_bytes: int = Field(
         default=4 * 1024 * 1024,
@@ -344,6 +355,17 @@ class ProbeResult(SampleModel):
     gpus: list[GpuSample] = Field(default_factory=list, max_length=MAX_GPUS_PER_HOST)
     procs: list[ProcSample] = Field(default_factory=list, max_length=MAX_PROCESSES_PER_HOST)
     host: HostSample | None = None
+    # None 保留旧探测协议/历史调用方的语义；新协议独立报告主机、GPU、进程。
+    host_reachable: bool | None = None
+    gpu_status: Literal["ok", "slow", "recovering", "timeout", "error", "skipped", "unknown"] | None = None
+    gpu_elapsed_s: float | None = Field(default=None, ge=0, le=86_400, allow_inf_nan=False)
+    apps_ok: bool = True
+    host_sample_ts: int | None = Field(default=None, ge=0)
+    gpu_sample_ts: int | None = Field(default=None, ge=0)
+    sample_interval_s: int | None = Field(default=None, ge=1, le=86_400)
+    gpu_poll_interval_s: int | None = Field(default=None, ge=1, le=86_400)
+    next_gpu_try_ts: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    fast_successes: int = Field(default=0, ge=0, le=20)
 
     @model_validator(mode="after")
     def validate_gpu_identity(self) -> ProbeResult:

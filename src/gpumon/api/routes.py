@@ -366,7 +366,7 @@ def overview(window: str = Query("24h")):
     sample_max_age_s = current_sample_max_age_s()
 
     util_now_vals, util_avg_vals = [], []
-    cards_total = cards_busy = 0
+    cards_total = cards_busy = cards_idle = 0
     clusters_out = []
     for c in topo:
         hosts_out = []
@@ -377,13 +377,17 @@ def overview(window: str = Query("24h")):
             st = status_by_host.get(h["key"], {})
             host_online = st.get("online", False)
             sys_row = snap["hosts"].get(h["id"])
+            if sys_row and (not host_online or not 0 <= now - sys_row["ts"] <= sample_max_age_s):
+                sys_row = None
             gpus_out = []
             for g in h["gpus"]:
                 gid = g["id"]
                 # 主机离线时，快照里的最后一条样本已陈旧，不能当作实时值下发。
                 # 否则会误导"卡还在被占用"，并污染下面的当前均值/满载数/热点榜。
-                now_row = snap["gpus"].get(gid) if host_online else None
-                if now_row and now - now_row["ts"] > sample_max_age_s:
+                last_row = snap["gpus"].get(gid)
+                now_row = last_row if host_online and st.get("metrics_ok") != 0 else None
+                if now_row and (not 0 <= now - now_row["ts"] <= sample_max_age_s or
+                                (st.get("metrics_ok") is not None and now_row["ts"] != st.get("last_ok_ts"))):
                     now_row = None
                 util_now = now_row["util_gpu"] if now_row else None
                 # 近期(10min)平滑值：卡片大字/底色的实际显示值；离线同 now 一样置空。
@@ -395,7 +399,7 @@ def overview(window: str = Query("24h")):
                 users = [
                     {"username": mask_username(p["username"]), "comm": p["comm"],
                      "mem_used_mib": p["mem_used_mib"]}
-                    for p in (snap["procs"].get(gid, []) if now_row else [])
+                    for p in (snap["procs"].get(gid, []) if now_row and st.get("apps_ok") != 0 else [])
                     if (p["mem_used_mib"] or 0) > 0
                 ]
                 cards_total += 1
@@ -404,6 +408,8 @@ def overview(window: str = Query("24h")):
                 # 在用/满载按近期平滑值判定，与卡片大字/底色一致，避免瞬时抖动误判。
                 if util_recent is not None and util_recent >= BUSY_THRESHOLD:
                     cards_busy += 1
+                elif util_recent is not None:
+                    cards_idle += 1
                 if a.get("avg") is not None:
                     util_avg_vals.append(a["avg"])
                 gpus_out.append({
@@ -414,6 +420,10 @@ def overview(window: str = Query("24h")):
                         "mem_used_mib": now_row["mem_used_mib"], "temp_c": now_row["temp_c"],
                         "power_w": now_row["power_w"], "ts": now_row["ts"]},
                     "util_recent": util_recent,
+                    "last_sample": None if now_row or not last_row else {
+                        "ts": last_row["ts"], "util_gpu": last_row["util_gpu"],
+                        "mem_used_mib": last_row["mem_used_mib"]},
+                    "process_data_available": bool(now_row and st.get("apps_ok") != 0),
                     "avg": a.get("avg"), "coverage": a.get("coverage"),
                     "users": users,
                 })
@@ -425,6 +435,9 @@ def overview(window: str = Query("24h")):
                 "gpu_count": h["gpu_count"], "online": st.get("online", False),
                 "gpus_seen": st.get("gpus_seen"), "consec_fail": st.get("consec_fail", 0),
                 "last_error": st.get("last_error"),
+                "health": st.get("health", "unknown"),
+                **{key: st.get(key) for key in ("last_heartbeat_ts", "last_ok_ts", "gpu_status",
+                    "gpu_elapsed_s", "gpu_poll_interval_s", "next_gpu_try_ts")},
                 "system": None if not sys_row else {
                     "ncpu": sys_row["ncpu"], "cpu_util_pct": sys_row["cpu_util_pct"],
                     "load1": sys_row["load1"], "load5": sys_row["load5"], "load15": sys_row["load15"],
@@ -450,11 +463,14 @@ def overview(window: str = Query("24h")):
     cards_expected = sum(h["gpu_count"] for c in topo for h in c["hosts"])
     summary = {
         "window": window, "cards_total": cards_total, "cards_busy": cards_busy,
-        "cards_idle": cards_total - cards_busy,
+        "cards_idle": cards_idle,
+        "cards_unknown": cards_total - cards_busy - cards_idle,
         "cards_expected": cards_expected,
         "util_now_avg": round(sum(util_now_vals) / len(util_now_vals), 1) if util_now_vals else None,
         "util_avg": round(sum(util_avg_vals) / len(util_avg_vals), 1) if util_avg_vals else None,
         "hosts_online": hosts_online, "hosts_total": hosts_total,
+        "hosts_overloaded": sum(s.get("health") == "overloaded" for key, s in status_by_host.items() if key in active_host_keys),
+        "hosts_unknown": sum(s.get("health") == "unknown" for key, s in status_by_host.items() if key in active_host_keys),
         "hosts_planned": hosts_planned,
     }
     return {"now": now, "window": window, "capacity_groups": groups,

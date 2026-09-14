@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.4.0">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.4.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.4.0">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.5.0">
   </a>
 </p>
 
@@ -126,7 +126,8 @@ SQLite: raw samples → 5-minute rollups → 1-hour rollups
 FastAPI /api/* → vanilla HTML + JavaScript + bundled ECharts
 ```
 
-- The remote script runs from stdin and writes no files on target nodes.
+- The remote script runs from stdin; only a private query lock is retained, never scripts or telemetry.
+- Host heartbeats remain independent of GPU queries; slow queries trigger per-host cooldown. See [adaptive probing](docs/ADAPTIVE_PROBING.en.md).
 - Raw samples support username attribution; two rollup tiers keep long-window queries small.
 - GPU cards separate recent activity from the selected window's average, which avoids treating
   training-step oscillation as meaningful capacity change.

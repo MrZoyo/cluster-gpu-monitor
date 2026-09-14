@@ -321,6 +321,7 @@ a { color: var(--accent); text-decoration: none; }
   align-items: stretch;
   margin-bottom: 16px;
 }
+.command-panel > * { min-width: 0; }
 .command-copy,
 .ops-strip,
 .hot-gpus,
@@ -794,6 +795,8 @@ body[data-theme="light"] .cfg-badge.tone-neutral { --badge-c: #5d646f; }
   grid-template-columns: repeat(auto-fill, 64px);
   gap: 7px;
   max-width: calc(8 * 64px + 7 * 7px); /* 8卡 + 7个间隙 = 561px */
+  width: 100%;
+  min-width: 0;
 }
 .card {
   width: 64px;
@@ -1096,7 +1099,7 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 }
 
 @media (max-width: 1180px) {
-  .command-panel { grid-template-columns: 1fr; }
+  .command-panel { grid-template-columns: minmax(0, 1fr); }
   .kpis { grid-template-columns: repeat(3, minmax(130px, 1fr)); }
   .host-row { grid-template-columns: 160px 1fr; }
   .host-row .cards { grid-column: 1 / -1; }
@@ -1109,14 +1112,31 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
   .command-copy { padding: 20px; }
   .ops-strip { grid-template-columns: 1fr; }
   .hot-gpus,
-  .kpis { grid-template-columns: 1fr 1fr; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hot-gpus button { min-width: 0; }
   .win-switch,
   .theme-switch { max-width: 100%; overflow-x: auto; }
   .capacity-head,
   .cluster-block summary { flex-direction: column; align-items: stretch; }
   .capacity-metrics,
   .cluster-stats { justify-content: flex-start; }
-  .host-row { grid-template-columns: 1fr; }
+  .host-row { grid-template-columns: minmax(0, 1fr); }
   .host-sys { white-space: normal; }
   .grid2 { grid-template-columns: 1fr; }
+}
+
+/* GPU telemetry degradation: one subtle animation per host, static card stripes. */
+.host-overloaded { border-left: 3px solid #d68b20; animation: probe-breathe 3s ease-in-out infinite; }
+.host-gpu_error { border-left: 3px solid #d68b20; }
+.probe-alert, .probe-note { color: #c88014; }
+.probe-alert::before { background: #d68b20; }
+.card.degraded { border-color: #d68b20; background-image: repeating-linear-gradient(135deg, transparent 0 8px, rgba(214,139,32,.14) 8px 12px); }
+.card.degraded.nodata .now, .card.unknown .now { font-size: 11px; }
+.card.unknown { border-style: dashed; opacity: .75; }
+@keyframes probe-breathe {
+  0%, 100% { box-shadow: inset 3px 0 5px rgba(214,139,32,.08); }
+  50% { box-shadow: inset 3px 0 10px rgba(214,139,32,.3); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .host-overloaded { animation: none; }
 }

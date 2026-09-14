@@ -32,14 +32,27 @@ class Rollup:
             return
         with conn:
             wm = self._get_wm(conn, "gpu_5m")
-            conn.execute("""
+            interval = load_settings().collector.poll_interval_s
+            conn.execute(f"""
                 INSERT OR REPLACE INTO rollup_gpu_5m
                   (gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max,util_mem_avg,
-                   mem_used_avg,mem_used_max,temp_avg,temp_max,power_avg)
+                   mem_used_avg,mem_used_max,temp_avg,temp_max,power_avg,weight_s,util_gpu_weight_s,util_mem_weight_s,mem_used_weight_s,temp_weight_s,power_weight_s)
                 SELECT gpu_id,(ts/300)*300 AS b,COUNT(*),
-                       AVG(util_gpu),MAX(util_gpu),AVG(util_mem),
-                       AVG(mem_used_mib),MAX(mem_used_mib),AVG(temp_c),MAX(temp_c),AVG(power_w)
-                FROM sample_gpu WHERE ts>=? AND ts<? GROUP BY gpu_id,b HAVING b<=?
+                       SUM(util_gpu*w)/SUM(CASE WHEN util_gpu IS NOT NULL THEN w END),MAX(util_gpu),
+                       SUM(util_mem*w)/SUM(CASE WHEN util_mem IS NOT NULL THEN w END),
+                       SUM(mem_used_mib*w)/SUM(CASE WHEN mem_used_mib IS NOT NULL THEN w END),MAX(mem_used_mib),
+                       SUM(temp_c*w)/SUM(CASE WHEN temp_c IS NOT NULL THEN w END),MAX(temp_c),
+                       SUM(power_w*w)/SUM(CASE WHEN power_w IS NOT NULL THEN w END),SUM(w),
+                       SUM(CASE WHEN util_gpu IS NOT NULL THEN w ELSE 0 END),
+                       SUM(CASE WHEN util_mem IS NOT NULL THEN w ELSE 0 END),
+                       SUM(CASE WHEN mem_used_mib IS NOT NULL THEN w ELSE 0 END),
+                       SUM(CASE WHEN temp_c IS NOT NULL THEN w ELSE 0 END),
+                       SUM(CASE WHEN power_w IS NOT NULL THEN w ELSE 0 END)
+                FROM (
+                    SELECT s.*,COALESCE(sw.seconds,{interval}) AS w FROM sample_gpu s
+                    LEFT JOIN sample_weight sw ON sw.gpu_id=s.gpu_id AND sw.ts=s.ts
+                    WHERE s.ts>=? AND s.ts<?
+                ) GROUP BY gpu_id,b HAVING b<=?
             """, (wm, b_max + 300, b_max))
             self._set_wm(conn, "gpu_5m", b_max)
 
@@ -50,17 +63,23 @@ class Rollup:
             return
         with conn:
             wm = self._get_wm(conn, "gpu_1h")
-            conn.execute("""
+            interval = load_settings().collector.poll_interval_s
+            conn.execute(f"""
                 INSERT OR REPLACE INTO rollup_gpu_1h
                   (gpu_id,bucket_ts,n,util_gpu_avg,util_gpu_max,util_mem_avg,
-                   mem_used_avg,mem_used_max,temp_avg,temp_max,power_avg)
+                   mem_used_avg,mem_used_max,temp_avg,temp_max,power_avg,weight_s,util_gpu_weight_s,util_mem_weight_s,mem_used_weight_s,temp_weight_s,power_weight_s)
                 SELECT gpu_id,(bucket_ts/3600)*3600 AS b,SUM(n),
-                       SUM(util_gpu_avg*n)/NULLIF(SUM(n),0),MAX(util_gpu_max),
-                       SUM(util_mem_avg*n)/NULLIF(SUM(n),0),
-                       SUM(mem_used_avg*n)/NULLIF(SUM(n),0),MAX(mem_used_max),
-                       SUM(temp_avg*n)/NULLIF(SUM(n),0),MAX(temp_max),
-                       SUM(power_avg*n)/NULLIF(SUM(n),0)
-                FROM rollup_gpu_5m WHERE bucket_ts>=? AND bucket_ts<? GROUP BY gpu_id,b HAVING b<=?
+                       SUM(util_gpu_avg*COALESCE(util_gpu_weight_s,w))/SUM(CASE WHEN util_gpu_avg IS NOT NULL THEN COALESCE(util_gpu_weight_s,w) END),MAX(util_gpu_max),
+                       SUM(util_mem_avg*COALESCE(util_mem_weight_s,w))/SUM(CASE WHEN util_mem_avg IS NOT NULL THEN COALESCE(util_mem_weight_s,w) END),
+                       SUM(mem_used_avg*COALESCE(mem_used_weight_s,w))/SUM(CASE WHEN mem_used_avg IS NOT NULL THEN COALESCE(mem_used_weight_s,w) END),MAX(mem_used_max),
+                       SUM(temp_avg*COALESCE(temp_weight_s,w))/SUM(CASE WHEN temp_avg IS NOT NULL THEN COALESCE(temp_weight_s,w) END),MAX(temp_max),
+                       SUM(power_avg*COALESCE(power_weight_s,w))/SUM(CASE WHEN power_avg IS NOT NULL THEN COALESCE(power_weight_s,w) END),SUM(w),
+                       SUM(COALESCE(util_gpu_weight_s,w)),SUM(COALESCE(util_mem_weight_s,w)),
+                       SUM(COALESCE(mem_used_weight_s,w)),SUM(COALESCE(temp_weight_s,w)),SUM(COALESCE(power_weight_s,w))
+                FROM (
+                    SELECT *,COALESCE(weight_s,n*{interval}) AS w FROM rollup_gpu_5m
+                    WHERE bucket_ts>=? AND bucket_ts<?
+                ) GROUP BY gpu_id,b HAVING b<=?
             """, (wm, b_max + 3600, b_max))
             self._set_wm(conn, "gpu_1h", b_max)
 
@@ -85,6 +104,7 @@ class Rollup:
         r1h_cut = now - ret.rollup_1h_days * 86400
         conn = self.store.write_conn()
         with conn:
+            conn.execute("DELETE FROM sample_weight WHERE ts<?", (raw_cut,))
             conn.execute("DELETE FROM sample_gpu WHERE ts<?", (raw_cut,))
             conn.execute("DELETE FROM sample_proc WHERE ts<?", (raw_cut,))
             conn.execute("DELETE FROM sample_host WHERE ts<?", (raw_cut,))

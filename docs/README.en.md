@@ -12,6 +12,7 @@ manual.
 | --- | --- | --- |
 | Run the project for the first time | [README quick start](../README.en.md#quick-start) | Dependencies, configuration, one collection round, and the Web UI |
 | Add hosts or tune runtime settings | [Configuration reference](CONFIGURATION.en.md) | Inventory, settings, states, badges, retention, and concurrency |
+| Distinguish slow GPU queries from unreachable hosts | [Adaptive probing](ADAPTIVE_PROBING.en.md) | Heartbeats, cooldown, recovery, weights and upgrades |
 | Understand the data model | [Architecture and trade-offs](ARCHITECTURE.en.md) | SSH collection, SQLite, rollups, liveness, GPU hours, and security boundaries |
 | Generate fictional data or a static site | [Demo guide](DEMO.en.md) | Local demos, GitHub Pages export, and destructive-operation guards |
 | Deploy with Python + systemd | [Native deployment guide](DEPLOYMENT.en.md) | Release layout, systemd, Caddy, backups, migration, and troubleshooting |
