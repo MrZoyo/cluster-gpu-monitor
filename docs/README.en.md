@@ -8,6 +8,8 @@ manual.
 
 ## Where to start
 
+Current version: [v0.5.1 release notes](RELEASE_0.5.1.md) — delay tolerance, status legend and responsive header.
+
 | Goal | Start here | What it covers |
 | --- | --- | --- |
 | Run the project for the first time | [README quick start](../README.en.md#quick-start) | Dependencies, configuration, one collection round, and the Web UI |

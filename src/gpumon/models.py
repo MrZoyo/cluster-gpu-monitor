@@ -226,15 +226,15 @@ class Inventory(ConfigModel):
 # ---------------------------------------------------------------------------
 class CollectorSettings(ConfigModel):
     poll_interval_s: int = Field(default=30, ge=1, le=86_400)
-    ssh_connect_timeout_s: int = Field(default=8, ge=1, le=300)
+    ssh_connect_timeout_s: int = Field(default=15, ge=1, le=300)
     ssh_total_timeout_s: int = Field(default=20, ge=1, le=3600)
     max_concurrency: int = Field(default=8, ge=1, le=512)
     cpu_sample_gap_s: int = Field(default=1, ge=1, le=60)
-    gpu_slow_s: float = Field(default=10, gt=0, le=300, allow_inf_nan=False)
+    gpu_slow_s: float = Field(default=15, gt=0, le=300, allow_inf_nan=False)
     gpu_timeout_s: int = Field(default=20, ge=1, le=600)
     gpu_backoff_s: int = Field(default=60, ge=1, le=3600)
-    gpu_recover_s: float = Field(default=5, gt=0, le=300, allow_inf_nan=False)
-    gpu_recover_count: int = Field(default=3, ge=1, le=20)
+    gpu_recover_s: float = Field(default=10, gt=0, le=300, allow_inf_nan=False)
+    gpu_recover_count: int = Field(default=2, ge=1, le=20)
 
     @model_validator(mode="after")
     def validate_gpu_timing(self) -> CollectorSettings:

@@ -12,17 +12,22 @@
 </head>
 <body>
   <div class="topbar">
-    <span class="title" id="title">GPU Monitor</span>
-    <span class="crumb" id="crumb">总览</span>
-    <span class="spacer"></span>
-    <span class="navlink" id="navRank">
-      <img src="/icons/rocket.svg" class="navlink-icon" alt="">
-      <span id="navRankText">用户排行</span>
-    </span>
-    <div class="lang-switch" id="langSwitch"></div>
-    <div class="theme-switch" id="themeSwitch"></div>
-    <img src="/icons/clock.svg" class="topbar-icon" alt="">
-    <div class="win-switch" id="winSwitch"></div>
+    <div class="topbar-location">
+      <span class="title" id="title">GPU Monitor</span>
+      <span class="crumb" id="crumb">总览</span>
+    </div>
+    <div class="topbar-controls">
+      <span class="navlink" id="navRank">
+        <img src="/icons/rocket.svg" class="navlink-icon" alt="">
+        <span id="navRankText">用户排行</span>
+      </span>
+      <div class="lang-switch" id="langSwitch"></div>
+      <div class="theme-switch" id="themeSwitch"></div>
+      <div class="topbar-window">
+        <img src="/icons/clock.svg" class="topbar-icon" alt="">
+        <div class="win-switch" id="winSwitch"></div>
+      </div>
+    </div>
     <div class="health" title="">
       <span class="dot" id="hdot"></span>
       <span id="htext">加载中…</span>

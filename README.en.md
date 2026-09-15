@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.0">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.5.0">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.1">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.1-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.5.1">
   </a>
 </p>
 
@@ -31,6 +31,9 @@ need no agent, scheduler, or root access.
 [Configuration](docs/CONFIGURATION.en.md) ·
 [Native deployment](docs/DEPLOYMENT.en.md) ·
 [Docker Compose](docs/DOCKER.en.md)
+
+v0.5.1 improves card display during brief collection failures, the overload legend and the responsive
+header. See the [release notes](docs/RELEASE_0.5.1.md).
 
 ## Why use it
 

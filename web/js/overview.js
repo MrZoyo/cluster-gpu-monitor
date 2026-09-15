@@ -77,6 +77,8 @@ window.Views.overview = (function () {
       [0, 10, 40, 70, 90, 100].map((v) => el("span", { style: `left:${v}%` }, [String(v)])));
     const scale = el("div", { class: "util-scale" }, [bar, ticks]);
     const children = [el("span", { class: "legend-cap" }, [I18n.t('utilization_pct')]), scale];
+    children.push(el("span", { class: "degraded-legend", title: I18n.t('gpu_degraded_legend_detail') },
+      [el("span", { class: "sw degraded-sw", "aria-hidden": "true" }), I18n.t('gpu_degraded_legend')]));
     if (hasPlanned) {
       children.push(el("span", { class: "planned-legend" },
         [el("span", { class: "sw planned-sw" }), I18n.t('planned')]));

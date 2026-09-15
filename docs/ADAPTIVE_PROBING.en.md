@@ -22,8 +22,16 @@ have a subtle orange breathing border and static card stripes. Recovery has its 
 Reduced-motion settings disable animation. Tooltips show the effective query interval and last
 valid observation; the host detail page also displays this explanation directly.
 
-A failed GPU query makes current utilization null; an old value is shown only as a previous
-observation. Unknown cards contribute to `cards_unknown`, not `cards_idle`. If only process
+The “Overload / Delay” legend uses an 18×18px swatch with the same yellow border and stripes.
+At widths up to 1180px, header controls move to another row. Phones show online counts and data age
+on separate lines. Long breadcrumbs truncate with their full text on hover, preserving room for status.
+
+A failed GPU query makes current utilization null. While the host remains online, cards can
+show the recent utilization from its last complete sample for up to 180 seconds while keeping the
+average below it. Yellow borders and stripes provide the status cue, explained by “Overload / Delay”
+in the utilization legend. The tooltip gives the last sample time. After that limit, or when the host goes offline, the fallback
+is hidden. `last_sample.util_recent` serves this display only and does not enter current statistics.
+Unknown cards contribute to `cards_unknown`, not `cards_idle`. If only process
 collection fails, completed GPU metrics remain valid, while process data is marked unavailable.
 
 ## Settings and timing
@@ -31,26 +39,29 @@ collection fails, completed GPU metrics remain valid, while process data is mark
 Old configuration files receive these defaults in `[collector]`:
 
 ```toml
-gpu_slow_s = 10
+ssh_connect_timeout_s = 15
+gpu_slow_s = 15
 gpu_timeout_s = 20
 gpu_backoff_s = 60
-gpu_recover_s = 5
-gpu_recover_count = 3
+gpu_recover_s = 10
+gpu_recover_count = 2
 ```
 
-A GPU phase taking at least 10 seconds, a timeout or a collection error activates cooldown only
+SSH connections can take up to 15 seconds to tolerate brief network delays.
+A GPU phase taking at least 15 seconds, a timeout or a collection error activates cooldown only
 for that host. Subsequent GPU query starts are at least `max(poll_interval_s,gpu_backoff_s)` seconds
 apart. Host heartbeats continue at `poll_interval_s`, normally 30 seconds. A due GPU query shares
-that heartbeat's SSH connection. Three consecutive valid queries taking less than five seconds
+that heartbeat's SSH connection. Two consecutive valid queries taking less than ten seconds
 restore the normal interval; another slow/failed attempt resets the recovery streak.
 
 Configuration requires `gpu_recover_s < gpu_slow_s <= gpu_timeout_s`. Cooldown, recovery count and
-confirmed vendor survive collector restarts. Scheduling uses a monotonic clock while running and
+confirmed vendor survive collector restarts. Review explicitly configured thresholds when upgrading.
+Scheduling uses a monotonic clock while running and
 never catches up missed queries.
 
 The GPU timeout covers detection, metrics and process collection together. Remote termination uses
 TERM followed by KILL after two seconds. The outer SSH deadline is
-`max(ssh_total_timeout_s,ssh_connect_timeout_s+cpu_sample_gap_s+gpu_timeout_s+5)`, or 34 seconds with
+`max(ssh_total_timeout_s,ssh_connect_timeout_s+cpu_sample_gap_s+gpu_timeout_s+5)`, or 41 seconds with
 defaults. Heartbeat-only rounds omit the GPU budget. This lets the remote timeout report its result
 before the SSH client exits. Heartbeats and collection attempts expire after
 `max(120,4*poll_interval_s)` seconds. A stopped collector yields unknown, not fleet-wide offline.
@@ -94,12 +105,13 @@ is not backfilled or rewritten. GPU hours remain a trend estimate and failed rou
 ## Upgrade and rollback
 
 Back up the database and configuration. Run `gpumon initdb` with the new code before starting the
-new read-only Web service, then start the new collector/Web release. The migration idempotently
-adds two tables and nullable rollup columns, with no historical backfill or existing-index rebuild.
+new read-only Web service, then start the new collector/Web release. Upgrades from v0.4.0 or older
+idempotently add two tables and nullable rollup columns, with no historical backfill or existing-index rebuild.
+Upgrading from v0.5.0 to v0.5.1 requires no additional schema changes.
 The private deployment workflow backs up first, applies the additive schema, then validates both
 the new Web and the rollback version before switching.
 
-Remove the five new configuration keys before rolling back to a strict older parser, if they were
+Remove the five GPU configuration keys before rolling back to v0.4.0 or older, if they were
 explicitly added. Extra database tables/columns may remain. Older statistics code ignores adaptive
 weights, so cross-version comparisons must account for its fixed-interval estimates.
 

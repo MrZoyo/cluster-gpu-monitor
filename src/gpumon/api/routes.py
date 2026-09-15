@@ -29,6 +29,8 @@ router = APIRouter(prefix="/api")
 
 # 繁忙阈值：瞬时利用率 ≥ 该值视为“在用”
 BUSY_THRESHOLD = 10
+# 卡片以黄色边框提示历史值时的最大样本年龄，不影响实时值或历史统计。
+PREVIOUS_SAMPLE_DISPLAY_MAX_AGE_S = 180
 
 _TOPOLOGY_CLUSTER_FIELDS = (
     "id", "key", "name", "sort_order", "capacity_group",
@@ -422,7 +424,12 @@ def overview(window: str = Query("24h")):
                     "util_recent": util_recent,
                     "last_sample": None if now_row or not last_row else {
                         "ts": last_row["ts"], "util_gpu": last_row["util_gpu"],
-                        "mem_used_mib": last_row["mem_used_mib"]},
+                        "mem_used_mib": last_row["mem_used_mib"],
+                        # 短暂失败时供卡片显示并提示；不回填 now、忙闲统计或使用人。
+                        # 只允许当前主机最后一次完整采样，避免掉卡后复用旧卡数据。
+                        "util_recent": recent_by_gpu.get(gid) if (
+                            host_online and 0 <= now - last_row["ts"] <= PREVIOUS_SAMPLE_DISPLAY_MAX_AGE_S and
+                            last_row["ts"] == st.get("last_ok_ts")) else None},
                     "process_data_available": bool(now_row and st.get("apps_ok") != 0),
                     "avg": a.get("avg"), "coverage": a.get("coverage"),
                     "users": users,

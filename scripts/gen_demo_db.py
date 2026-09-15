@@ -417,8 +417,9 @@ def write_collector_status(conn: sqlite3.Connection, topo: Topology, now: int,
         for i, (c, h) in enumerate(hosts):
             hid = conn.execute("SELECT id FROM host WHERE key=?", (h["key"],)).fetchone()[0]
             offline = i == len(hosts) - 1 and len(hosts) > 3
-            state = "unknown" if offline else {1: "slow", 2: "timeout", 3: "recovering"}.get(i, "ok")
-            cutoff = anchor - 1200 if offline else anchor - 180 if state == "timeout" else None
+            state = "unknown" if offline else {1: "slow", 2: "timeout", 3: "recovering", 4: "unknown"}.get(i, "ok")
+            cutoff = anchor - 1200 if offline else (
+                anchor - 210 if state == "timeout" else anchor - 60 if state == "unknown" else None)
             if cutoff is not None:
                 # Only the newly generated synthetic DB is edited. Keep a real gap
                 # behind the stale-data example, including per-user history.
@@ -432,21 +433,22 @@ def write_collector_status(conn: sqlite3.Connection, topo: Topology, now: int,
             sampled = conn.execute(
                 "SELECT MAX(s.ts) FROM sample_gpu s JOIN gpu_card g ON g.id=s.gpu_id WHERE g.host_id=?", (hid,)
             ).fetchone()[0]
-            slow = state in ("slow", "timeout", "recovering")
+            slow = state in ("slow", "timeout", "recovering", "unknown")
             interval = 60 if slow else TICK
             error = "GPU query timed out (synthetic demo)" if state == "timeout" else (
-                "Host heartbeat failed (synthetic demo)" if offline else None)
+                "Host heartbeat failed (synthetic demo)" if offline else
+                "SSH connection interrupted (synthetic demo)" if state == "unknown" else None)
             heartbeat = anchor - 1200 if offline else anchor
             conn.execute(
                 "INSERT INTO collector_status(host_id,last_try_ts,last_ok_ts,gpus_seen,consec_fail,last_error) "
-                "VALUES(?,?,?,?,?,?)", (hid, anchor, sampled, c["gpus_per_host"], 39 if offline else int(state == "timeout"), error))
+                "VALUES(?,?,?,?,?,?)", (hid, anchor, sampled, c["gpus_per_host"], 39 if offline else int(state in ("timeout", "unknown")), error))
             conn.execute("""
                 INSERT INTO host_probe_state(host_id,last_heartbeat_ts,last_gpu_try_ts,gpu_status,
                     gpu_elapsed_s,apps_ok,metrics_ok,gpu_error,gpu_poll_interval_s,next_gpu_try_ts,fast_successes,vendor)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (hid, heartbeat, anchor, state, {"slow":12.4,"timeout":20.0,"recovering":1.2}.get(state,0.4),
-                  int(not offline and state != "timeout" and sampled is not None),
-                  int(not offline and state != "timeout" and sampled is not None), error,
+            """, (hid, heartbeat, anchor, state, {"slow":17.4,"timeout":20.0,"recovering":1.2,"unknown":None}.get(state,0.4),
+                  int(not offline and state not in ("timeout", "unknown") and sampled is not None),
+                  int(not offline and state not in ("timeout", "unknown") and sampled is not None), error,
                   interval, anchor+interval, 1 if state == "recovering" else 0, None))
     return removed
 

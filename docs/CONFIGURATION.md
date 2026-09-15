@@ -274,16 +274,16 @@ Host my-node-1
 ```toml
 [collector]
 poll_interval_s = 30        # 正常采集与主机心跳间隔
-ssh_connect_timeout_s = 8   # SSH 建连超时
+ssh_connect_timeout_s = 15   # SSH 建连超时
 ssh_total_timeout_s = 20    # SSH 超时基线；GPU 阶段会加上建连与清理预算
 max_concurrency = 8         # 同时 SSH 几台。机器多可以调大，注意跳板机承受能力
 cpu_sample_gap_s = 1        # 远端两次读 /proc/stat 的间隔，用于算 CPU 利用率
 ssh_output_limit_bytes = 4194304 # 单机单轮输出上限（最高 16 MiB），超限终止 SSH
-gpu_slow_s = 10            # GPU 阶段达到此耗时后降频
+gpu_slow_s = 15            # GPU 阶段达到此耗时后降频
 gpu_timeout_s = 20         # GPU 阶段整体超时，随后最多 2 秒清理
 gpu_backoff_s = 60         # 异常主机 GPU 查询的最小间隔
-gpu_recover_s = 5          # 恢复必须小于此耗时
-gpu_recover_count = 3      # 连续快速成功次数
+gpu_recover_s = 10          # 恢复必须小于此耗时
+gpu_recover_count = 2      # 连续快速成功次数
 
 [retention]
 raw_days = 35               # 原始样本保留天数（最低 31 天）

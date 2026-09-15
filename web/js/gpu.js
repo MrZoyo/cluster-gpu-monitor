@@ -30,6 +30,9 @@ window.Views.gpu = (function () {
     root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/host/${h.key}`) }, [I18n.t('back_to', { name: h.display_name })]));
     if (UI.hostHealth(h) !== "online") root.appendChild(
       el("div", { class: "note probe-note" }, [UI.hostStatusDetail(h)]));
+    if (g.last_sample?.util_recent != null) root.appendChild(
+      el("div", { class: "note" }, [I18n.t("gpu_last_value", {
+        value: fmtPct(g.last_sample.util_gpu), time: UI.ago(g.last_sample.ts)})]));
 
     const n = g.now || {};
     const kpi = [

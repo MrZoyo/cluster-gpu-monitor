@@ -103,6 +103,7 @@ def test_overview_summary_and_users_agree_when_gpu_fails(tmp_path, monkeypatch, 
     assert host['system']['ncpu'] == 8
     assert host['gpus'][0]['now'] is None
     assert host['gpus'][0]['last_sample']['ts'] == 1000
+    assert host['gpus'][0]['last_sample']['util_recent'] == 0
     assert host['gpus'][0]['users'] == [] and not host['gpus'][0]['process_data_available']
     assert data['summary']['cards_idle'] == 0
     assert data['summary']['cards_unknown'] == 1
@@ -115,6 +116,48 @@ def test_overview_summary_and_users_agree_when_gpu_fails(tmp_path, monkeypatch, 
     assert public['online'] and public['health'] == 'overloaded' and public['util_pct'] == [None]
     expired = public_summary._render(snap, 1151)['hosts'][0]
     assert not expired['online'] and expired['health'] == 'unknown'
+
+
+@pytest.mark.parametrize('age, heartbeat, expected', [
+    (28, True, 80), (91, True, 80), (180, True, 80),
+    (181, True, None), (121, False, None), (-1, True, None),
+])
+def test_previous_display_expires_without_promoting_old_metrics(
+        tmp_path, monkeypatch, configured, age, heartbeat, expected):
+    store = make_store(tmp_path)
+    store.record_round(1000, [observed(1000)])
+    now = 1000 + age
+    store.record_round(now, [ProbeResult(host_key='test', ok=False,
+        host_reachable=heartbeat, gpu_status='unknown', gpu_poll_interval_s=60, apps_ok=False)])
+    monkeypatch.setattr(routes, 'get_store', lambda: store)
+    monkeypatch.setattr(routes.time, 'time', lambda: now)
+    monkeypatch.setattr(routes, '_topology_with_inventory_placeholders', lambda: (
+        store.get_topology(), [], {'c': {'status': 'active'}}, {'test': {'status': 'active', 'note': None, 'note_i18n': None, 'meta': {}}}))
+    monkeypatch.setattr(routes, '_get_avg', lambda *a, **kw: [])
+    data = routes.overview('12h')
+    gpu = data['clusters'][0]['hosts'][0]['gpus'][0]
+    assert gpu['last_sample']['util_recent'] == expected
+    assert gpu['now'] is None and gpu['util_recent'] is None
+    assert gpu['users'] == [] and not gpu['process_data_available']
+    assert data['summary']['cards_unknown'] == 1
+    assert data['summary']['cards_idle'] == data['summary']['cards_busy'] == 0
+    assert store.write_conn().execute('SELECT COUNT(*) FROM sample_gpu').fetchone()[0] == 1
+
+
+def test_previous_display_does_not_resurrect_a_missing_card(tmp_path, monkeypatch, configured):
+    store = make_store(tmp_path)
+    store.record_round(1000, [observed(1000)])
+    changed = observed(1030)
+    changed.gpus[0].uuid = 'GPU-replacement'
+    store.record_round(1030, [changed])
+    monkeypatch.setattr(routes, 'get_store', lambda: store)
+    monkeypatch.setattr(routes.time, 'time', lambda: 1031)
+    monkeypatch.setattr(routes, '_topology_with_inventory_placeholders', lambda: (
+        store.get_topology(), [], {'c': {'status': 'active'}}, {'test': {'status': 'active', 'note': None, 'note_i18n': None, 'meta': {}}}))
+    monkeypatch.setattr(routes, '_get_avg', lambda *a, **kw: [])
+    gpus = routes.overview('12h')['clusters'][0]['hosts'][0]['gpus']
+    assert gpus[0]['now'] is None and gpus[0]['last_sample']['util_recent'] is None
+    assert gpus[1]['now']['util_gpu'] == 80 and gpus[1]['last_sample'] is None
 
 
 def test_missing_metric_keeps_its_own_denominator_across_rollups(tmp_path, configured):

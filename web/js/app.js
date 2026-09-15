@@ -5,7 +5,11 @@ window.GM = (function () {
   let refreshTimer = null;
 
   function go(path) { location.hash = "#" + path; }
-  function crumb(text) { document.getElementById("crumb").textContent = text; }
+  function crumb(text) {
+    const node = document.getElementById("crumb");
+    node.textContent = text;
+    node.title = text;
+  }
 
   function buildLangSwitch() {
     const box = document.getElementById("langSwitch");
@@ -164,7 +168,9 @@ window.GM = (function () {
       if (total > 0 && activeHosts.every((h) => UI.hostHealth(h) === "offline")) cls = "red";
       else if (online < total || age == null || activeHosts.some((h) => UI.hostHealth(h) !== "online") || age > 90) cls = "yellow";
       dot.className = "dot " + cls;
-      txt.textContent = I18n.t('health_online', {online, total, time: UI.ago(hl.last_sample_ts)});
+      txt.replaceChildren(
+        UI.el("span", { class: "health-count" }, [I18n.t('health_online_count', {online, total})]),
+        UI.el("span", { class: "health-age" }, [I18n.t('health_data_age', {time: UI.ago(hl.last_sample_ts)})]));
       dot.parentElement.title = activeHosts.map((h) =>
         `${h.display_name}: ${UI.hostStatus(h)} ${I18n.t('health_cards', {seen: h.gpus_seen ?? 0, expected: h.gpus_expected})}` +
         (h.last_error ? " (" + h.last_error + ")" : "")).join("\n");

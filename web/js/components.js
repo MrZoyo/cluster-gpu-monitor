@@ -190,17 +190,20 @@ window.UI = (function () {
 
   function gpuCard(g, opts) {
     opts = opts || {};
+    const health = opts.host ? hostHealth(opts.host) : (opts.offline ? "offline" : "online");
+    // 后端只为三分钟内的有效历史样本提供回退值；黄色边框提示，时间留在 tooltip。
+    const previous = !g.now && g.util_recent == null &&
+      ["online", "overloaded", "gpu_error"].includes(health) && g.last_sample?.util_recent != null;
     // 大字/底色显示近期(10min)平均利用率（含"连续空闲即置零"），抹平瞬时抖动；瞬时值仅留在 tooltip。
-    const util = g.util_recent != null ? g.util_recent : null;
+    const util = previous ? g.last_sample.util_recent : (g.util_recent ?? null);
     const { bg } = utilColor(util);
     const pct = util == null ? 0 : Math.max(0, Math.min(100, Math.round(util)));
     // 离线：主机断连，实时值已陈旧（后端已置空 now）。显示"离线"而非"—"，与从未采到的 nodata 区分。
-    const health = opts.host ? hostHealth(opts.host) : (opts.offline ? "offline" : "online");
     const offline = health === "offline";
     const unknown = health === "unknown";
-    const degraded = health === "overloaded" || health === "gpu_error";
+    const degraded = previous || health === "overloaded" || health === "gpu_error";
     // 空占：占着显存但 GPU 空闲。低调标记，与"完全没人用"区分。
-    const held = !offline && !unknown && !degraded && usageState(g) === "held";
+    const held = !offline && !unknown && !degraded && !previous && usageState(g) === "held";
     const cls = "card" + (bg == null ? " nodata" : "") +
       (offline ? " offline" : "") + (unknown ? " unknown" : "") + (degraded ? " degraded" : "") + (held ? " held" : "");
     const nowText = offline ? I18n.t('offline') : unknown ? I18n.t('unknown_short') :

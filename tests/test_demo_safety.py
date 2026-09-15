@@ -156,13 +156,15 @@ def test_demo_health_examples_use_export_clock_and_keep_stale_data_unknown(tmp_p
     overview = json.loads((out/'api/overview.24h.json').read_text())
     hosts = [h for c in overview['clusters'] for h in c['hosts']]
     assert len(hosts) == 6
-    assert [h['health'] for h in hosts] == ['online','overloaded','overloaded','overloaded','online','offline']
+    assert [h['health'] for h in hosts] == ['online','overloaded','overloaded','overloaded','gpu_error','offline']
     assert hosts[1]['gpu_status'] == 'slow' and hosts[1]['online']
     assert all(g['now'] is not None for g in hosts[1]['gpus'])
     assert hosts[2]['gpu_status'] == 'timeout' and hosts[2]['online']
     assert all(g['now'] is None and g['last_sample']['ts'] <= overview['now']-180 for g in hosts[2]['gpus'])
+    assert all(g['last_sample']['util_recent'] is None for g in hosts[2]['gpus'])
     assert hosts[3]['gpu_status'] == 'recovering'
-    assert overview['summary']['cards_unknown'] == 16
+    assert all(g['now'] is None and g['last_sample']['util_recent'] is not None for g in hosts[4]['gpus'])
+    assert overview['summary']['cards_unknown'] == 24
     assert overview['summary']['hosts_overloaded'] == 3
     assert overview['summary']['hosts_online'] == 5
     assert overview['summary']['cards_idle'] + overview['summary']['cards_busy'] + overview['summary']['cards_unknown'] == 48

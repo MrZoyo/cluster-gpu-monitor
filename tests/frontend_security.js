@@ -66,3 +66,50 @@ assert.match(overviewSource, /I18n\.localize\(c\.note_i18n \?\? c\.note\)/);
 assert.match(overviewSource, /I18n\.localize\(h\.note_i18n \?\? h\.note\)/);
 assert.match(clusterSource, /I18n\.localize\(c\.note_i18n \?\? c\.note\)/);
 assert.match(hostSource, /I18n\.localize\(host\.note_i18n \?\? host\.note\)/);
+
+// Exercise rendered card labels, including zero, instead of matching JS source.
+context.I18n = i18n;
+context.document = {
+  body: { dataset: {} },
+  createTextNode(text) { return { textContent: text }; },
+  createElement() {
+    return {
+      children: [], style: {},
+      appendChild(child) { this.children.push(child); },
+      setAttribute(key, value) { this[key] = value; },
+      addEventListener() {},
+      get textContent() { return this.children.map(child => child.textContent).join(""); },
+    };
+  },
+};
+const cardText = (card, cls) => card.children.find(child => child.className?.split(" ").includes(cls))?.textContent;
+const host = { health: "gpu_error", online: true, last_ok_ts: 1000, gpu_poll_interval_s: 60 };
+const gpu = { index: 0, now: null, util_recent: null, avg: 42, users: [],
+  last_sample: { ts: 1000, util_gpu: 80, util_recent: 75 } };
+for (const locale of ["zh", "en"]) {
+  i18n.locale = locale;
+  const previous = context.window.UI.gpuCard(gpu, { host });
+  assert.equal(cardText(previous, "now"), "75");
+  assert.equal(cardText(previous, "avg"), i18n.t("avg") + " 42");
+  assert.ok(previous.className.split(" ").includes("degraded"));
+  assert.match(previous.title, /80%/);
+  assert.ok(previous.title.includes(context.window.UI.ago(1000)));
+  for (const value of [0, 100]) {
+    const card = context.window.UI.gpuCard({ ...gpu, last_sample: { ...gpu.last_sample, util_recent: value } }, { host });
+    assert.equal(cardText(card, "now"), String(value));
+    assert.equal(cardText(card, "avg"), i18n.t("avg") + " 42");
+  }
+  const expired = context.window.UI.gpuCard({ ...gpu, last_sample: { ...gpu.last_sample, util_recent: null } }, { host });
+  assert.equal(cardText(expired, "now"), i18n.t("gpu_delayed_short"));
+  for (const health of ["offline", "unknown"]) {
+    const card = context.window.UI.gpuCard(gpu, { host: { ...host, health, online: false } });
+    assert.equal(cardText(card, "now"), i18n.t(health === "offline" ? "offline" : "unknown_short"));
+    assert.equal(cardText(card, "avg"), health === "offline" ? undefined : i18n.t("avg") + " 42");
+  }
+  const recovered = context.window.UI.gpuCard({ ...gpu, now: { util_gpu: 12 }, util_recent: 20 }, { host });
+  assert.equal(cardText(recovered, "now"), "20");
+  assert.equal(cardText(recovered, "avg"), i18n.t("avg") + " 42");
+  const aging = context.window.UI.gpuCard(gpu, { host: { ...host, health: "online" } });
+  assert.ok(aging.className.split(" ").includes("degraded"));
+  assert.equal(cardText(aging, "avg"), i18n.t("avg") + " 42");
+}

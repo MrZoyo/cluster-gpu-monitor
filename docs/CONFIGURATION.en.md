@@ -252,16 +252,16 @@ Setting the vendor also avoids false detection when a host has tools from multip
 ```toml
 [collector]
 poll_interval_s = 30        # Normal host-heartbeat and GPU polling interval
-ssh_connect_timeout_s = 8   # SSH connection timeout
+ssh_connect_timeout_s = 15   # SSH connection timeout
 ssh_total_timeout_s = 20    # SSH timeout baseline; also reserves GPU phase and cleanup budgets
 max_concurrency = 8         # How many simultaneous SSH connections. Increase for many machines, mind bastion capacity
 cpu_sample_gap_s = 1        # Interval between two /proc/stat reads on remote, for CPU utilization
 ssh_output_limit_bytes = 4194304 # Per-host output budget (max 16 MiB); excess terminates SSH
-gpu_slow_s = 10            # Slow GPU phase triggers cooldown
+gpu_slow_s = 15            # Slow GPU phase triggers cooldown
 gpu_timeout_s = 20         # GPU phase timeout, plus up to 2s for cleanup
 gpu_backoff_s = 60         # Minimum GPU interval for affected hosts
-gpu_recover_s = 5          # Recovery requires faster responses
-gpu_recover_count = 3      # Consecutive fast successes required
+gpu_recover_s = 10          # Recovery requires faster responses
+gpu_recover_count = 2      # Consecutive fast successes required
 
 [retention]
 raw_days = 35               # Raw sample retention days (minimum 31)

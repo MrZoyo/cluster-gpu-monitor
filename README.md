@@ -3,8 +3,8 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.0">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.5.0">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.1">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.1-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.5.1">
   </a>
 </p>
 
@@ -30,6 +30,8 @@
 [配置参考](docs/CONFIGURATION.md) ·
 [原生部署](docs/DEPLOYMENT.md) ·
 [Docker Compose](docs/DOCKER.md)
+
+v0.5.1 改进了短暂采集失败时的卡片显示、过载图例和窄屏顶栏，见[发布说明](docs/RELEASE_0.5.1.md)。
 
 ## 为什么用它
 

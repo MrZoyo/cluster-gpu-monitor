@@ -84,6 +84,8 @@ window.I18n = {
 
       // 利用率图例
       'utilization_pct': '利用率 %',
+      'gpu_degraded_legend': '过载 / 延迟',
+      'gpu_degraded_legend_detail': '黄色边框与斜纹表示 GPU 查询缓慢或暂时中断；数值可能沿用最近一次有效采样，悬停卡片查看时间。',
       'expand_collapse': '展开 / 收起',
 
       // 主机行
@@ -114,6 +116,8 @@ window.I18n = {
 
       // 健康状态
       'health_online': '在线 {online}/{total} · 数据 {time}',
+      'health_online_count': '在线 {online}/{total}',
+      'health_data_age': '数据 {time}',
       'health_host_online': '在线',
       'health_host_offline': '离线',
       'health_cards': '{seen}/{expected} GPU',
@@ -266,6 +270,8 @@ window.I18n = {
 
       // Utilization Legend
       'utilization_pct': 'Utilization %',
+      'gpu_degraded_legend': 'Overload / Delay',
+      'gpu_degraded_legend_detail': 'Yellow borders and stripes indicate a slow or interrupted GPU query. Values may come from the last valid sample; hover over a card for its timestamp.',
       'expand_collapse': 'Expand / Collapse',
 
       // Host Row
@@ -296,6 +302,8 @@ window.I18n = {
 
       // Health Status
       'health_online': 'Online {online}/{total} · Data {time}',
+      'health_online_count': 'Online {online}/{total}',
+      'health_data_age': 'Data {time}',
       'health_host_online': 'online',
       'health_host_offline': 'offline',
       'health_cards': '{seen}/{expected} GPUs',

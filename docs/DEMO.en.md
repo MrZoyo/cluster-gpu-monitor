@@ -102,6 +102,7 @@ no real information. Do not use it as a shortcut for production data.
 ## Adaptive status examples
 
 Generated demo data includes a reachable host with slow GPU queries, a GPU timeout with stale
-observations, a recovering host, and an unreachable host. The static exporter freezes the same
-clock used by these states. Orange borders, card stripes, cooldown text and unknown utilization
+observations, a recovering host, a brief interruption retaining recent values and averages, and
+an unreachable host. The static exporter freezes the same clock used by these states.
+Yellow borders, card stripes, the overload legend, cooldown text and unknown utilization
 are rendered by the production UI code. All examples are synthetic; no GPU queries are sent.

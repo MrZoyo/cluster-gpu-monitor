@@ -89,11 +89,12 @@ def test_remote_lock_prevents_overlapping_query(rig):
     assert not calls.exists()
 
 
-def test_cooldown_and_three_fast_recoveries_survive_restart():
-    cfg = CollectorSettings()
+@pytest.mark.parametrize('recover_count', [2, 3])
+def test_cooldown_and_configured_recoveries_survive_restart(recover_count):
+    cfg = CollectorSettings(gpu_recover_count=recover_count)
     state = PollState(30)
-    slow = ProbeResult(host_key='test', ok=True, gpu_status='slow', gpu_elapsed_s=12)
-    state.finish(slow, cfg, 0, 12, 1012, True)
+    slow = ProbeResult(host_key='test', ok=True, gpu_status='slow', gpu_elapsed_s=17)
+    state.finish(slow, cfg, 0, 17, 1017, True)
     assert state.due == 60 and state.interval == 60
     saved = {'gpu_poll_interval_s': 60, 'next_gpu_try_ts': slow.next_gpu_try_ts,
              'fast_successes': 0, 'gpu_status': 'slow'}
@@ -102,14 +103,35 @@ def test_cooldown_and_three_fast_recoveries_survive_restart():
     skip = ProbeResult(host_key='test', ok=False, host_reachable=True, gpu_status='skipped')
     state.finish(skip, cfg, 510, 511, 1041, False)
     assert state.due == 530 and state.fast == 0
-    for i in range(3):
+    for i in range(recover_count):
         start = state.due
-        good = ProbeResult(host_key='test', ok=True, gpu_status='ok', gpu_elapsed_s=1)
-        state.finish(good, cfg, start, start+1, 1100+i*60, True)
-        assert state.interval == (30 if i == 2 else 60)
-        assert good.gpu_status == ('ok' if i == 2 else 'recovering')
+        good = ProbeResult(host_key='test', ok=True, gpu_status='ok', gpu_elapsed_s=8)
+        state.finish(good, cfg, start, start+8, 1100+i*60, True)
+        assert state.interval == (30 if i == recover_count - 1 else 60)
+        assert good.gpu_status == ('ok' if i == recover_count - 1 else 'recovering')
     state.finish(slow, cfg, 800, 812, 1800, True)
     assert state.fast == 0 and state.interval == 60
+
+
+@pytest.mark.parametrize('elapsed, expected', [(12, 'ok'), (15, 'slow'), (19, 'slow')])
+def test_probe_uses_relaxed_defaults_with_bounded_timeout(monkeypatch, elapsed, expected):
+    cfg = CollectorSettings()
+    monkeypatch.setattr(ssh, 'load_settings', lambda: SimpleNamespace(collector=cfg))
+    async def spawn(*args, **kwargs):
+        assert 'ConnectTimeout=15' in args
+        return SimpleNamespace(returncode=0)
+    async def communicate(*args):
+        return b'probe fixture', b''
+    async def wait(task, timeout):
+        assert timeout == 41  # 15s connection + 1s CPU + 20s GPU + 5s cleanup
+        return await task
+    monkeypatch.setattr(ssh.asyncio, 'create_subprocess_exec', spawn)
+    monkeypatch.setattr(ssh, '_communicate_limited', communicate)
+    monkeypatch.setattr(ssh.asyncio, 'wait_for', wait)
+    monkeypatch.setattr(ssh, 'parse_probe', lambda *args: ProbeResult(
+        host_key='test', ok=True, gpu_status='ok', gpu_elapsed_s=elapsed))
+    result = asyncio.run(ssh.probe('test', 'unused', 'nvidia'))
+    assert result.gpu_status == expected
 
 
 def make_store(tmp_path):

@@ -140,6 +140,9 @@ Host heartbeat, collector attempts, and GPU samples are checked independently. T
 is `max(120,4*poll_interval_s)` seconds. Slow/failed GPU queries do not alone make a host offline.
 An expired collector produces `unknown`, while a reachable host with slow GPU queries is `overloaded`.
 Unknown current values are not idle; previous observations remain explicitly historical.
+For reachable hosts, the latest complete sample can support a card display fallback for 180 seconds.
+Yellow borders and stripes indicate its status, tooltips retain the time, and the average stays visible.
+This does not change unknown values in current statistics, users or anonymous summaries.
 See [adaptive probing](ADAPTIVE_PROBING.en.md) for protocol, timing and migration details.
 
 ### GPU hours
