@@ -32,6 +32,9 @@ window.I18n = {
       'gpu_degraded_hosts': 'GPU 采集降级主机',
       'gpu_process_unknown': '进程数据暂不可用',
       'offline': '离线',
+      'offline_duration': '离线 {duration}',
+      'offline_duration_unknown': '离线 · 时长未知',
+      'offline_duration_hint': '时长按上次成功响应时间估算',
       'offline_n_times': '离线 {n} 次',
       'planned': '待接入',
       'idle': '空闲',
@@ -74,6 +77,10 @@ window.I18n = {
       'ago_minutes': '{n} 分钟前',
       'ago_hours': '{n} 小时前',
       'ago_days': '{n} 天前',
+      'duration_seconds': '{n} 秒',
+      'duration_minutes': '{n} 分钟',
+      'duration_hours': '{n} 小时',
+      'duration_days': '{n} 天',
       'data_at': '数据 {time}',
 
       // 警报面板
@@ -218,6 +225,9 @@ window.I18n = {
       'gpu_degraded_hosts': 'Hosts with degraded GPU collection',
       'gpu_process_unknown': 'Process data unavailable',
       'offline': 'Offline',
+      'offline_duration': 'Offline for {duration}',
+      'offline_duration_unknown': 'Offline · duration unknown',
+      'offline_duration_hint': 'Duration estimated from the last successful response',
       'offline_n_times': 'Offline ({n} fails)',
       'planned': 'Planned',
       'idle': 'Idle',
@@ -260,6 +270,10 @@ window.I18n = {
       'ago_minutes': '{n}m ago',
       'ago_hours': '{n}h ago',
       'ago_days': '{n}d ago',
+      'duration_seconds': '{n}s',
+      'duration_minutes': '{n}m',
+      'duration_hours': '{n}h',
+      'duration_days': '{n}d',
       'data_at': 'Data {time}',
 
       // Alert Panel

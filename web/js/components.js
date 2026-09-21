@@ -172,8 +172,33 @@ window.UI = (function () {
       ? h.health : (h.online ? "online" : "offline");
   }
 
+  function lastResponseAge(h) {
+    // 与后端可达性判断一致：优先心跳，旧数据回退到完整采样时间。
+    const ts = h.last_heartbeat_ts || h.last_ok_ts;
+    const now = Math.floor(Date.now() / 1000);
+    return Number.isFinite(ts) && ts > 0 && ts <= now ? now - ts : null;
+  }
+
+  function duration(seconds) {
+    const units = [[86400, "duration_days"], [3600, "duration_hours"],
+      [60, "duration_minutes"], [1, "duration_seconds"]];
+    const parts = [];
+    for (const [size, key] of units) {
+      const n = Math.floor(seconds / size);
+      if (n) parts.push(I18n.t(key, {n}));
+      seconds %= size;
+      if (parts.length === 2) break;
+    }
+    return parts.join(" ") || I18n.t("duration_seconds", {n: 0});
+  }
+
   function hostStatus(h) {
     const health = hostHealth(h);
+    if (health === "offline") {
+      const age = lastResponseAge(h);
+      return age == null ? I18n.t("offline_duration_unknown") :
+        I18n.t("offline_duration", {duration: duration(age)});
+    }
     if (health === "overloaded" && h.gpu_status === "recovering") return I18n.t("gpu_recovering");
     return I18n.t({online: "online", offline: "offline", planned: "planned",
       overloaded: "gpu_overloaded", gpu_error: "gpu_error", unknown: "monitor_unknown"}[health]);
@@ -181,6 +206,9 @@ window.UI = (function () {
 
   function hostStatusDetail(h) {
     const health = hostHealth(h);
+    if (health === "offline" && lastResponseAge(h) != null) {
+      return hostStatus(h) + " · " + I18n.t("offline_duration_hint");
+    }
     if (health === "overloaded" || health === "gpu_error") {
       return hostStatus(h) + " · " + I18n.t("gpu_probe_cadence", {seconds: h.gpu_poll_interval_s || 60}) +
         " · " + I18n.t("gpu_last_sample", {time: ago(h.last_ok_ts)});

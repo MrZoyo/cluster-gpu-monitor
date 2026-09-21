@@ -22,6 +22,12 @@ have a subtle orange breathing border and static card stripes. Recovery has its 
 Reduced-motion settings disable animation. Tooltips show the effective query interval and last
 valid observation; the host detail page also displays this explanation directly.
 
+Offline host labels include a duration, such as “Offline for 2h 15m”, updated on each page refresh.
+The estimate starts at the last successful host heartbeat, falling back to the last complete sample
+for older data without a heartbeat. Missing or invalid timestamps show “Offline · duration unknown”.
+This is not the exact failure time. GPU degradation, planned hosts and unknown monitoring status
+do not display an offline duration.
+
 The “Overload / Delay” legend uses an 18×18px swatch with the same yellow border and stripes.
 At widths up to 1180px, header controls move to another row. Phones show online counts and data age
 on separate lines. Long breadcrumbs truncate with their full text on hover, preserving room for status.
