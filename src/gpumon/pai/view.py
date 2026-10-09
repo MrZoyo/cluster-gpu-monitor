@@ -93,6 +93,27 @@ def overview(store, cfg, now):
                           for w in own if w["WorkloadStatus"] == "Running")})
     measured = [c["compute"]["value"] for c in physical.values() if c["compute"] and c["compute"]["fresh"]]
     assigned = sum(bool(c["assignments"]) for c in physical.values())
+    # Task mean is per observed GPU, including idle-time jobs without physical mapping.
+    running_ids = {w["WorkloadId"] for w in workloads if w["WorkloadStatus"] == "Running"
+                   and w.get("scheduled") is not False}
+    task_values = [m["value"] for m in metrics if m["metric"] == "compute" and m["fresh"]
+                   and m["workload_id"] in running_ids and fresh("workloads")]
+    # Only confirmed unallocated cards contribute zero. Missing allocated metrics and
+    # uncertain allocation remain unknown, never silently reducing the cluster mean.
+    cluster_values = []
+    unallocated = 0
+    for node in nodes:
+        node_assigned = sum(bool(c["assignments"]) for c in node["cards"])
+        requested = number(node.get("RequestGPU"))
+        free_known = (fresh("nodes") and fresh("workloads") and fresh("pods:" + node["NodeName"])
+                      and requested is not None and requested <= node_assigned)
+        for card in node["cards"]:
+            if card["compute"] and card["compute"]["fresh"]:
+                cluster_values.append(card["compute"]["value"])
+            elif not card["assignments"] and free_known:
+                cluster_values.append(0)
+                unallocated += 1
+    cluster_complete = bool(physical) and len(cluster_values) == len(physical) and fresh("nodes")
     state = "ok"
     if not round_info:
         state = "waiting"
@@ -107,4 +128,8 @@ def overview(store, cfg, now):
             "summary": {"physical_gpus": len(physical) if fresh("nodes") else None,
                 "mapped_gpus": assigned if fresh("nodes") and all(fresh("pods:" + n["NodeName"]) for n in nodes) else None,
                 "measured_gpus": len(measured), "metric_denominator": len(physical),
-                "compute_mean": sum(measured) / len(measured) if measured else None}}
+                "compute_mean": sum(measured) / len(measured) if measured else None,
+                "task_compute_mean": sum(task_values) / len(task_values) if task_values else None,
+                "task_measured_gpus": len(task_values),
+                "cluster_compute_mean": sum(cluster_values) / len(physical) if cluster_complete else None,
+                "cluster_known_gpus": len(cluster_values), "cluster_unallocated_gpus": unallocated}}

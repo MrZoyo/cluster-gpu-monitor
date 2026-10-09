@@ -3,8 +3,8 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.0">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.6.0">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.1">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.1-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.6.1">
   </a>
 </p>
 
@@ -32,8 +32,8 @@
 [原生部署](docs/DEPLOYMENT.md) ·
 [Docker Compose](docs/DOCKER.md)
 
-v0.6.0 新增默认关闭的 PAI 监控、页面异常恢复提示和虚构 PAI 演示。
-见[发布说明](docs/RELEASE_0.6.0.md)与 [PAI 指南](docs/PAI.md)。
+v0.6.1 区分 PAI 任务平均与集群占用，明确闲时资源口径，并修复首页空值显示。
+见[发布说明](docs/RELEASE_0.6.1.md)与 [PAI 指南](docs/PAI.md)。
 
 ## 为什么用它
 
@@ -177,7 +177,7 @@ HTTPS 反向代理之后；仓库同时提供原生 systemd/Caddy 部署和 Dock
 | --- | --- | --- |
 | 选择文档 | [文档目录](docs/README.md) | [Documentation index](docs/README.en.md) |
 | 使用 PAI 监控 | [PAI 指南](docs/PAI.md) | [PAI guide](docs/PAI.en.md) |
-| 了解本版变更 | [v0.6.0 发布说明](docs/RELEASE_0.6.0.md) | [Release notes](docs/RELEASE_0.6.0.md#english) |
+| 了解本版变更 | [v0.6.1 发布说明](docs/RELEASE_0.6.1.md) | [Release notes](docs/RELEASE_0.6.1.md#english) |
 | 配置机器与运行参数 | [配置参考](docs/CONFIGURATION.md) | [Configuration reference](docs/CONFIGURATION.en.md) |
 | 理解采集、存储与指标 | [架构与设计取舍](docs/ARCHITECTURE.md) | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) |
 | 生成或发布演示数据 | [Demo 指南](docs/DEMO.md) | [Demo guide](docs/DEMO.en.md) |

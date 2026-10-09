@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.0 release notes](RELEASE_0.6.0.md#english) — optional PAI, page recovery guidance, and demo data.
+Current version: [v0.6.1 release notes](RELEASE_0.6.1.md#english) — PAI task means, cluster utilization, and home status fixes.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |

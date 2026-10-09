@@ -96,7 +96,7 @@ def test_invalid_and_missing_values_never_become_zero(cfg):
 
 def seed(store):
     store.save("identity", {"AccountId": "123"}, now=960)
-    store.save("nodes", [{"NodeName": "node", "GPU": "2", "GPUType": "Test"}], now=960)
+    store.save("nodes", [{"NodeName": "node", "GPU": "2", "GPUType": "Test", "RequestGPU": 1}], now=960)
     store.save("workloads", [{"WorkloadId": "job", "WorkloadName": "job", "WorkloadStatus": "Running",
         "UserId": "person", "UserName": "Alice", "requested_gpu": 1}], now=960)
     store.save("users", [{"UserId": "person", "Username": "Alice", "used_gpu": 0}], now=960)
@@ -111,11 +111,63 @@ def test_denominator_owner_and_conflict_are_preserved(store, cfg):
         "timestamp": 900, "Value": 42, "userId": "account_not_person"}], cfg, "job", "compute", 960), 0)
     d = overview(store, cfg, 1000)
     assert d["summary"] == {"physical_gpus": 2, "mapped_gpus": 1, "measured_gpus": 1,
-                            "metric_denominator": 2, "compute_mean": 42}
+                            "metric_denominator": 2, "compute_mean": 42,
+                            "task_compute_mean": 42, "task_measured_gpus": 1,
+                            "cluster_compute_mean": 21, "cluster_known_gpus": 2,
+                            "cluster_unallocated_gpus": 1}
     assert d["nodes"][0]["cards"][1]["compute"] is None
     assert d["nodes"][0]["cards"][0]["assignments"][0]["owner_id"] == "person"
     assert d["users"][0]["conflict"] is True
     assert overview(store, cfg, 2000)["summary"]["compute_mean"] is None
+
+
+@pytest.mark.parametrize("failure", ["metric", "pods", "nodes", "workloads", "unmapped"])
+def test_cluster_mean_does_not_replace_missing_data_with_zero(store, cfg, failure):
+    seed(store)
+    store.put_metrics(normalize_metrics([{"jobId": "job", "pod": "pod", "gpu": "0",
+        "timestamp": 900, "Value": 100}], cfg, "job", "compute", 960), 0)
+    if failure == "unmapped":
+        store.save("nodes", [{"NodeName": "node", "GPU": "2", "RequestGPU": 2}], now=960)
+    else:
+        name = {"metric": "metric:job:compute", "pods": "pods:node"}.get(failure, failure)
+        store.failure(name, "unavailable", now=980)
+    summary = overview(store, cfg, 1000)["summary"]
+    assert summary["cluster_compute_mean"] is None
+    assert summary["cluster_known_gpus"] < 2
+
+
+def test_task_mean_includes_unmapped_idle_gpus_with_equal_per_gpu_weight(store, cfg):
+    seed(store)
+    workloads = store.sources()["workloads"]["payload"]
+    workloads += [{"WorkloadId": "idle", "WorkloadName": "idle", "WorkloadStatus": "Running",
+                   "UserId": "person", "requested_gpu": 2, "oversold": True},
+                  {"WorkloadId": "queued", "WorkloadName": "queued", "WorkloadStatus": "Running",
+                   "UserId": "person", "requested_gpu": 1, "scheduled": False}]
+    store.save("workloads", workloads, now=960)
+    for wid, values in [("job", [0]), ("idle", [90, 90]), ("queued", [100])]:
+        store.save("metric:" + wid + ":compute", [{"sampled_at": 900}], now=960)
+        store.put_metrics(normalize_metrics([{"jobId": wid, "pod": "pod", "gpu": str(i),
+            "timestamp": 900, "Value": value} for i, value in enumerate(values)], cfg, wid, "compute", 960), 0)
+    summary = overview(store, cfg, 1000)["summary"]
+    assert summary["task_compute_mean"] == 60  # Three GPUs, not two task averages (45%).
+    assert summary["task_measured_gpus"] == 3
+    assert summary["cluster_compute_mean"] == 0  # Mapped idle GPU plus one unallocated card.
+    store.failure("metric:idle:compute", "unavailable", now=980)
+    assert overview(store, cfg, 1000)["summary"]["task_measured_gpus"] == 1
+
+
+def test_unallocated_cluster_is_zero_but_empty_or_stale_cluster_unknown(store, cfg):
+    seed(store)
+    store.save("workloads", [], now=960)
+    store.save("nodes", [{"NodeName": "node", "GPU": "2", "RequestGPU": 0}], now=960)
+    store.save("pods:node", [], now=960)
+    summary = overview(store, cfg, 1000)["summary"]
+    assert summary["cluster_compute_mean"] == 0
+    assert summary["cluster_unallocated_gpus"] == 2
+    assert summary["task_compute_mean"] is None
+    assert overview(store, cfg, 2000)["summary"]["cluster_compute_mean"] is None
+    store.save("nodes", [], now=960)
+    assert overview(store, cfg, 1000)["summary"]["cluster_compute_mean"] is None
 
 
 def test_oversold_queue_health_and_allocation_fields_are_kept():

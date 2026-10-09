@@ -17,7 +17,9 @@ const workload = { WorkloadId: 'job-example', WorkloadName: 'Example development
 const pai = { enabled: true, state: 'ok', now, region: 'example-region', workspace_id: 'workspace-example',
   quota_id: 'quota-example', poll_interval_s: 120, round: { finished_at: now },
   sources: [{ name: 'nodes', state: 'ok', fetched_at: now }],
-  summary: { physical_gpus: 8, mapped_gpus: 1, measured_gpus: 1, compute_mean: 20 },
+  summary: { physical_gpus: 8, mapped_gpus: 1, measured_gpus: 1, compute_mean: 20,
+    task_compute_mean: 20, task_measured_gpus: 1, cluster_compute_mean: 2.5,
+    cluster_known_gpus: 8, cluster_unallocated_gpus: 7 },
   quotas: [{ quota_id: 'quota-example', quota_name: 'Example quota', gpu_capacity: 8, gpu_used: 1 }],
   nodes: [{ NodeName: 'node-example', GPU: 8, GPUType: 'Example GPU', NodeStatus: 'Ready', RequestGPU: 1,
     mapping_state: 'ok', health_rate: 10000, cards: Array.from({ length: 8 }, (_, index) => ({ index,
@@ -94,6 +96,18 @@ const server = http.createServer((req, res) => {
     enabled = true;
     await normal.goto(base); await normal.locator('.home-stats').first().waitFor();
     check('PAI enabled: two entry cards', await normal.locator('a.home-card').count() === 2);
+    const queuedWorkload = pai.workloads.pop();
+    for (const queued of [false, true, false]) {
+      if (queued) pai.workloads.push(queuedWorkload);
+      else if (pai.workloads.length > 1) pai.workloads.pop();
+      await normal.evaluate(() => GM.render());
+      const text = await normal.locator('.pai-scope .home-status').innerText();
+      check('home queue transition: no null ' + queued, !text.includes('null') && text.includes('排队') === queued);
+    }
+    pai.workloads.push(queuedWorkload);
+    const homeStats = normal.locator('.pai-scope .mini-metric');
+    check('home cluster denominator', (await homeStats.nth(1).innerText()).includes('3%'));
+    check('home task mean', (await homeStats.nth(2).innerText()).includes('20%'));
     for (const route of ['overview', 'nodes', 'workloads', 'users', 'user/user-example', 'node/node-example', 'workload/job-example', 'ranking']) {
       await normal.evaluate(async route => { history.replaceState(null, '', '#/pai/' + route); await GM.render(); }, route);
       await normal.locator('.pai-tabs').waitFor();
@@ -105,7 +119,12 @@ const server = http.createServer((req, res) => {
         check('filter survives refresh', await normal.locator('.pai-search').inputValue() === 'Example development');
       }
       if (route === 'workload/job-example') check('metric charts', await normal.locator('.pai-chart canvas').count() === 3);
-      if (route === 'overview') await shot(normal, 'pai-overview');
+      if (route === 'overview') {
+        const cluster = normal.locator('.pai-kpis .kpi').filter({ hasText: '集群占用' });
+        check('cluster utilization replaces memory mean', (await cluster.locator('.v').innerText()) === '3%' && !(await normal.locator('.pai-kpis').innerText()).includes('显存均值'));
+        check('task mean label', (await normal.locator('.pai-kpis').innerText()).includes('计算均值（任务）'));
+        await shot(normal, 'pai-overview');
+      }
     }
     check('normal pages: no uncaught errors', errors.length === 0);
     for (const width of [320, 390, 430]) {
@@ -118,6 +137,16 @@ const server = http.createServer((req, res) => {
           return r.left >= 0 && r.right <= innerWidth + 1 && n.scrollWidth <= n.clientWidth + 1;
         }));
         check(`all PAI tabs visible: ${width}px ${locale}, three-digit counts`, fits);
+      }
+    }
+    for (const width of [320, 1440]) for (const locale of ['zh', 'en']) {
+      await normal.setViewportSize({ width, height: 960 });
+      for (const route of ['/', '/pai']) {
+        await normal.evaluate(async ({ locale, route }) => {
+          I18n.locale = locale; history.replaceState(null, '', '#' + route); await GM.render();
+        }, { locale, route });
+        check(`summary fits ${width} ${locale} ${route}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+        await shot(normal, `summary-${route === '/' ? 'home' : 'pai'}-${locale}-${width}`);
       }
     }
     await normal.close(); enabled = false;

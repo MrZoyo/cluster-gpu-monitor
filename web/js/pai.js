@@ -476,20 +476,26 @@ window.PaiUI = (() => {
       el("div", { class: "pai-slim-items" }, [
         item(t("未见占用", "no visible allocation"), String(s.free), s.free ? "good" : ""),
         item(t("已分配", "allocated"), `${sum.mapped_gpus ?? "—"} / ${s.physical}`),
-        item(t("计算均值", "compute"), pct(sum.compute_mean)),
+        item(t("计算均值（任务）", "task mean"), pct(sum.task_compute_mean)),
+        item(t("集群占用", "cluster utilization"), pct(sum.cluster_compute_mean)),
         item(t("运行任务", "running"), String(s.running)),
         s.oversoldGpu ? item(t("闲时卡", "idle-time"), String(s.oversoldGpu), "oversold") : null,
       ]),
     ]);
   }
 
+  const taskMeanHint = (sum) => t(`运行任务中 ${sum.task_measured_gpus || 0} 张 GPU 的新鲜指标，每卡等权；含闲时任务，缺测不计零`,
+    `Fresh metrics from ${sum.task_measured_gpus || 0} GPUs in running tasks, weighted equally per GPU; includes idle-time tasks, excludes missing values`);
+  const clusterMeanHint = (sum) => t(`全部 ${gpus(sum.physical_gpus)} 张物理卡平均，未占用按 0%；已确认 ${sum.cluster_known_gpus || 0} 张，缺测时不显示均值`,
+    `Mean across all ${gpus(sum.physical_gpus)} physical GPUs; unallocated = 0%. ${sum.cluster_known_gpus || 0} confirmed; no mean when data is incomplete`);
+
   function kpis(m) {
     const s = m.sx, sum = m.summary || {};
     const items = [
       [String(s.physical), t("物理 GPU", "Physical GPUs"), plural(m.nodes.length, "节点", "node") + (s.types.length ? " · " + s.types.join(" / ") : "")],
       [sum.mapped_gpus == null ? "—" : `${sum.mapped_gpus} / ${s.physical}`, t("已分配物理卡", "Allocated GPUs"), t("按 Pod GPUIndexes 去重", "Deduplicated from Pod GPUIndexes")],
-      [pct(sum.compute_mean), t("计算均值", "Compute mean"), t(`${sum.measured_gpus || 0} 张已测物理卡，缺测不计 0`, `${sum.measured_gpus || 0} measured cards; gaps excluded`)],
-      [pct(s.memoryMean), t("显存均值", "Memory mean"), t("同上，单卡显存百分比", "Per-card memory percentage")],
+      [pct(sum.task_compute_mean), t("计算均值（任务）", "Compute mean (tasks)"), taskMeanHint(sum)],
+      [pct(sum.cluster_compute_mean), t("集群占用", "Cluster utilization"), clusterMeanHint(sum)],
       [String(s.running), t("运行中任务", "Running workloads"), `DSW ${s.dsw} · DLC ${s.dlc}`],
       [String(s.oversoldGpu), t("闲时资源卡（配额外）", "Idle-time GPUs"), t(`${s.oversoldJobs} 个任务 · 不计入配额 · 可被回收`, `${s.oversoldJobs} workloads · outside quota · reclaimable`), "idle"],
     ];
@@ -538,8 +544,8 @@ window.PaiUI = (() => {
         link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", doc("selfHeal")]))),
       el("div", { class: "pai-node-grid" }, m.nodes.map(nodeTile)),
       s.oversoldGpu ? el("div", { class: "pai-note oversold" }, [t(
-        `另有 ${s.oversoldGpu} 张闲时资源任务卡（${s.oversoldJobs} 个任务）：节点不公开、来源未核实，可能就在本图节点上，所以不与上面的物理卡相加。`,
-        `${s.oversoldGpu} idle-time GPUs in ${s.oversoldJobs} workloads: node names hidden and location unverified (possibly on these nodes), so they are not added to physical cards. `), doc("idle")]) : null,
+        `${s.oversoldJobs} 个运行任务使用闲时资源，申请共 ${s.oversoldGpu} 卡。这是任务申请量，与图中物理卡的对应关系未确认，不代表额外物理容量。`,
+        `${s.oversoldJobs} running workloads use idle-time resources and request ${s.oversoldGpu} GPUs in total. This is requested capacity, not additional physical capacity; correspondence with the GPUs shown is unconfirmed. `), doc("idle")]) : null,
     ], { tools: legend(), id: "paiHeat" });
   }
 
@@ -1054,7 +1060,7 @@ window.PaiUI = (() => {
   }
 
   return { el, t, ui, LOW, isLow, num, pct, pct1, gpus, ago, clock, href, link, note, chip, typeChip, bar, prepare, cell, card, legend,
-    header, slimHeader, kpis, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel,
+    header, slimHeader, kpis, taskMeanHint, clusterMeanHint, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel,
     sourcesPanel, docsPanel, queueBanner, healText, rankingPanel, strategyText, specText, dur, doc, oversoldChip, stateCell, nodeChips, OVERSOLD_TIP, drawSeries, metaList, miniMetrics, rangeText, conflictFlag };
 })();
 
@@ -1062,7 +1068,7 @@ window.PaiUI = (() => {
 Views.home = { async render(root) {
   const { el, t, note, chip, pct, ago } = PaiUI;
   GM.crumb(t("首页", "Home"));
-  const stat = (k, v) => el("div", { class: "mini-metric" }, [el("span", {}, [k]), el("b", {}, [v])]);
+  const stat = (k, v, hint) => el("div", { class: "mini-metric", title: hint || null }, [el("span", {}, [k]), el("b", {}, [v])]);
   const shell = (cls, eyebrow, title, desc, path, go) => {
     const body = el("div", { class: "home-body" }, [note(t("读取中…", "Loading…"))]);
     const status = el("div", { class: "home-status" });
@@ -1088,20 +1094,20 @@ Views.home = { async render(root) {
       if (!root.isConnected) return;
       if (!raw.nodes) { pai.status.replaceChildren(chip(raw.state)); pai.body.replaceChildren(note(t("暂无快照", "No snapshot yet"))); return; }
       const m = PaiUI.prepare(raw), s = m.sx;
-      pai.status.replaceChildren(chip(m.state), el("small", {}, [ago(m.updatedAt)]),
+      pai.status.replaceChildren(...[chip(m.state), el("small", {}, [ago(m.updatedAt)]),
         s.queued.length ? el("span", { class: "pai-chip " + (s.unschedulable.length ? "bad" : "warn") },
-          [t(`排队 ${s.queued.length}`, `${s.queued.length} queued`) + (s.unschedulable.length ? t(`（${s.unschedulable.length} 可能排不上）`, ` (${s.unschedulable.length} at risk)`) : "")]) : null);
+          [t(`排队 ${s.queued.length}`, `${s.queued.length} queued`) + (s.unschedulable.length ? t(`（${s.unschedulable.length} 可能排不上）`, ` (${s.unschedulable.length} at risk)`) : "")]) : null].filter(Boolean));
       GM.setSourceHealth("pai", m.state, m.updatedAt);
       pai.body.replaceChildren(
         el("div", { class: "home-stats" }, [
           stat(t("已分配 / 物理卡", "Allocated / physical"), `${m.summary.mapped_gpus ?? "—"} / ${s.physical}`),
-          stat(t("未见占用的卡", "No visible allocation"), String(s.free)),
-          stat(t("计算均值", "Compute mean"), pct(m.summary.compute_mean)),
+          stat(t("集群占用", "Cluster utilization"), pct(m.summary.cluster_compute_mean), PaiUI.clusterMeanHint(m.summary)),
+          stat(t("计算均值（任务）", "Compute mean (tasks)"), pct(m.summary.task_compute_mean), PaiUI.taskMeanHint(m.summary)),
           stat(t("运行任务", "Running"), String(s.running)),
         ]),
         stripOf(m.cardsFlat.map((c) => c.state === "free" ? "free" : c.compute ? c.compute.value : null)),
         note([t(`每格一张物理卡（${s.physical}）。`, `One square per physical GPU (${s.physical}). `),
-          s.oversoldGpu ? t(`另有 ${s.oversoldGpu} 张闲时资源任务卡，节点未公开，不与物理卡相加。`, `${s.oversoldGpu} idle-time GPUs have hidden nodes and are not added. `) : "",
+          s.oversoldGpu ? t(`闲时任务申请 ${s.oversoldGpu} 卡，物理位置未确认，不计入图中卡数。`, `Idle-time tasks request ${s.oversoldGpu} GPUs. Their physical location is unconfirmed; this count is not added to the grid. `) : "",
           s.unmapped.length ? t(`${s.unmapped.length} 个配额内任务未关联到节点。`, `${s.unmapped.length} in-quota workloads lack node mapping.`) : ""].join("")),
       );
     }).catch(() => { if (root.isConnected) { PageRecovery.show(); pai.status.replaceChildren(chip("error")); pai.body.replaceChildren(note(t("PAI 快照读取失败", "Failed to read PAI snapshot"))); } }),

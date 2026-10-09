@@ -94,6 +94,16 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 - Charts retain workload/pod/GPU dimensions and source timestamps in fixed 120-second buckets. Late points
   can revise buckets; gaps are not zero. Metrics remain available without a physical-node mapping, and
   current physical ownership is not backfilled into history.
+- “Compute mean (tasks)” on home and overview averages the latest fresh compute metrics across GPUs in
+  running tasks, with equal weight per GPU, including unmapped idle-time tasks. Unallocated GPUs and missing
+  or stale values are excluded. This is not an equal-weight average of task averages.
+- “Cluster utilization” averages across all physical GPUs, counting confirmed unallocated cards as 0%.
+  Confirmation requires fresh nodes, workloads and pod mappings, with node GPU requests no greater than
+  mapped allocations. Missing allocated metrics or uncertain allocation produces “—”, not assumed idle.
+  Unmapped idle-time tasks are excluded from both numerator and denominator. For example, 64 fully busy
+  and 64 unallocated GPUs in a 128-GPU cluster yield 50%.
+- Workload and user detail pages may retain last-successful stale metrics and mark them; the overview task
+  mean uses fresh metrics only.
 - Low-utilization cues use a ten-minute mean with at least five minute samples. Stale values remain visible
   but do not trigger that cue. CPU/RAM utilization is a percentage of the pod limit; requested amounts are separate.
 - Attribution comes from RAM owners/submitters, not CloudMonitor's account-level `userId` or individual
@@ -134,6 +144,10 @@ monitoring. Configure a separate PAI collector service and CLI for your deployme
 | `/api/pai/nodes` / `/api/pai/workloads` / `/api/pai/users` | Node, workload or user subsets |
 | `/api/pai/metrics/series?workload_id=...` | One hour by default, configurable to 1–6 hours; at most 20,000 source points with `truncated` on overflow |
 | `/api/pai/ranking?window=24h` | Hourly user aggregates for existing windows, at most 200 users |
+
+Overview `summary` adds `task_compute_mean` / `task_measured_gpus` and `cluster_compute_mean` /
+`cluster_known_gpus` / `cluster_unallocated_gpus`. The legacy `compute_mean` remains the fresh mapped
+physical-GPU mean; `metric_denominator` is the physical count, not the task mean denominator.
 
 ## Validation, demo and limits
 
