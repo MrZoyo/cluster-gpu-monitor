@@ -1484,6 +1484,10 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   .pai-head .alert b { font-size: 22px; }
   .pai-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pai-kpis .hint { white-space: normal; }
+  /* Keep every tab reachable when production counts need two or three digits. */
+  .pai-tabs { flex-wrap: wrap; overflow-x: visible; gap: 2px; }
+  .pai-tabs a { flex: 1 0 auto; justify-content: center; gap: 4px; padding: 10px 7px; font-size: 12px; }
+  .pai-tabs .count { padding: 1px 4px; }
   .home-card { padding: 18px; min-height: 0; }
   .home-strip { grid-template-columns: repeat(16, minmax(0, 1fr)); }
   .pai-node-grid { grid-template-columns: minmax(0, 1fr); }

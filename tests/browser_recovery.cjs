@@ -108,6 +108,18 @@ const server = http.createServer((req, res) => {
       if (route === 'overview') await shot(normal, 'pai-overview');
     }
     check('normal pages: no uncaught errors', errors.length === 0);
+    for (const width of [320, 390, 430]) {
+      await normal.setViewportSize({ width, height: 900 });
+      for (const locale of ['zh', 'en']) {
+        await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
+        await normal.locator('.pai-tabs .count').evaluateAll(nodes => nodes.forEach(n => { n.textContent = '128'; }));
+        const fits = await normal.locator('.pai-tabs a').evaluateAll(nodes => nodes.every(n => {
+          const r = n.getBoundingClientRect();
+          return r.left >= 0 && r.right <= innerWidth + 1 && n.scrollWidth <= n.clientWidth + 1;
+        }));
+        check(`all PAI tabs visible: ${width}px ${locale}, three-digit counts`, fits);
+      }
+    }
     await normal.close(); enabled = false;
 
     for (const [platform, shortcut, width, locale] of [['Win32', 'Ctrl+Shift+R', 1440, 'zh'], ['MacIntel', 'Command+Shift+R', 1440, 'zh'], ['Linux', 'Ctrl+Shift+R', 390, 'en']]) {
