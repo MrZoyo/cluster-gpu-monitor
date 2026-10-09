@@ -2,6 +2,8 @@
 
 [简体中文](DOCKER.md) | English | [Documentation](README.en.md) | [Project home](../README.en.md)
 
+The supplied Compose configuration deploys bare-metal services. PAI is disabled by default; the image includes neither a cloud CLI nor a configured PAI collector service. See [PAI deployment](PAI.en.md#production-deployment) for the additional setup.
+
 The project supports two persistent deployment paths:
 
 - [Native deployment](DEPLOYMENT.en.md): Python virtual environment, systemd, immutable releases,

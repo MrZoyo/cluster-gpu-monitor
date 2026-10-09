@@ -6,12 +6,14 @@ This is the field reference. Start with the [README quick start](../README.en.md
 See [Architecture and trade-offs](ARCHITECTURE.en.md) for metric semantics and the
 [deployment guide](DEPLOYMENT.en.md) for production installation.
 
-Two files, both under `config/`, both **not checked into repo** (`.gitignore` already excludes them):
+Bare-metal monitoring uses the following two private configuration files (`.gitignore` excludes both):
 
 | File | What it controls | What to do after changing |
 | --- | --- | --- |
 | `inventory.yaml` | Which machines, how to group them, how to display | `systemctl restart gpumon-collector` (add `gpumon-web` for retired machines) |
 | `settings.toml` | Poll interval, retention days, port, privacy | Restart corresponding service (poll params→collector, port→web) |
+
+Optional PAI monitoring uses a separate `config/pai.toml`, not fields in `settings.toml`. See [PAI configuration](PAI.en.md#configuration) for fields and defaults. `gpumon config-check` validates bare-metal settings; the PAI collector validates its own configuration on startup.
 
 Start by copying from examples:
 

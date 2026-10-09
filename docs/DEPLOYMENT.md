@@ -2,6 +2,8 @@
 
 简体中文 | [English](DEPLOYMENT.en.md) | [文档目录](README.md) | [项目首页](../README.md)
 
+本页介绍裸金属服务的原生部署。可选 PAI 的 CLI、专用账号、独立数据目录和服务资源边界见 [PAI 部署](PAI.md#生产部署)。
+
 把 cluster-gpu-monitor 装到一台常开的机器上（下称 **监控机**），它通过 SSH 轮询各 GPU 节点，
 自己跑一个网页服务给团队看。目标节点上**不装任何东西**，也不需要 root。
 

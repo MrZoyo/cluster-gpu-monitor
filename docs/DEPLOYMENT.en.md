@@ -2,6 +2,8 @@
 
 [简体中文](DEPLOYMENT.md) | English | [Documentation](README.en.md) | [Project home](../README.en.md)
 
+This guide deploys the bare-metal services. See [PAI deployment](PAI.en.md#production-deployment) for the optional cloud CLI, dedicated identity, separate data directory and service limits.
+
 Install cluster-gpu-monitor on a machine that stays online (hereinafter **monitor host**). It polls each GPU node via SSH and runs a web service for your team. Target nodes **install nothing** and need no root access.
 
 This guide covers native deployment with a Python virtual environment, systemd, and immutable

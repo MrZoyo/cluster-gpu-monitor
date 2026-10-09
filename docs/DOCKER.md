@@ -2,6 +2,8 @@
 
 简体中文 | [English](DOCKER.en.md) | [文档目录](README.md) | [项目首页](../README.md)
 
+以下 Compose 默认部署裸金属服务。PAI 默认关闭，镜像不附带云 CLI，也未配置 PAI 采集服务；额外接入方式见 [PAI 指南](PAI.md#生产部署)。
+
 本项目支持两种常驻部署方式：
 
 - [原生部署](DEPLOYMENT.md)：Python 虚拟环境、systemd、不可变 release 和 Caddy。

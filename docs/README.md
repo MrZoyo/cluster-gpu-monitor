@@ -7,12 +7,12 @@ README 负责说明项目是否适合你，并提供最短可运行路径。这�
 
 ## 从哪里开始
 
-当前版本：[v0.5.1 发布说明](RELEASE_0.5.1.md)（延迟容忍、图例与窄屏顶栏）。
+当前版本：[v0.6.0 发布说明](RELEASE_0.6.0.md)（可选 PAI、页面恢复提示与演示数据）。
 
 | 你想做什么 | 从这里开始 | 里面有什么 |
 | --- | --- | --- |
 | 第一次运行项目 | [README 快速开始](../README.md#快速开始) | 安装依赖、准备配置、试采一轮、打开网页 |
-| 试用可选 PAI 监控 | [PAI 原型](PAI_PROTOTYPE.md) | 默认关闭、独立配置、只读采集和部署边界 |
+| 启用可选 PAI 监控 | [PAI 指南](PAI.md) | 默认关闭、独立配置、只读采集和部署边界 |
 | 添加机器或调整运行参数 | [配置参考](CONFIGURATION.md) | inventory、settings、状态、标签、保留期与并发 |
 | 区分 GPU 查询慢与主机离线 | [采集保护](ADAPTIVE_PROBING.md) | 心跳、降频、恢复、统计权重与升级 |
 | 理解数据口径 | [架构与设计取舍](ARCHITECTURE.md) | SSH 采集、SQLite、聚合、在线状态、GPU·小时与安全边界 |
@@ -42,7 +42,7 @@ README 负责说明项目是否适合你，并提供最短可运行路径。这�
 ## 文档边界
 
 - `README.md` 是产品入口，不复制完整字段和运维步骤。
-- `CONFIGURATION.md` 是配置字段的事实来源。
+- `CONFIGURATION.md` 维护裸金属配置字段；`PAI.md` 维护可选 PAI 的配置和口径。
 - `ARCHITECTURE.md` 解释当前代码的行为和有意设计，不承诺路线图。
 - `DEPLOYMENT.md` 保留 Python + systemd 的生产步骤。
 - `DOCKER.md` 保留 Docker Compose 的构建、运行和维护步骤。

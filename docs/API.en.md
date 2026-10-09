@@ -2,6 +2,8 @@
 
 [简体中文](API.md) | English | [Documentation index](README.en.md)
 
+This page documents the bare-metal summary. PAI has separate [API documentation](PAI.en.md#read-only-api) and is excluded from the anonymous summary.
+
 `GET /api/v1/gpu-summary` returns recent utilization for all non-retired hosts in one
 JSON response. It accepts no query parameters. Operators can make this one GET
 endpoint anonymous; the default authenticated reverse proxy still protects it.

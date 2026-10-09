@@ -1,4 +1,4 @@
-# Optional local prototype. No access keys or tokens belong in this file.
+# Optional PAI monitoring. No access keys or tokens belong in this file.
 # Without this file (or with enabled = false) the web UI is the plain bare-metal monitor: no PAI entry at all.
 enabled = false
 region = "cn-hangzhou"

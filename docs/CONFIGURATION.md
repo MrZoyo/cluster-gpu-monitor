@@ -5,12 +5,14 @@
 本文是字段手册。第一次运行先看 [README 快速开始](../README.md#快速开始)；采集与指标口径见
 [架构与设计取舍](ARCHITECTURE.md)，生产安装见[部署指南](DEPLOYMENT.md)。
 
-两个文件，都在 `config/` 下，都**不入库**（`.gitignore` 已排除）：
+裸金属监控使用以下两个私有配置文件（`.gitignore` 已排除）：
 
 | 文件 | 管什么 | 改完要做什么 |
 | --- | --- | --- |
 | `inventory.yaml` | 有哪些机器、怎么分组、怎么显示 | `systemctl restart gpumon-collector`（退役机器再加 `gpumon-web`） |
 | `settings.toml` | 采集周期、保留天数、端口、隐私 | 重启对应服务（采集参数→collector，端口→web） |
+
+可选 PAI 使用独立的 `config/pai.toml`，不加入 `settings.toml`。启用方式、字段与默认值见 [PAI 配置](PAI.md#配置)。`gpumon config-check` 校验裸金属配置；PAI 在采集器启动时单独校验。
 
 先从样例复制：
 

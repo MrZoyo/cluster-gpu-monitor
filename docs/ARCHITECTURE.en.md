@@ -15,7 +15,7 @@ scheduler. It prioritizes:
 - Retaining long-term utilization and attributing VRAM occupancy to operating-system usernames.
 - Supporting capacity planning with a small self-hosted service rather than a full telemetry stack.
 
-It does not provide second-level alerts, scheduling, quotas, audit-grade identity mapping, or
+It does not provide second-level alerts, scheduling, quota enforcement, audit-grade identity mapping, or
 billing. A single SQLite service is also not intended for thousand-node high-frequency telemetry.
 
 ## Data flow
@@ -37,6 +37,17 @@ Read-only FastAPI ──► vanilla HTML / JavaScript / bundled ECharts
 `inventory.yaml` defines logical topology and stable identifiers. Addresses, ports, accounts,
 keys, and `ProxyJump` stay in the collector account's `~/.ssh/config`. Changing a network path
 does not change database identity.
+
+## Optional PAI data flow
+
+A separate PAI collector uses a compatible CLI to call read-only cloud APIs and stores quotas, nodes,
+pod mappings, workloads and metrics in `pai.db`. Web reads the database without cloud credentials;
+page requests never initiate cloud collection. Disabled PAI has no registered routes.
+
+Bare-metal usage is attributed to operating-system usernames; PAI uses RAM owners/submitters.
+The two forms of accounting stay separate. PAI retains raw metrics for 24 hours by default and
+workload/UTC-hour usage estimates for 32 days. Physical counts, requests, quota allocation and
+idle-time capacity are distinct; see the [PAI guide](PAI.en.md) for semantics and service isolation.
 
 ## Collection model
 

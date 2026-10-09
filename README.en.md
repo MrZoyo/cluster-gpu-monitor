@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.1">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.1-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.5.1">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.6.0">
   </a>
 </p>
 
@@ -24,7 +24,8 @@ Monitor NVIDIA and AMD GPU servers from one central host over SSH. Cluster GPU M
 long-term utilization, per-user GPU hours, and idle-but-occupied cards in SQLite. Target nodes
 need no agent, scheduler, or root access.
 
-**It answers “do we need more GPUs?”, not only “which GPU is free right now?”**
+Optionally monitor Alibaba Cloud PAI quotas, nodes, DSW/DLC workloads, and user usage.
+The two resource types keep separate accounting; installations without PAI retain the bare-metal UI and setup.
 
 [Live demo](https://mrzoyo.github.io/cluster-gpu-monitor/) ·
 [Documentation](docs/README.en.md) ·
@@ -32,8 +33,8 @@ need no agent, scheduler, or root access.
 [Native deployment](docs/DEPLOYMENT.en.md) ·
 [Docker Compose](docs/DOCKER.en.md)
 
-v0.5.1 improves card display during brief collection failures, the overload legend and the responsive
-header. See the [release notes](docs/RELEASE_0.5.1.md).
+v0.6.0 adds opt-in PAI monitoring, page recovery guidance, and synthetic PAI demo data.
+See the [release notes](docs/RELEASE_0.6.0.md#english) and [PAI guide](docs/PAI.en.md).
 
 ## Why use it
 
@@ -64,6 +65,8 @@ fleets, second-level alerts, quotas, or billing.
   notes, planned capacity, and soft retirement.
 - **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`; set `vendor` in the
   inventory for known hosts to skip the extra per-round detection.
+- **Optional PAI monitoring:** read cloud APIs into a separate SQLite snapshot for quotas, GPUs, workload charts, and user rankings; disabled by default.
+- **Page recovery guidance:** loading failures and incompatible responses show the force-reload shortcut for the operating system.
 - **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
   build step.
 
@@ -105,6 +108,13 @@ ssh -N -L 8848:127.0.0.1:8848 <monitor-host>
 
 Then open `http://127.0.0.1:8848/`. See the [native deployment guide](docs/DEPLOYMENT.en.md) for
 systemd, backups, and HTTPS, or the [Docker Compose guide](docs/DOCKER.en.md) for containers.
+
+## Enable PAI (optional)
+
+Follow the [PAI guide](docs/PAI.en.md) to configure a separate CLI identity, `config/pai.toml`,
+and collector process. Web reads snapshots without cloud credentials. Ordinary installations
+need no PAI configuration and expose neither PAI navigation nor `/api/pai/*` routes.
+The PAI data in the [live demo](https://mrzoyo.github.io/cluster-gpu-monitor/) is entirely fictional.
 
 ## Two deployment paths
 
@@ -183,6 +193,8 @@ and rollback.
 | Goal | English | 简体中文 |
 | --- | --- | --- |
 | Choose a guide | [Documentation index](docs/README.en.md) | [文档目录](docs/README.md) |
+| Use PAI monitoring | [PAI guide](docs/PAI.en.md) | [PAI 指南](docs/PAI.md) |
+| Read about this release | [Release notes](docs/RELEASE_0.6.0.md#english) | [v0.6.0 发布说明](docs/RELEASE_0.6.0.md) |
 | Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
 | Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
 | Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |
@@ -191,8 +203,8 @@ and rollback.
 
 ## Limits
 
-- User attribution comes from the operating-system username reported by `ps`; it does not model
-  scheduler jobs, projects, or cost centers.
+- Bare-metal attribution uses operating-system usernames; PAI uses RAM owners/submitters.
+  Identities and usage are not merged, and observed GPU hours are not billing records.
 - The NVIDIA path runs in production. The AMD parser has synthetic fixtures but still needs
   validation on real AMD hardware.
 - SQLite suits small and medium self-managed fleets, not thousand-node high-frequency telemetry.

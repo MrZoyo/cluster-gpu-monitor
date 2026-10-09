@@ -1,0 +1,135 @@
+# PAI 监控
+
+简体中文 | [English](PAI.en.md) | [文档目录](README.md) | [项目首页](../README.md)
+
+PAI 模块展示阿里云 PAI 配额、节点、DSW/DLC 任务、用户用量和利用率曲线。独立采集进程
+通过云 API 读取数据并写入 `pai.db`；Web 只读本地快照，刷新页面不会调用云 API。
+
+## 默认关闭
+
+不创建 `config/pai.toml`，或保持 `enabled = false`，即可使用原有裸金属监控。
+此时没有 PAI 导航或双入口首页，`/api/pai/*` 返回普通 404，手动访问 `#/pai...` 会回到总览。
+配置缺失或无效也不会注册 PAI 路由。修改启用状态后须重启 Web。
+
+启用后，根页面显示裸金属和 PAI 两个入口，`#/baremetal` 为裸金属总览。既有的集群、主机、
+GPU 和用户排行链接继续有效。两类资源的身份和统计口径不同，页面不合并两边的数据。
+
+## 启动
+
+先完成 [README 快速开始](../README.md#快速开始)，准备 Web 所需的 inventory、settings 和
+裸金属数据库。另行安装并配置 PAI CLI；适配器已在官方 CLI v1.0.1 及使用该引擎的 `pai-tui`
+包装器上验证。`cli_path` 可指向任一兼容可执行文件。采集器使用文件锁，支持 Linux/macOS。
+
+1. 复制 [pai.example.toml](../config/pai.example.toml) 为私有 `config/pai.toml`。
+2. 填入账号、地域、工作空间和根配额，设置 `enabled = true` 和正确的 `cli_path`。
+3. 在采集进程的 CLI 身份中配置只读权限。凭证不写入 TOML、源码或网页。
+4. 先执行一轮采集，再启动常驻采集器和 Web。两个进程使用相同的配置/数据根。
+
+```sh
+export GPUMON_ROOT=/absolute/path/to/runtime
+export GPUMON_PAI_CONFIG="$GPUMON_ROOT/config/pai.toml"
+
+uv run python -m gpumon.pai.collector --once
+uv run python -m gpumon.pai.collector
+# 另一个终端设置相同的两个环境变量，再启动 Web
+uv run gpumon web --host 127.0.0.1 --port 8848
+```
+
+每轮先通过 STS 核实账号；账号不匹配时停止本轮，不继续读取其他资源。采集需要读取配额、
+节点、Pod、任务、用户用量、DLC 任务详情和 CloudMonitor 指标。上线前应在专用身份下验证
+这些读取权限。验证通过不等于证明该身份没有其他权限；本模块不执行写操作探测。
+
+## 配置
+
+相对 `db_path` 以 `GPUMON_ROOT` 为基准。默认读取该根目录下的 `config/pai.toml`；
+`GPUMON_PAI_CONFIG` 可指定其他位置。未知配置字段会校验失败。
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 显式启用；开启时账号、工作空间和配额必填 |
+| `region` | `cn-hangzhou` | 云资源所在地域 |
+| `account_id` / `workspace_id` / `quota_id` | 空 | STS 账号、工作空间、要监控的根配额 |
+| `cli_path` / `profile` | `pai-tui` / 空 | CLI 路径和身份配置名；CLI profile 中的凭证优先于环境变量 |
+| `db_path` | `data/pai.db` | 独立 PAI 数据库，不与裸金属共用 |
+| `baremetal_notice` | 空 | 启用 PAI 后可在裸金属页面显示的说明文字 |
+| `poll_interval_s` / `degraded_interval_s` | `120` / `180` | 正常及连续失败后的采集间隔 |
+| `topology_interval_s` / `stale_after_s` | `300` / `600` | 配额/节点目录缓存周期及普通来源陈旧阈值 |
+| `request_timeout_s` / `round_timeout_s` | `12` / `100` | 单次 CLI 调用与整轮时间预算 |
+| `max_calls` / `concurrency` | `120` / `2` | 每轮最大调用数与并发数；小规格宿主可用单路并发 |
+| `max_pages` / `max_workloads` / `max_nodes` | `8` / `32` / `64` | 分页、任务指标和节点数量边界 |
+| `metric_window_s` / `retention_hours` | `600` / `24` | 重叠回读窗口及原始指标保留时间 |
+| `host_metric_interval_s` | `240` | 任务 CPU/内存利用率的刷新周期 |
+| `job_refresh_s` / `queued_job_refresh_s` | `21600` / `600` | 运行中/排队 DLC 任务详情缓存周期 |
+| `max_job_details` | `8` | 每轮最多刷新多少个 DLC 详情 |
+
+连续两轮失败后降低采集频率，两轮成功后恢复正常。遇到限流停止新请求并至少等待 600 秒，
+连续限流继续退避。超出调用或分页预算时标记失败、保留最近成功值，不把部分结果当完整覆盖。
+各字段范围的事实来源为 [PaiSettings](../src/gpumon/pai/config.py)。
+
+## 页面与数据口径
+
+| 页面 | 内容 |
+| --- | --- |
+| 总览 | 配额分配、物理卡热力图、低利用率提醒、排队任务及来源健康 |
+| 节点 | 逐卡映射、所属配额、健康状态及任务下钻 |
+| 任务 | 搜索/筛选/排序，申请与调度资源、提交策略、单 Pod 规格及近 1 小时曲线 |
+| 用户 | Owner / 提交者名下任务、配额内和闲时资源、用量差异 |
+| 排行 | 按时间窗统计 GPU·小时、利用率加权 GPU·小时、CPU 核·小时和内存 GiB·小时 |
+
+- 卡数按节点和卡号去重；父配额包含子配额，不能相加。申请量、调度量、配额分配和物理卡映射分别展示。
+- 物理卡仅在 Pod 指标 GPU 索引集合与物理 `GPUIndexes` 一致时关联；多任务共享卡或关联不明时保留未知。
+- `UseOversoldResource` 标识已调度任务实际使用的闲时资源，与提交策略和配额共享开关不同。
+  隐藏节点不能证明任务位于已列节点之外；闲时任务卡数不与物理卡总数相加。
+- 排队提示结合提交策略、配额容量和单 Pod 规格，保留平台原始原因。数据不足时不宣称一定无法调度。
+- 利用率曲线按源时间保留任务/Pod/GPU 维度，使用固定 120 秒桶；迟到点可修订已有桶，缺测不计零。
+  未关联物理节点的任务仍可展示指标，历史曲线不回填当前物理归属。
+- 低利用率提醒使用近 10 分钟计算均值，至少 5 个分钟点；陈旧值保留显示，但不参与提醒。
+  CPU/内存利用率为任务 Pod limit 的百分比，申请量另列。
+- 个人归属来自 RAM Owner / 提交者，不使用 CloudMonitor 的主账号 `userId`，也不识别共享容器内的逐进程使用人。
+- GPU·小时只用当轮成功读取、状态为 Running 的任务累计。长间隔最多计两倍降级周期，已知调度量为零时保留零。
+  按 UTC 小时汇总，保留 32 天；窗口边缘可能包含不足一小时的额外数据。这是观测估算，不是计费账单。
+
+页面每 120 秒刷新，保留滚动、筛选和展开状态；输入搜索词时推迟刷新。来源列表展示每项数据的
+获取时间、源采样时间及失败类别。采集失败不代表云节点宕机，“未见占用”也不等于可立即调度。
+节点异常提示只提供处理指引，页面不会重启 DSW、终止 DLC 或修改云资源。
+
+## 生产部署
+
+通用发行包提供采集模块，**不会自动安装云 CLI、创建账号或启用 PAI 服务**。仓库现有 systemd
+和 Compose 服务负责裸金属监控；PAI 需要部署方单独配置采集服务及 CLI。部署时应：
+
+- 为 PAI 配置独立无登录服务账号，固定 CLI 版本和校验和。凭证只注入采集进程；Web 无法读取。
+  使用环境变量时，确认 CLI profile 不会覆盖专用身份。
+- 准备独立数据目录，通过共享组给 Web 读取权限。采集器 UMask 为 0027，新目录/数据库通常为
+  0750/0640；现有目录权限须单独检查。长期写连接维护 WAL/SHM，避免只读访问失败。
+- 按宿主容量设置服务内存、CPU、进程数和请求上限；用至少一个完整采集周期测量实际消耗。
+  配置上限、整轮墙钟时间和实际 CPU/内存占用是不同指标。
+- 分别备份裸金属和 PAI 数据库，使用 SQLite 在线备份。升级后重启独立采集服务；回滚到不含 PAI 的
+  旧代码时停止 PAI 采集并保留数据库、配置和凭证。
+- 使用带认证的 HTTPS 入口。PAI API 不加入匿名 GPU 摘要，也没有“每个用户只能看自己”的应用内 RBAC。
+
+## 只读接口
+
+| 接口 | 内容 |
+| --- | --- |
+| `/api/pai/status` | 启用状态、来源健康、覆盖摘要 |
+| `/api/pai/overview` | 当前完整快照 |
+| `/api/pai/nodes` / `/api/pai/workloads` / `/api/pai/users` | 节点、任务或用户子集 |
+| `/api/pai/metrics/series?workload_id=...` | 默认近 1 小时，可选 1–6 小时；最多 20,000 源点，超限标记 `truncated` |
+| `/api/pai/ranking?window=24h` | 按现有时间窗返回用户小时汇总，最多 200 用户 |
+
+## 验证、演示与边界
+
+运行 `uv run pytest -q tests/test_pai.py` 和 `node tests/frontend_security.js`。
+安装 Playwright 后可运行 `node tests/browser_recovery.cjs`；`CHROME_BIN` 指定浏览器，
+`SHOT_DIR` 可将截图写到仓库外。测试使用合成数据，不调用云 API。
+
+[在线演示](https://mrzoyo.github.io/cluster-gpu-monitor/)通过 `--with-pai` 生成完全虚构的 PAI 数据，
+不读取生产配置、账号或数据库。普通导出不包含 PAI，详见 [Demo 指南](DEMO.md)。
+
+目前没有跨平台统一身份、审计级计费、逐 PID 分账、物理卡精确 GiB 或超过 32 天的 PAI 排行历史。
+云监控上报可能迟到或缺失，物理关联也可能不完整；重叠回读不能保证固定延迟后全部数据齐全。
+
+接口参考：[ListQuotaWorkloads](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listquotaworkloads)、
+[ListQuotas](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listquotas)、
+[DescribeMetricList](https://help.aliyun.com/en/cms/cloudmonitor-1-0/developer-reference/api-cms-2019-01-01-describemetriclist)。

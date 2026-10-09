@@ -3,8 +3,8 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/tree/v0.5.1">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.5.1-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.5.1">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.0">
+    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.0-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.6.0">
   </a>
 </p>
 
@@ -23,7 +23,8 @@
 用一台中心机，通过 SSH 采集多台 NVIDIA / AMD GPU 服务器，把长期利用率、用户 GPU·小时和
 空占情况存进 SQLite。目标节点无需安装 agent，也不要求 Slurm、Kubernetes 或 root 权限。
 
-**它回答“要不要加卡”，不只回答“现在哪张卡空着”。**
+也可启用阿里云 PAI 监控，查看配额、节点、DSW/DLC 任务和用户用量。两类资源分别统计，
+不使用 PAI 时保留原有裸金属页面与安装流程。
 
 [在线演示](https://mrzoyo.github.io/cluster-gpu-monitor/) ·
 [文档目录](docs/README.md) ·
@@ -31,7 +32,8 @@
 [原生部署](docs/DEPLOYMENT.md) ·
 [Docker Compose](docs/DOCKER.md)
 
-v0.5.1 改进了短暂采集失败时的卡片显示、过载图例和窄屏顶栏，见[发布说明](docs/RELEASE_0.5.1.md)。
+v0.6.0 新增默认关闭的 PAI 监控、页面异常恢复提示和虚构 PAI 演示。
+见[发布说明](docs/RELEASE_0.6.0.md)与 [PAI 指南](docs/PAI.md)。
 
 ## 为什么用它
 
@@ -57,6 +59,8 @@ v0.5.1 改进了短暂采集失败时的卡片显示、过载图例和窄屏顶�
 - **多集群拓扑**：算力域 → 集群 → 主机三层结构，支持多语言标签与备注、待接入和软退役。
 - **NVIDIA 与 AMD**：支持自动探测 `nvidia-smi`、`amd-smi` 或 `rocm-smi`；已知厂商时可在
   inventory 填写 `vendor`，跳过首次额外探测。
+- **可选 PAI 监控**：只读云 API，经独立 SQLite 快照展示配额、物理卡、任务曲线与用户排行；默认关闭。
+- **页面异常提示**：加载失败或前后端不兼容时，提示按操作系统使用强制刷新快捷键。
 - **轻量自托管**：SQLite、FastAPI、原生 JavaScript 和本地 ECharts，无前端构建步骤。
 
 摘要接口供脚本和 agent 查询近期 GPU 利用率，默认启用，可通过
@@ -95,6 +99,12 @@ ssh -N -L 8848:127.0.0.1:8848 <monitor-host>
 
 然后打开 `http://127.0.0.1:8848/`。原生常驻运行、systemd、备份和 HTTPS 配置见
 [部署指南](docs/DEPLOYMENT.md)；容器运行见 [Docker Compose 指南](docs/DOCKER.md)。
+
+## 启用 PAI（可选）
+
+按 [PAI 指南](docs/PAI.md)准备独立 CLI 身份、`config/pai.toml` 和采集进程。Web 只读快照，
+不持有云凭证。普通安装不创建该配置，也不会注册 `/api/pai/*` 或显示 PAI 入口。
+[在线演示](https://mrzoyo.github.io/cluster-gpu-monitor/)中的 PAI 数据完全虚构。
 
 ## 两种部署方式
 
@@ -166,6 +176,8 @@ HTTPS 反向代理之后；仓库同时提供原生 systemd/Caddy 部署和 Dock
 | 目标 | 简体中文 | English |
 | --- | --- | --- |
 | 选择文档 | [文档目录](docs/README.md) | [Documentation index](docs/README.en.md) |
+| 使用 PAI 监控 | [PAI 指南](docs/PAI.md) | [PAI guide](docs/PAI.en.md) |
+| 了解本版变更 | [v0.6.0 发布说明](docs/RELEASE_0.6.0.md) | [Release notes](docs/RELEASE_0.6.0.md#english) |
 | 配置机器与运行参数 | [配置参考](docs/CONFIGURATION.md) | [Configuration reference](docs/CONFIGURATION.en.md) |
 | 理解采集、存储与指标 | [架构与设计取舍](docs/ARCHITECTURE.md) | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) |
 | 生成或发布演示数据 | [Demo 指南](docs/DEMO.md) | [Demo guide](docs/DEMO.en.md) |
@@ -174,7 +186,7 @@ HTTPS 反向代理之后；仓库同时提供原生 systemd/Caddy 部署和 Dock
 
 ## 已知边界
 
-- 用户归属来自远端 `ps` 的操作系统用户名，不等同于调度器作业、项目或成本中心。
+- 裸金属按远端操作系统用户名归属；PAI 按 RAM Owner / 提交者归属。两边不合并身份或用量，观测 GPU·小时不作为账单。
 - NVIDIA 路径长期运行；AMD 解析器有构造样本测试，但尚未在真实 AMD 硬件上闭环验证。
 - SQLite 适合小到中等规模的自管集群，不面向上千节点高频遥测。
 - 项目没有内置登录、权限系统和告警引擎；访问控制由网络和反向代理负责。

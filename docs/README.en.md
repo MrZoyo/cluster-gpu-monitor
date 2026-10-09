@@ -8,12 +8,12 @@ manual.
 
 ## Where to start
 
-Current version: [v0.5.1 release notes](RELEASE_0.5.1.md) — delay tolerance, status legend and responsive header.
+Current version: [v0.6.0 release notes](RELEASE_0.6.0.md#english) — optional PAI, page recovery guidance, and demo data.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |
 | Run the project for the first time | [README quick start](../README.en.md#quick-start) | Dependencies, configuration, one collection round, and the Web UI |
-| Try optional PAI monitoring | [PAI prototype (Chinese)](PAI_PROTOTYPE.md) | Disabled by default, separate configuration, read-only collection and deployment boundaries |
+| Enable optional PAI monitoring | [PAI guide](PAI.en.md) | Disabled by default, separate configuration, read-only collection and deployment boundaries |
 | Add hosts or tune runtime settings | [Configuration reference](CONFIGURATION.en.md) | Inventory, settings, states, badges, retention, and concurrency |
 | Distinguish slow GPU queries from unreachable hosts | [Adaptive probing](ADAPTIVE_PROBING.en.md) | Heartbeats, cooldown, recovery, weights and upgrades |
 | Understand the data model | [Architecture and trade-offs](ARCHITECTURE.en.md) | SSH collection, SQLite, rollups, liveness, GPU hours, and security boundaries |
@@ -45,7 +45,7 @@ data.
 ## Documentation boundaries
 
 - `README.md` is the landing page; it does not duplicate the full configuration or runbook.
-- `CONFIGURATION.en.md` is the source of truth for configuration fields.
+- `CONFIGURATION.en.md` covers bare-metal configuration; `PAI.en.md` covers optional PAI settings and semantics.
 - `ARCHITECTURE.en.md` describes current behavior and deliberate trade-offs, not a roadmap.
 - `DEPLOYMENT.en.md` keeps Python + systemd production procedures.
 - `DOCKER.en.md` keeps Docker Compose build, runtime, and maintenance procedures.
