@@ -165,9 +165,10 @@ window.GM = (function () {
     const notice = document.getElementById("sourceNotice");
     notice.textContent = state.baremetalNotice || "";
     notice.hidden = !state.baremetalNotice || !baremetal;
-    // 时间窗用于裸金属各页与 PAI 排行；PAI 其他页是当前快照，不显示。
-    document.querySelector(".topbar-window").hidden = !(baremetal || (view === "pai" && params && params.tab === "ranking"));
-    // 顶栏“用户排行”跟随当前模块：裸金属页进裸金属排行，PAI 页进 PAI 排行；首页两者并列，不显示。
+    // 顶栏时间窗用于裸金属；PAI 排行使用独立的周报时间窗。
+    document.querySelector(".topbar-window").hidden = !baremetal;
+    document.getElementById("navRankText").textContent = view === "pai" ? (zh ? "排行" : "Ranking") : I18n.t("user_ranking");
+    // 顶栏排行入口跟随当前模块，首页通过模块卡片进入。
     const navRank = document.getElementById("navRank");
     navRank.hidden = view === "home";
     const onRanking = view === "ranking" || (view === "pai" && !!params && params.tab === "ranking");

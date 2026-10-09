@@ -280,6 +280,7 @@ def run_once(cfg, store, client=None):
         store.record_usage([{**w, "gpus": w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu"),
                              "cpu": w.get("requested_cpu"), "mem_gib": w.get("requested_mem_gib")}
                             for w in observed], now, 2 * cfg.degraded_interval_s)
+        store.record_quota_usage([] if "quotas" in errors else quota_rows, now, 2 * cfg.degraded_interval_s)
         store.refresh_utilization(now)
     except sqlite3.Error:
         errors["usage"] = "store_error"

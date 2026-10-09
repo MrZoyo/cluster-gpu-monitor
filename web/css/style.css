@@ -1529,3 +1529,13 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   font: 500 14px/1.7 system-ui, sans-serif;
   overflow-wrap: anywhere;
 }
+
+/* PAI reporting controls share the panel surface and wrap on narrow screens. */
+.pai-rank-controls button, .pai-rank-controls select { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-low); color: var(--ink); font: inherit; font-size: 12px; cursor: pointer; }
+.pai-rank-controls button.active { background: var(--accent-soft); border-color: var(--accent); font-weight: 650; }
+.pai-rank-controls button:focus-visible, .pai-rank-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .pai-rank-table td { white-space: normal; overflow-wrap: anywhere; }
+  .pai-rank-table td::before { white-space: normal; overflow-wrap: anywhere; }
+}

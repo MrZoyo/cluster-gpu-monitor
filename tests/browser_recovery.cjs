@@ -37,15 +37,33 @@ const fixtures = {
   '/api/topology': { clusters: [] }, '/api/users/ranking': { users: [] },
   '/api/collector/status': { hosts: [] }, '/api/health': { last_sample_ts: now, last_sample_age_s: 0 },
   '/api/pai/status': { enabled: true, state: 'ok' }, '/api/pai/overview': pai,
-  '/api/pai/ranking': { users: [], since: now - 3600, first_hour: null },
+  '/api/pai/ranking': { window: 'week', users: [{ user_id: 'u', username: 'Example user', gpu_hours: 24,
+    oversold_gpu_hours: 8, effective_gpu_hours: 12, measured_gpu_hours: 24, cpu_core_hours: 192,
+    mem_gib_hours: 768, workloads: 2, compute_mean: 50, gpu_memory_mean: 20, cpu_util_mean: null, ram_util_mean: null,
+    quotas: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 16, oversold_gpu_hours: 8 }] }],
+    since: now - 7 * 86400, until: now, generated_at: now, first_hour: now - 86400, quota_fresh: true,
+    features: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 24, oversold_gpu_hours: 8,
+      current_capacity_gpu: 8, current_used_gpu: 4, current_occupancy_pct: 50, current_allocated_gpu: 6,
+      current_borrowed_gpu: 2, capacity_gpu_hours: 192, used_gpu_hours: 96, occupancy_pct: 50,
+      measured_gpu_hours: 24, effective_gpu_hours: 12, compute_mean: 50, quota_coverage_pct: 14.3,
+      observed_quota_hours: 24, workloads: 2 }] },
   '/api/pai/metrics/series': { points: ['compute', 'memory', 'cpu', 'ram'].flatMap(key =>
     [1, 2, 3].map(i => ({ ...metric(key), ts: now - i * 120, mean: 20 }))) },
 };
 let enabled = false;
 const server = http.createServer((req, res) => {
-  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const requestURL = new URL(req.url, 'http://localhost');
+  const pathname = requestURL.pathname;
   if (pathname.startsWith('/api/')) {
-    const value = pathname.startsWith('/api/pai/') && !enabled ? undefined : fixtures[pathname];
+    let value = pathname.startsWith('/api/pai/') && !enabled ? undefined : fixtures[pathname];
+    if (value && pathname === '/api/pai/ranking') {
+      const window = requestURL.searchParams.get('window') || 'week';
+      const shifted = new Date((now + 8 * 3600) * 1000);
+      const monday = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate() - (shifted.getUTCDay() + 6) % 7) / 1000 - 8 * 3600;
+      const until = window === 'last_week' ? monday : now;
+      const since = window === 'week' ? monday : window === 'last_week' ? monday - 7 * 86400 : now - ({ '1h': 3600, '24h': 86400, '7d': 7 * 86400 }[window] || 86400);
+      value = { ...value, window, since, until };
+    }
     res.writeHead(value === undefined ? 404 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(value === undefined ? { detail: 'Not Found' } : value));
   }
@@ -148,6 +166,48 @@ const server = http.createServer((req, res) => {
         check(`summary fits ${width} ${locale} ${route}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
         await shot(normal, `summary-${route === '/' ? 'home' : 'pai'}-${locale}-${width}`);
       }
+    }
+    await normal.evaluate(() => { I18n.locale = 'zh'; GM.state.window = '24h'; });
+    const rankRequests = [];
+    normal.on('request', request => { if (request.url().includes('/api/pai/ranking?')) rankRequests.push(request.url()); });
+    await normal.evaluate(async () => { history.replaceState(null, '', '#/pai/ranking'); await GM.render(); });
+    check('PAI ranking defaults to reporting week', rankRequests.at(-1).endsWith('window=week'));
+    check('PAI nav says ranking', await normal.locator('#navRankText').innerText() === '排行');
+    check('feature is default dimension', await normal.getByRole('button', { name: 'Feature', exact: true }).getAttribute('aria-pressed') === 'true');
+    for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
+      await normal.setViewportSize({ width, height: 1000 });
+      await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
+      check(`ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      check(`feature rows render ${width} ${locale}`, (await normal.locator('.pai-rank-table').innerText()).includes('Example feature'));
+      await shot(normal, `ranking-feature-${locale}-${width}`);
+    }
+    await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
+    await normal.getByLabel('排行时间窗').selectOption('last_week');
+    await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
+    check('last week request', rankRequests.at(-1).endsWith('window=last_week'));
+    const downloadPromise = normal.waitForEvent('download');
+    await normal.getByRole('button', { name: '导出 CSV' }).click();
+    const download = await downloadPromise;
+    const csv = fs.readFileSync(await download.path(), 'utf8');
+    check('CSV includes denominator and coverage', csv.includes('capacity_gpu_hours') && csv.includes('quota_coverage_pct') && csv.includes('Example feature'));
+    await normal.getByRole('button', { name: '用户', exact: true }).click();
+    await normal.locator('.pai-rank-table a').waitFor();
+    check('user ranking preserved', (await normal.locator('.pai-rank-table').innerText()).includes('Example user'));
+    await normal.getByLabel('排行时间窗').selectOption('24h');
+    await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
+    check('legacy window preserved', rankRequests.at(-1).endsWith('window=24h'));
+    await normal.evaluate(() => GM.render());
+    check('dimension survives refresh', await normal.getByRole('button', { name: '用户', exact: true }).getAttribute('aria-pressed') === 'true');
+    check('bare-metal window unaffected', await normal.evaluate(() => GM.state.window) === '24h');
+    check('ranking without browser errors', errors.length === 0);
+    const displayed = await normal.locator('#view').innerText();
+    const expectedStart = new Date((now - 86400) * 1000).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    check('24h dates match filter', displayed.includes(expectedStart));
+    for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
+      await normal.setViewportSize({ width, height: 1000 });
+      await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
+      check(`user ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      await shot(normal, `ranking-user-${locale}-${width}`);
     }
     await normal.close(); enabled = false;
 

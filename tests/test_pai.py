@@ -419,3 +419,102 @@ def test_collector_snapshot_is_group_readable_but_not_world_readable(tmp_path, c
         assert (tmp_path / "data/pai.db").stat().st_mode & 0o777 == 0o640
     finally:
         os.umask(original)
+
+
+def test_quota_history_time_weighted_capacity_gaps_failure_and_unknown(store):
+    def q(cap, used):
+        return [{"quota_id": "f", "quota_name": "Feature", "gpu_capacity": cap, "gpu_used": used}]
+    store.record_quota_usage(q(8, 4), 3500, 360)
+    assert store.quota_ranking(0, 7200) == []  # no invented history before first observation
+    store.record_quota_usage(q(16, 4), 3660, 360)
+    store.record_quota_usage(q(16, 8), 3780, 360)
+    rows = store.quota_ranking(0, 7200)
+    assert rows[0]["observed_s"] == 280
+    assert rows[0]["capacity_gpu_s"] == 8 * 160 + 16 * 120
+    assert rows[0]["used_gpu_s"] == 4 * 280
+    store.record_quota_usage(q(16, 8), 7380, 360)  # bounded outage, not a full hour
+    assert store.quota_ranking(0, 10000)[0]["observed_s"] == 640
+    store.record_quota_usage([], 7500, 360)  # failed source breaks continuity
+    store.record_quota_usage(q(16, 8), 7620, 360)
+    assert store.quota_ranking(0, 10000)[0]["observed_s"] == 640
+    store.record_quota_usage(q(None, 0), 7740, 360)  # unknown != zero
+    store.record_quota_usage(q(16, 0), 7860, 360)
+    assert store.quota_ranking(0, 10000)[0]["observed_s"] == 640
+    store.record_quota_usage(q(16, 0), 7860, 360)  # retry idempotency
+    assert store.quota_ranking(0, 10000)[0]["observed_s"] == 640
+
+
+def test_feature_ranking_attribution_oversold_zero_quota_and_deleted_quota(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    now = 10 * 3600
+    cfg.db_path = str(store.path)
+    quotas = [{"quota_id": "q", "quota_name": "feature", "gpu_capacity": 8, "gpu_used": 4},
+              {"quota_id": cfg.quota_id, "quota_name": "root", "gpu_capacity": 16, "gpu_used": 8},
+              {"quota_id": "zero", "quota_name": "zero", "gpu_capacity": 0, "gpu_used": 0}]
+    store.save("quotas", quotas, now=now)
+    store.record_quota_usage(quotas, now - 120, 360)
+    store.record_quota_usage(quotas, now, 360)
+    workloads = [{"WorkloadId": wid, "UserId": uid, "UserName": uid, "QuotaId": qid,
+                  "gpus": 2, "oversold": idle, "dequeued_at": now - 120}
+                 for wid, uid, qid, idle in [("a", "u1", "q", False), ("b", "u2", "q", True),
+                                           ("c", "u1", cfg.quota_id, False), ("d", "u3", "deleted", False)]]
+    store.record_usage(workloads, now, 360)
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(pai, "mask_username", lambda s: s)
+    monkeypatch.setattr(pai.time, "time", lambda: now)
+    data = pai.pai_ranking(Response(), "24h")
+    fs = {r["quota_id"]: r for r in data["features"]}
+    assert fs["q"]["gpu_hours"] == 480 / 3600
+    assert fs["q"]["quota_gpu_hours"] == fs["q"]["oversold_gpu_hours"] == 240 / 3600
+    assert fs["q"]["workloads"] == 2 and fs["q"]["occupancy_pct"] == 50
+    assert fs["q"]["compute_mean"] is None and fs["q"]["measured_gpu_hours"] == 0
+    assert fs[cfg.quota_id]["gpu_hours"] == 240 / 3600  # no double-counted child tasks
+    assert fs[cfg.quota_id]["is_root"]
+    assert fs["zero"]["gpu_hours"] == 0 and fs["zero"]["occupancy_pct"] is None
+    assert fs["deleted"]["current_capacity_gpu"] is None
+    assert fs["deleted"]["occupancy_pct"] is None
+    assert fs["q"]["quota_coverage_pct"] < 1
+    store.failure("quotas", "test", now=now)
+    assert pai.pai_ranking(Response(), "24h")["quota_fresh"] is False
+
+
+def test_reporting_weeks_use_china_monday_and_exclude_next_week(store, cfg, monkeypatch):
+    from datetime import datetime, timezone
+    from gpumon.api import pai
+    # Monday 2026-10-12 00:00:00 China = Sunday 16:00 UTC
+    monday = datetime(2026, 10, 11, 16, tzinfo=timezone.utc).timestamp()
+    cfg.db_path = str(store.path)
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(pai, "mask_username", lambda s: s)
+    monkeypatch.setattr(pai.time, "time", lambda: monday + 3600)
+    store.record_usage([{"WorkloadId": "past", "UserId": "u", "gpus": 2, "dequeued_at": monday - 120}], monday, 360)
+    store.record_usage([{"WorkloadId": "next", "UserId": "u", "gpus": 8, "dequeued_at": monday}], monday + 120, 360)
+    last = pai.pai_ranking(Response(), "last_week")
+    assert (last["since"], last["until"]) == (monday - 7 * 86400, monday)
+    assert last["users"][0]["gpu_hours"] == 240 / 3600
+    current = pai.pai_ranking(Response(), "week")
+    assert current["since"] == monday and current["users"][0]["gpu_hours"] == 960 / 3600
+
+
+def test_quota_history_read_before_additive_migration(store):
+    with store.connect() as c:
+        c.execute("DROP TABLE quota_hour")
+    assert store.quota_ranking(0, 100) == []
+
+
+def test_ranking_http_default_week_and_no_history_is_unknown(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    from gpumon.api.app import create_app
+    cfg.db_path = str(store.path)
+    store.save("quotas", [{"quota_id": "feature", "quota_name": "Feature", "gpu_capacity": 8, "gpu_used": 0}])
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    client = TestClient(create_app())
+    response = client.get("/api/pai/ranking")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()
+    assert data["window"] == "week" and data["timezone"] == "Asia/Shanghai"
+    feature = data["features"][0]
+    assert feature["gpu_hours"] is None and feature["workloads"] is None
+    assert feature["occupancy_pct"] is None and feature["current_occupancy_pct"] == 0
+    assert client.get("/api/pai/ranking?window=invalid").status_code == 400
