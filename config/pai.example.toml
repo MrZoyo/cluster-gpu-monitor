@@ -1,0 +1,20 @@
+# Optional local prototype. No access keys or tokens belong in this file.
+# Without this file (or with enabled = false) the web UI is the plain bare-metal monitor: no PAI entry at all.
+enabled = false
+region = "cn-hangzhou"
+workspace_id = ""
+quota_id = ""
+account_id = ""
+cli_path = "pai-tui"
+db_path = "data/pai.db"
+poll_interval_s = 120
+degraded_interval_s = 180
+topology_interval_s = 300
+stale_after_s = 600
+max_calls = 120
+max_pages = 8
+max_workloads = 32
+round_timeout_s = 100
+request_timeout_s = 12
+metric_window_s = 600
+retention_hours = 24

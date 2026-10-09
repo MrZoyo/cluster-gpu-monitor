@@ -13,6 +13,7 @@ Current version: [v0.5.1 release notes](RELEASE_0.5.1.md) — delay tolerance, s
 | Goal | Start here | What it covers |
 | --- | --- | --- |
 | Run the project for the first time | [README quick start](../README.en.md#quick-start) | Dependencies, configuration, one collection round, and the Web UI |
+| Try optional PAI monitoring | [PAI prototype (Chinese)](PAI_PROTOTYPE.md) | Disabled by default, separate configuration, read-only collection and deployment boundaries |
 | Add hosts or tune runtime settings | [Configuration reference](CONFIGURATION.en.md) | Inventory, settings, states, badges, retention, and concurrency |
 | Distinguish slow GPU queries from unreachable hosts | [Adaptive probing](ADAPTIVE_PROBING.en.md) | Heartbeats, cooldown, recovery, weights and upgrades |
 | Understand the data model | [Architecture and trade-offs](ARCHITECTURE.en.md) | SSH collection, SQLite, rollups, liveness, GPU hours, and security boundaries |

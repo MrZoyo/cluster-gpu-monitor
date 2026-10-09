@@ -423,6 +423,7 @@ window.I18n = {
   setLocale(locale) {
     this.locale = locale;
     localStorage.setItem('gpumon.locale', locale);
+    if (window.PageRecovery && document.getElementById('page-recovery')) PageRecovery.show();
     // 触发重新渲染
     if (window.GM) {
       if (GM.buildLangSwitch) GM.buildLangSwitch();

@@ -60,8 +60,9 @@ window.Views.ranking = (function () {
     const w = GM.state.window;
     GM.crumb(I18n.t('ranking_title'));
     const [data, topo] = await Promise.all([API.usersRanking(w), API.topology()]);
+    if (!root.isConnected) return;
     root.innerHTML = "";
-    root.appendChild(el("span", { class: "back", onclick: () => GM.go("/") }, [I18n.t('back_to_overview')]));
+    root.appendChild(el("span", { class: "back", onclick: () => GM.go(GM.overviewPath()) }, [I18n.t('back_to_overview')]));
 
     if (!data.users.length) {
       root.appendChild(el("div", { class: "panel" },

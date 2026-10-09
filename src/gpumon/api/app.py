@@ -11,6 +11,7 @@ from .. import __version__
 from ..config import CODE_ROOT
 from .routes import router
 from .public_summary import router as public_router, SummaryService
+from .pai import pai_enabled, router as pai_router
 
 
 class RevalidatingStaticFiles(StaticFiles):
@@ -36,6 +37,9 @@ def create_app(*, enable_docs: bool = False) -> FastAPI:
     application.state.gpu_summary = SummaryService()
     application.include_router(public_router)
     application.include_router(router)
+    # PAI 默认关闭：未在 pai.toml 中明确启用时不注册任何 /api/pai 路由（一律 404），启用后需重启 Web 生效。
+    if pai_enabled():
+        application.include_router(pai_router)
 
     # web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。
     web_dir = CODE_ROOT / "web"

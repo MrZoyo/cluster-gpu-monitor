@@ -300,6 +300,7 @@ window.Views.overview = (function () {
     const w = GM.state.window;
     GM.crumb(I18n.t('overview'));
     const [ov, multi] = await Promise.all([API.overview(w), API.avgMulti("host", "util_gpu")]);
+    if (!root.isConnected) return;
     const groups = groupClusters(ov);
     root.innerHTML = "";
     root.appendChild(el("section", { class: "command-panel" }, [

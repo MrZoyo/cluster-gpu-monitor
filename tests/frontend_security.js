@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+require("./frontend_recovery.js");
 
 const componentsSource = fs.readFileSync(
   path.join(__dirname, "..", "web", "js", "components.js"),

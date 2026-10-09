@@ -175,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
     dump("live.json", routes.live())
     meta = routes.meta()
     dump("meta.json", meta)
+    # Public demo has no PAI API at all (same as a server with PAI disabled): /api/pai/* is
+    # left unmapped, the static host answers 404 and the UI stays bare-metal only.
     dump("topology.json", routes.topology())
     dump("health.json", routes.health())
     dump("collector_status.json", routes.collector_status())

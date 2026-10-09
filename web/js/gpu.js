@@ -22,6 +22,7 @@ window.Views.gpu = (function () {
   async function render(root, params) {
     const w = GM.state.window;
     const [ov, multi] = await Promise.all([API.overview(w), API.avgMulti("gpu", "util_gpu")]);
+    if (!root.isConnected) return;
     const found = findGpu(ov, params.id);
     if (!found) { root.innerHTML = `<p class='note'>${I18n.t('gpu_not_found')}</p>`; return; }
     const { g, h, c } = found;
@@ -67,6 +68,7 @@ window.Views.gpu = (function () {
     async function draw(m) {
       Array.from(switcher.children).forEach((b) => b.classList.toggle("active", b.dataset.k === m.key));
       const s = await API.series("gpu", g.gpu_id, m.key, w);
+      if (!root.isConnected) return;
       if (chart) chart.dispose();
       chart = lineChart(dom, [{ name: I18n.t(m.label_key), points: s.points, color: m.color }],
         { max: m.max, yName: m.yName });

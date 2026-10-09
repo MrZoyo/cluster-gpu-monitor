@@ -11,8 +11,10 @@ build/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/*.db.lock
 config/settings.toml
 config/inventory.yaml
+config/pai.toml
 
 # 部署过程中产生的真实值（IP/域名/口令 hash）
 deploy/DEPLOYMENT-local.md

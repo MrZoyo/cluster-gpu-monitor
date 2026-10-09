@@ -109,6 +109,9 @@ def test_generated_demo_is_marked_and_exportable(tmp_path):
     assert export_run.returncode == 0, export_run.stderr
     assert static_output_is_marked(out)
     assert (out / "index.html").is_file()
+    # No PAI API artefact in the public demo: the UI falls back to bare-metal on 404.
+    assert not list((out / "api").glob("pai*"))
+    assert "pai/" not in (out / "js/static-demo.js").read_text()
     assert (out / "api/live.json").read_text(encoding="utf-8") == '{"ok":true,"status":"alive"}'
     inventory_data = yaml.safe_load(inventory.read_text(encoding="utf-8"))
     assert inventory_data["badge_library"][0]["text"] == {

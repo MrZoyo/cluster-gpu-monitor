@@ -638,6 +638,15 @@ Collector immediately stops probing (no more connection failures accumulating), 
 
 **Only changed files under `web/`**: No restart needed. Static files are read fresh on each request, refresh page takes effect.
 
+### Page errors after an update
+
+A shared recovery notice handles initialization, view loading, script loading and unhandled
+async failures. It asks users to force reload with Ctrl+Shift+R (Command+Shift+R on Mac),
+then contact an administrator if the issue persists. It follows the selected language and
+does not reload automatically or clear user data. This is recovery guidance, not proof of
+a version mismatch or a fix for server failures. Tabs opened before this recovery script
+was deployed must first be refreshed to receive it.
+
 ### Logs
 
 ```bash

@@ -6,6 +6,7 @@ window.Views.host = (function () {
   async function render(root, params) {
     const w = GM.state.window;
     const ov = await API.overview(w);
+    if (!root.isConnected) return;
     let host = null, cluster = null;
     for (const c of ov.clusters) {
       const h = c.hosts.find((x) => x.key === params.key);
@@ -52,6 +53,7 @@ window.Views.host = (function () {
     chartPanel.appendChild(dom); root.appendChild(chartPanel);
     const seriesData = await Promise.all(host.gpus.map((g) =>
       API.series("gpu", g.gpu_id, "util_gpu", w).then((s) => ({ name: "#" + g.index, points: s.points }))));
+    if (!root.isConnected) return;
     // 同机多卡：唯一目标是把每条线区分开 → 色相分散、避开满载红（非分组相近色）
     const palette = Palette.seriesColors(seriesData.length);
     seriesData.forEach((s, i) => (s.color = palette[i]));

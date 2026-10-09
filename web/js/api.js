@@ -3,13 +3,24 @@ window.API = (function () {
   async function getJSON(url) {
     // 用 location.origin 重建为绝对 URL，剥离可能存在的 URL 内嵌凭证
     // （否则当页面以 https://user:pass@host/ 形式打开时，fetch 会拒绝带凭证的 URL）。
-    const r = await fetch(new URL(url, location.origin), { credentials: "same-origin" });
-    if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
+    const r = await fetch(new URL(url, location.origin), { credentials: "same-origin", signal: AbortSignal.timeout(15000) });
+    if (!r.ok) {
+      const error = new Error(url + " -> HTTP " + r.status);
+      error.status = r.status;
+      throw error;
+    }
     return r.json();
   }
   const q = (o) => Object.entries(o).filter(([, v]) => v != null)
     .map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
   return {
+    paiStatus: () => getJSON("/api/pai/status").catch(error => {
+      if (error.status === 404) return {enabled: false, state: "disabled"};
+      throw error;
+    }),
+    paiOverview: () => getJSON("/api/pai/overview"),
+    paiSeries: (id) => getJSON("/api/pai/metrics/series?" + q({workload_id: id})),
+    paiRanking: (w) => getJSON("/api/pai/ranking?" + q({window: w})),
     meta: () => getJSON("/api/meta"),
     topology: () => getJSON("/api/topology"),
     overview: (w) => getJSON("/api/overview?" + q({ window: w })),

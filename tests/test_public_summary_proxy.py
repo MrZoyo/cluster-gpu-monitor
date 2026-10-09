@@ -78,7 +78,9 @@ http://127.0.0.1:{port} {{
         req = urllib.request.Request(f"http://127.0.0.1:{port}" + path,
                                      method=method, headers=headers or {})
         try:
-            response = opener.open(req, timeout=2)
+            # Cost-14 bcrypt verification can take several seconds in a CPU-limited VM.
+            # Keep startup/anonymous requests fast, but allow the real auth check to finish.
+            response = opener.open(req, timeout=10 if req.has_header("Authorization") else 2)
         except urllib.error.HTTPError as error:
             response = error
         with response:

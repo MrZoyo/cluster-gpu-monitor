@@ -7,6 +7,7 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
   <title>GPU 集群占用监控</title>
+  <script src="/js/recovery.js"></script>
   <link rel="icon" type="image/svg+xml" href="./icons/rocket.svg" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -14,6 +15,7 @@
   <div class="topbar">
     <div class="topbar-location">
       <span class="title" id="title">GPU Monitor</span>
+      <nav id="moduleNav" class="module-switch" aria-label="Modules" hidden></nav>
       <span class="crumb" id="crumb">总览</span>
     </div>
     <div class="topbar-controls">
@@ -33,7 +35,7 @@
       <span id="htext">加载中…</span>
     </div>
   </div>
-  <div class="wrap"><div id="view"></div></div>
+  <div class="wrap"><div id="sourceNotice" class="source-notice" hidden></div><div id="view"></div></div>
 
   <script src="/vendor/echarts.min.js?v=6.1.0"></script>
   <script src="/js/i18n.js"></script>
@@ -44,6 +46,7 @@
   <script src="/js/host.js"></script>
   <script src="/js/gpu.js"></script>
   <script src="/js/ranking.js"></script>
+  <script src="/js/pai.js"></script>
   <script src="/js/app.js"></script>
 </body>
 </html>
