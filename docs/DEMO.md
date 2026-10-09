@@ -73,9 +73,13 @@ python3 -m http.server 8080
 
 静态站没有后端、SSH 或数据库写入能力；它只是某个时刻的只读快照。
 
+加 `--with-pai` 可同时展示 PAI 新页面：4 个虚构节点、开发和训练配额、运行/排队/闲时任务、
+单卡曲线和用户排行。数据由 `scripts/pai_demo.py` 独立生成，不读取 PAI 配置、凭证或生产库。
+所有页面沿用醒目的虚构数据横幅。省略该参数时仍为纯裸金属演示，普通部署的 PAI 默认关闭行为不变。
+
 ## 发布到 GitHub Pages
 
-仓库的 [demo workflow](../.github/workflows/demo.yml) 会生成 large / 3 天数据、导出站点并
+仓库的 [demo workflow](../.github/workflows/demo.yml) 会生成 large / 3 天裸金属数据及虚构 PAI 示例、导出站点并
 上传到 GitHub Pages。生成数据库和导出产物都不提交进 Git。
 
 修改前端、API、Demo fixtures 或生成/导出脚本后，push 到 `main` 会触发工作流；也可以在

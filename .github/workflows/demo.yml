@@ -9,6 +9,7 @@ on:
       - "web/**"
       - "src/gpumon/**"
       - "scripts/demo_fixtures.py"
+      - "scripts/pai_demo.py"
       - "scripts/gen_demo_db.py"
       - "scripts/export_static_demo.py"
       - ".github/workflows/demo.yml"
@@ -56,7 +57,7 @@ jobs:
           uv run python scripts/export_static_demo.py \
             --db data/demo.db --inventory config/inventory.demo.yaml \
             --settings config/settings.example.toml \
-            --out dist/demo --force
+            --out dist/demo --with-pai --force
 
       - name: Report size
         run: |

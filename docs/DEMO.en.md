@@ -106,3 +106,7 @@ observations, a recovering host, a brief interruption retaining recent values an
 an unreachable host. The static exporter freezes the same clock used by these states.
 Yellow borders, card stripes, the overload legend, cooldown text and unknown utilization
 are rendered by the production UI code. All examples are synthetic; no GPU queries are sent.
+
+### Optional synthetic PAI pages
+
+Pass `--with-pai` to the exporter to include fictional quotas, four nodes, running/queued/idle-capacity workloads, GPU charts and rankings. `scripts/pai_demo.py` never reads cloud credentials, PAI settings, or a production database. The Pages workflow enables this option; ordinary deployments and exports remain PAI-free by default.

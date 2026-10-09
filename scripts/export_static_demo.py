@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--out", default="dist/demo", help="输出目录")
     ap.add_argument("--force", action="store_true", help="清空已存在的输出目录")
+    ap.add_argument("--with-pai", action="store_true", help="加入完全虚构的 PAI 示例（不读取真实 PAI 配置或数据库）")
     ap.add_argument(
         "--allow-unmarked-inputs",
         action="store_true",
@@ -183,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
     dump("users_current.json", routes.users_current())
 
     windows = list(WINDOWS)
+    if args.with_pai:
+        from pai_demo import fixtures
+        for name, payload in fixtures(meta["server_time"], WINDOWS).items():
+            dump(name, payload)
     for w in windows:
         dump(f"overview.{w}.json", routes.overview(window=w))
         dump(f"users_ranking.{w}.json", routes.users_ranking(window=w))
@@ -235,7 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             shutil.copy2(src, dst)
 
-    safe_child(out, "js/static-demo.js").write_text(_SHIM_JS, encoding="utf-8")
+    shim = _SHIM_JS.replace("// OPTIONAL_PAI_ROUTES", _PAI_ROUTES if args.with_pai else "")
+    safe_child(out, "js/static-demo.js").write_text(shim, encoding="utf-8")
     index_path = safe_child(out, "index.html")
     idx = index_path.read_text(encoding="utf-8")
     # shim 必须在 api.js 之前加载：它要在 API 定义前就把 fetch 换掉
@@ -272,6 +278,13 @@ _BANNER_HTML = """  <div class="demo-banner">
   </div>"""
 
 
+_PAI_ROUTES = '''case "pai/status": return "pai_status.json";
+      case "pai/overview": return "pai_overview.json";
+      case "pai/ranking": return `pai_ranking.${w}.json`;
+      case "pai/metrics/series":
+        return /^demo-[a-z0-9-]+$/.test(p.get("workload_id") || "")
+          ? `pai_series.${p.get("workload_id")}.json` : null;'''
+
 # 这段 shim 的职责：把 fetch("/api/...") 改写成读同目录下的静态 JSON。
 # 放在 api.js 之前加载，这样 api.js 里的 getJSON 拿到的是被换过的 fetch。
 _SHIM_JS = r"""// 静态演示模式：拦截 /api/* 请求，改读导出的 JSON 快照。
@@ -288,6 +301,7 @@ _SHIM_JS = r"""// 静态演示模式：拦截 /api/* 请求，改读导出的 JS
     const p = u.searchParams;
     const w = p.get("window");
     switch (ep) {
+      // OPTIONAL_PAI_ROUTES
       case "live": return "live.json";
       case "meta": return "meta.json";
       case "topology": return "topology.json";

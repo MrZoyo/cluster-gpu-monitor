@@ -76,7 +76,8 @@ def test_generator_refuses_to_overwrite_unmarked_files(tmp_path):
     assert inventory.read_text(encoding="utf-8") == "not a demo inventory\n"
 
 
-def test_generated_demo_is_marked_and_exportable(tmp_path):
+@pytest.mark.parametrize("with_pai", [False, True])
+def test_generated_demo_is_marked_and_exportable(tmp_path, with_pai):
     db = tmp_path / "synthetic-demo.db"
     inventory = tmp_path / "inventory.demo.yaml"
     out = tmp_path / "static-demo"
@@ -95,6 +96,7 @@ def test_generated_demo_is_marked_and_exportable(tmp_path):
             "--inventory", str(inventory),
             "--settings", str(REPO_ROOT / "config/settings.example.toml"),
             "--out", str(out),
+            *(["--with-pai"] if with_pai else []),
         ],
         cwd=REPO_ROOT,
         text=True,
@@ -110,8 +112,18 @@ def test_generated_demo_is_marked_and_exportable(tmp_path):
     assert static_output_is_marked(out)
     assert (out / "index.html").is_file()
     # No PAI API artefact in the public demo: the UI falls back to bare-metal on 404.
-    assert not list((out / "api").glob("pai*"))
-    assert "pai/" not in (out / "js/static-demo.js").read_text()
+    if with_pai:
+        pai = json.loads((out / "api/pai_overview.json").read_text())
+        assert pai["synthetic"] is True and pai["workspace_id"] == "demo-workspace"
+        assert len(pai["nodes"]) == 4 and len(pai["workloads"]) == 5
+        assert any(w["oversold"] for w in pai["workloads"])
+        assert any(w["scheduled"] is False for w in pai["workloads"])
+        assert (out / "api/pai_series.demo-dsw-vision.json").is_file()
+        assert (out / "api/pai_ranking.24h.json").is_file()
+        assert 'case "pai/status"' in (out / "js/static-demo.js").read_text()
+    else:
+        assert not list((out / "api").glob("pai*"))
+        assert "pai/" not in (out / "js/static-demo.js").read_text()
     assert (out / "api/live.json").read_text(encoding="utf-8") == '{"ok":true,"status":"alive"}'
     inventory_data = yaml.safe_load(inventory.read_text(encoding="utf-8"))
     assert inventory_data["badge_library"][0]["text"] == {

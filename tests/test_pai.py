@@ -352,3 +352,18 @@ def test_usage_requires_fresh_running_snapshot(store, cfg, monkeypatch, failed, 
     with store.connect() as c:
         usage = c.execute("SELECT COALESCE(SUM(run_s),0), COALESCE(SUM(gpu_s),0) FROM usage_hour").fetchone()
     assert tuple(usage) == (expected_seconds, 0)  # A known zero scheduled GPU count must stay zero.
+
+
+def test_collector_snapshot_is_group_readable_but_not_world_readable(tmp_path, cfg, monkeypatch):
+    import os
+    from gpumon.pai import collector
+    cfg.db_path = str(tmp_path / "data/pai.db")
+    monkeypatch.setattr(collector, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(collector, "run_once", lambda *a: {"ok": True, "errors": {}})
+    original = os.umask(0o077)
+    try:
+        assert collector.main(["--once"]) == 0
+        assert (tmp_path / "data").stat().st_mode & 0o777 == 0o750
+        assert (tmp_path / "data/pai.db").stat().st_mode & 0o777 == 0o640
+    finally:
+        os.umask(original)

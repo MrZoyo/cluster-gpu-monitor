@@ -293,7 +293,8 @@ def run_once(cfg, store, client=None):
 
 
 def main(argv=None):
-    os.umask(0o077)
+    # The independent web account reads snapshots through a shared group; never world-readable.
+    os.umask(0o027)
     parser = argparse.ArgumentParser(description="PAI read-only collector (local prototype)")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--rounds", type=int, default=0, help="Stop after N rounds; 0 runs until interrupted")
