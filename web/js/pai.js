@@ -985,8 +985,14 @@ window.PaiUI = (() => {
   const rankState = { window: "week", dimension: "feature", expanded: false, methodOpen: false };
   const RANK_PAGE = 30, RANK_FULL = 90, RANK_IDLE = 10;
   const rankNumber = (v) => v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
-  const reportClock = (ts) => ts == null ? "—" : new Date(ts * 1000).toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" });
-  const minuteClock = (ts) => ts == null ? "—" : reportClock(ts).slice(0, 16);
+  const reportClock = (ts, zone = "Asia/Shanghai") => ts == null ? "—" : new Date(ts * 1000).toLocaleString("sv-SE", { timeZone: zone });
+  const minuteClock = (ts, zone) => ts == null ? "—" : reportClock(ts, zone).slice(0, 16);
+  const reportZone = (data) => data.timezone === "Asia/Shanghai" ? t("北京时间", "Asia/Shanghai") : data.timezone || "Asia/Shanghai";
+  function weekRule(data) {
+    const days = { monday: ["周一", "Monday"], tuesday: ["周二", "Tuesday"], wednesday: ["周三", "Wednesday"],
+      thursday: ["周四", "Thursday"], friday: ["周五", "Friday"], saturday: ["周六", "Saturday"], sunday: ["周日", "Sunday"] };
+    return `${reportZone(data)} ${t(...(days[data.week_start] || days.monday))} ${data.reset_time || "00:00"}`;
+  }
   // GPU·小时等累计量：大数取整加千分位，小数保留一位。
   const hrs = (v) => v == null ? "—" : !v ? "0" : v >= 100 ? Math.round(v).toLocaleString() : Number(v).toFixed(1);
   // 覆盖率可能极小（上线首日约 0.02%），不能显示成 0.0%。
@@ -1006,11 +1012,11 @@ window.PaiUI = (() => {
       : ["user_id", "username", "gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours",
         "compute_mean", "gpu_memory_mean", "cpu_core_hours", "cpu_util_mean", "mem_gib_hours", "ram_util_mean", "workloads"];
     const cell = (v) => '"' + String(v == null ? "" : v).replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
-    const metadata = ["window", "since_Asia_Shanghai", "until_Asia_Shanghai", "generated_Asia_Shanghai", "history_first_hour", "truncated"];
-    const prefix = [data.window, reportClock(data.since), reportClock(data.until), reportClock(data.generated_at), reportClock(data.first_hour), data.truncated];
+    const metadata = ["window", "timezone", "week_start", "reset_time", "since_local", "until_local", "generated_local", "history_first_hour_local", "truncated", "boundary_estimate"];
+    const prefix = [data.window, data.timezone, data.week_start, data.reset_time, ...[data.since, data.until, data.generated_at, data.first_hour].map(ts => reportClock(ts, data.timezone)), data.truncated, data.boundary_estimate];
     const csv = [metadata.concat(fields), ...rows.map(r => prefix.concat(fields.map(k => r[k])))].map(r => r.map(cell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
-    const a = el("a", { href: url, download: `pai-${dimension}-${data.window}-${reportClock(data.until).slice(0, 10)}.csv` });
+    const a = el("a", { href: url, download: `pai-${dimension}-${data.window}-${reportClock(data.until, data.timezone).slice(0, 10)}.csv` });
     a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -1193,14 +1199,12 @@ window.PaiUI = (() => {
     const out = [];
     if (data.first_hour == null || data.first_hour >= data.until) out.push(["warn", t("该窗口尚无任务观测历史，任务用量显示为“—”，不代表零使用。", "No task history was observed in this window; usage shows “—”, not zero.")]);
     if (rankState.dimension === "feature" && root && !root.quota_coverage_pct) out.push(["", t("该窗口没有配额历史，配额占用率未知。", "No quota history in this window; occupancy is unknown.")]);
-    else if (rankState.dimension === "feature" && root && root.quota_coverage_pct < 95)
-      out.push(["", t(`配额历史只覆盖本窗口的 ${share(root.quota_coverage_pct)}，占用率仅代表已观测部分。`, `Quota history covers ${share(root.quota_coverage_pct)} of this window; occupancy reflects only observed intervals.`)]);
     if (!data.quota_fresh) out.push(["warn", t("当前配额快照陈旧或采集失败，“当前”数值仅供参考。", "The current quota snapshot is stale or failed; current values are for reference only.")]);
     if (data.truncated) out.push(["warn", t("结果达到上限，表格与导出只含已返回的数据。", "Results are truncated; the table and export contain only returned rows.")]);
     return out.length ? el("div", { class: "pai-rank-notices" }, out.map(([tone, text]) => note(text, "pai-note " + tone))) : null;
   }
 
-  function rankMethod(dimension) {
+  function rankMethod(dimension, data) {
     const items = dimension === "feature" ? [
       t("按任务提交时的 Quota 归属 feature；根配额直接提交的任务单列，不推断算法组。父子配额容量不可相加。", "Workloads follow their submission Quota. Direct root submissions stay separate; parent and child capacities must not be added."),
       t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长（每轮约 2 分钟，长间隔最多计两倍降级周期，失败快照不累加）。闲时资源单列，不计入配额。", "GPU-hours = scheduled GPUs × observed running time (≈2-min rounds, long gaps capped, failed snapshots add nothing). Idle-time capacity is separate from the quota."),
@@ -1212,7 +1216,8 @@ window.PaiUI = (() => {
       t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长；彩色分段按任务所属 feature，斜纹为闲时资源（配额外）。", "GPU-hours = scheduled GPUs × observed running time; colored segments follow the workload's feature, hatched is idle-time capacity."),
       t("有效 GPU·小时按单卡计算利用率加权；CPU、内存为申请量 × 时长，利用率为占 Pod limit 的百分比。缺测不计零。", "Effective GPU-hours are compute-weighted; CPU and RAM are requested amounts × time, utilization is relative to the Pod limit. Missing metrics are unknown."),
     ];
-    items.push(t("统计按整点汇总；周以北京时间周一 00:00 为起点；历史最长保留 32 天。CSV 包含分母、覆盖率及起止时间，可直接用于周报。", "Hourly buckets; weeks start Monday 00:00 Asia/Shanghai; history is kept for 32 days. The CSV includes denominators, coverage and the exact window."));
+    items.push(t(`每周起点：${weekRule(data)}。历史按 UTC 小时汇总，保留 32 天；周界未对齐 UTC 整点时，边界小时按重叠时长估算。CSV 包含时区、周界、分母和覆盖率。`,
+      `Weeks start ${weekRule(data)}. History uses UTC-hour buckets, kept for 32 days; partial boundary hours are estimated by overlap. CSV includes timezone, week rule, denominators and coverage.`));
     return el("details", { class: "pai-rank-method", open: rankState.methodOpen ? "" : null,
       ontoggle: (e) => { rankState.methodOpen = e.target.open; } }, [
       el("summary", {}, [t("统计口径", "How it is computed")]),
@@ -1259,8 +1264,8 @@ window.PaiUI = (() => {
         [el("span", { "aria-hidden": "true" }, ["↓"]), t("导出 CSV", "Export CSV")]) : null,
     ]);
     const range = data ? el("div", { class: "pai-rank-range" }, [
-      el("span", { class: "mono" }, [`${minuteClock(data.since)} → ${minuteClock(data.until)}`]),
-      el("span", {}, [t("北京时间", "Asia/Shanghai") + " · " + span(data.until - data.since) + (w === "week" ? t(" · 进行中", " · in progress") : "")]),
+      el("span", { class: "mono" }, [`${minuteClock(data.since, data.timezone)} → ${minuteClock(data.until, data.timezone)}`]),
+      el("span", {}, [reportZone(data) + " · " + span(data.until - data.since) + (w === "week" ? t(" · 进行中", " · in progress") : "")]),
     ]) : el("div", { class: "pai-rank-range" }, [t("读取中…", "Loading…")]);
     const head = el("div", { class: "pai-panel-head pai-rank-head" }, [
       el("div", { class: "pai-rank-heading" }, [el("h3", {}, [dim === "feature" ? t("Feature 排行", "Feature ranking") : t("用户排行", "User ranking")]), range]),
@@ -1279,7 +1284,7 @@ window.PaiUI = (() => {
       if (shown.length < rows.length) body.push(el("button", { type: "button", class: "pai-rank-more",
         onclick: () => { rankState.expanded = true; redraw(); } }, [t(`显示全部 ${rows.length} 位用户`, `Show all ${rows.length} users`)]));
     }
-    body.push(rankMethod(dim));
+    body.push(rankMethod(dim, data));
     return [head, ...body.filter(Boolean)];
   }
 

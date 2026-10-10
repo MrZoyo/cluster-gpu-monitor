@@ -96,7 +96,7 @@ def test_generated_demo_is_marked_and_exportable(tmp_path, with_pai):
             "--inventory", str(inventory),
             "--settings", str(REPO_ROOT / "config/settings.example.toml"),
             "--out", str(out),
-            *(["--with-pai"] if with_pai else []),
+            *(["--with-pai", "--pai-ranking-timezone", "Asia/Kolkata", "--pai-ranking-week-start", "friday", "--pai-ranking-reset-time", "08:45"] if with_pai else []),
         ],
         cwd=REPO_ROOT,
         text=True,
@@ -120,6 +120,10 @@ def test_generated_demo_is_marked_and_exportable(tmp_path, with_pai):
         assert any(w["scheduled"] is False for w in pai["workloads"])
         assert (out / "api/pai_series.demo-dsw-vision.json").is_file()
         assert (out / "api/pai_ranking.24h.json").is_file()
+        week = json.loads((out / "api/pai_ranking.week.json").read_text())
+        assert (week["timezone"], week["week_start"], week["reset_time"]) == ("Asia/Kolkata", "friday", "08:45")
+        assert week["since"] % 3600 == 15 * 60
+        assert week["boundary_estimate"] is True
         assert 'case "pai/status"' in (out / "js/static-demo.js").read_text()
     else:
         assert not list((out / "api").glob("pai*"))
@@ -195,3 +199,27 @@ def test_generator_needs_no_runtime_settings_in_clean_environment(tmp_path):
     assert result.returncode == 0, result.stderr
     assert not runtime.exists()
     assert demo_database_state(tmp_path / 'demo.db') == 'complete'
+
+
+def test_pai_demo_uses_configured_reporting_rule_without_runtime_config(monkeypatch):
+    from datetime import datetime
+    from pai_demo import fixtures
+    from gpumon.pai import config
+    monkeypatch.setattr(config, "load_pai_settings", lambda: pytest.fail("demo must not read runtime PAI settings"))
+    now = int(datetime.fromisoformat("2026-10-09T04:00:00+00:00").timestamp())
+    data = fixtures(now, {"24h": 86400}, ranking_timezone="Asia/Kolkata", ranking_week_start="friday", ranking_reset_time="08:45")
+    week = data["pai_ranking.week.json"]
+    assert (week["timezone"], week["week_start"], week["reset_time"]) == ("Asia/Kolkata", "friday", "08:45")
+    assert week["since"] == datetime.fromisoformat("2026-10-09T03:15:00+00:00").timestamp()
+    assert data["pai_ranking.last_week.json"]["until"] == week["since"]
+    assert week["synthetic"] is True
+
+
+def test_pai_demo_previous_week_without_history_is_unknown():
+    from datetime import datetime
+    from pai_demo import fixtures
+    now = int(datetime.fromisoformat("2026-10-10T04:00:00+00:00").timestamp())
+    last = fixtures(now, {})["pai_ranking.last_week.json"]
+    assert last["first_hour"] > last["until"]
+    assert last["users"] == []
+    assert all(f["gpu_hours"] is None and f["occupancy_pct"] is None for f in last["features"])

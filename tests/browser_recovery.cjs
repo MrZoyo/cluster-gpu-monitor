@@ -37,7 +37,7 @@ const fixtures = {
   '/api/topology': { clusters: [] }, '/api/users/ranking': { users: [] },
   '/api/collector/status': { hosts: [] }, '/api/health': { last_sample_ts: now, last_sample_age_s: 0 },
   '/api/pai/status': { enabled: true, state: 'ok' }, '/api/pai/overview': pai,
-  '/api/pai/ranking': { window: 'week', users: [{ user_id: 'u', username: 'Example user', gpu_hours: 24,
+  '/api/pai/ranking': { window: 'week', timezone: 'Asia/Shanghai', week_start: 'monday', reset_time: '00:00', users: [{ user_id: 'u', username: 'Example user', gpu_hours: 24,
     oversold_gpu_hours: 8, effective_gpu_hours: 12, measured_gpu_hours: 24, cpu_core_hours: 192,
     mem_gib_hours: 768, workloads: 2, compute_mean: 50, gpu_memory_mean: 20, cpu_util_mean: null, ram_util_mean: null,
     quotas: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 16, oversold_gpu_hours: 8 }] }],
@@ -252,6 +252,22 @@ const server = http.createServer((req, res) => {
     check('long feature names fit mobile viewport', await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await shot(normal, 'ranking-long-feature-en-390');
     fixtures['/api/pai/ranking'] = savedRanking;
+    const configured = { ...savedRanking, features: [...savedRanking.features, { ...savedRanking.features[0], is_root: true, quota_id: 'root', quota_name: 'Example root' }], window: 'week', timezone: 'America/New_York', week_start: 'sunday', reset_time: '06:30',
+      since: Date.parse('2026-10-04T10:30:00Z') / 1000, until: now, boundary_estimate: true };
+    await normal.route('**/api/pai/ranking?*', r => r.fulfill({ json: configured }));
+    await normal.getByRole('button', { name: 'This week', exact: true }).click();
+    await normal.getByRole('button', { name: 'Export CSV' }).waitFor();
+    check('configured screenshot period matches API window', await normal.getByRole('button', { name: 'This week', exact: true }).getAttribute('aria-pressed') === 'true');
+    check('configured timezone formats the reporting window', (await normal.locator('.pai-rank-range').innerText()).includes('2026-10-04 06:30'));
+    check('configured week rule replaces hardcoded Monday', (await normal.locator('.pai-rank-method').textContent()).includes('America/New_York Sunday 06:30'));
+    check('duplicate coverage notice removed', !(await normal.locator('#view').innerText()).includes('occupancy reflects only observed intervals'));
+    check('coverage remains in summary', (await normal.locator('.pai-rank-stats').innerText()).includes('of window observed'));
+    const configuredDownload = normal.waitForEvent('download');
+    await normal.getByRole('button', { name: 'Export CSV' }).click();
+    const configCSV = fs.readFileSync(await (await configuredDownload).path(), 'utf8');
+    check('CSV reports timezone and week rule', configCSV.includes('"timezone","week_start","reset_time"') && configCSV.includes('"America/New_York","sunday","06:30"'));
+    check('CSV timestamps use configured timezone', configCSV.includes('2026-10-04 06:30:00') && !configCSV.includes('since_Asia_Shanghai'));
+    await shot(normal, 'ranking-configured-en-390');
     await normal.close(); enabled = false;
 
     for (const [platform, shortcut, width, locale] of [['Win32', 'Ctrl+Shift+R', 1440, 'zh'], ['MacIntel', 'Command+Shift+R', 1440, 'zh'], ['Linux', 'Ctrl+Shift+R', 390, 'en']]) {

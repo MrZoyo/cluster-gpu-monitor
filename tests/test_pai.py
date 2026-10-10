@@ -518,3 +518,72 @@ def test_ranking_http_default_week_and_no_history_is_unknown(store, cfg, monkeyp
     assert feature["gpu_hours"] is None and feature["workloads"] is None
     assert feature["occupancy_pct"] is None and feature["current_occupancy_pct"] == 0
     assert client.get("/api/pai/ranking?window=invalid").status_code == 400
+
+
+@pytest.mark.parametrize('field,value', [
+    ('ranking_timezone', 'Invalid/Nowhere'), ('ranking_timezone', '../UTC'),
+    ('ranking_week_start', 'Monday'), ('ranking_week_start', 'noday'),
+    ('ranking_reset_time', '24:00'), ('ranking_reset_time', '09:60'), ('ranking_reset_time', '9:00'),
+])
+def test_invalid_reporting_config_is_rejected(field, value):
+    with pytest.raises(ValueError):
+        PaiSettings(**{field: value})
+
+
+@pytest.mark.parametrize('zone,day,reset,now,start,end', [
+    ('Asia/Shanghai', 'monday', '00:00', '2027-01-01T12:00:00+00:00', '2026-12-27T16:00:00+00:00', None),
+    ('Asia/Kolkata', 'friday', '08:45', '2026-10-09T04:00:00+00:00', '2026-10-09T03:15:00+00:00', None),
+    ('UTC', 'sunday', '18:00', '2026-10-11T17:59:59+00:00', '2026-10-04T18:00:00+00:00', None),
+    ('UTC', 'sunday', '18:00', '2026-10-11T18:00:00+00:00', '2026-10-11T18:00:00+00:00', None),
+    # Previous weeks across DST are 167 and 169 hours, not always 168.
+    ('Europe/Berlin', 'monday', '00:00', '2026-03-30T12:00:00+00:00', '2026-03-22T23:00:00+00:00', '2026-03-29T22:00:00+00:00'),
+    ('Europe/Berlin', 'monday', '00:00', '2026-10-26T12:00:00+00:00', '2026-10-18T22:00:00+00:00', '2026-10-25T23:00:00+00:00'),
+    # Missing 02:30 is shifted forward; repeated 02:30 uses its first occurrence.
+    ('Europe/Berlin', 'sunday', '02:30', '2026-03-29T01:30:00+00:00', '2026-03-29T01:30:00+00:00', None),
+    ('Europe/Berlin', 'sunday', '02:30', '2026-10-25T01:15:00+00:00', '2026-10-25T00:30:00+00:00', None),
+])
+def test_configurable_reporting_boundaries(zone, day, reset, now, start, end):
+    from datetime import datetime
+    from gpumon.pai.reporting import reporting_period
+    stamp = lambda s: datetime.fromisoformat(s).timestamp()
+    cfg = PaiSettings(ranking_timezone=zone, ranking_week_start=day, ranking_reset_time=reset)
+    assert reporting_period(stamp(now), cfg, previous=end is not None) == (stamp(start), stamp(end or now))
+
+
+def test_fractional_boundary_buckets_preserve_additive_usage_and_denominators(store):
+    with store.connect() as c:
+        c.execute("INSERT INTO usage_hour(hour,workload_id,user_id,quota_id,gpu_s,compute_sum,compute_n) VALUES (0,'a','a','q',28800,50,1)")
+        c.execute("INSERT INTO usage_hour(hour,workload_id,user_id,quota_id,gpu_s,compute_sum,compute_n) VALUES (3600,'b','b','q',14400,100,1)")
+        c.execute("INSERT INTO quota_hour VALUES (0,'q','q',3600,28800,7200)")
+        c.execute("INSERT INTO quota_hour VALUES (3600,'q','q',3600,57600,28800)")
+    r = store.ranking(5400, 3600, since=1800, observed_until=7200)['rows']
+    assert {x['user_id']: x['gpu_s'] / 3600 for x in r} == {'a': 4, 'b': 2}
+    assert sum(x['effective_gpu_s'] for x in r) / 3600 == 4
+    q = store.quota_ranking(1800, 5400, observed_until=7200)[0]
+    assert (q['observed_s'], q['capacity_gpu_s'] / 3600, q['used_gpu_s'] / 3600) == (3600, 12, 5)
+    pieces = [(0, 1800), (1800, 5400), (5400, 7200)]
+    assert sum(sum(r['gpu_s'] for r in store.ranking(end, end-start, since=start, observed_until=7200)['rows']) for start, end in pieces) == 43200
+    assert sum(store.quota_ranking(start, end, observed_until=7200)[0]['observed_s'] for start, end in pieces) == 7200
+
+
+def test_ongoing_hour_is_not_discounted_again(store):
+    with store.connect() as c:
+        c.execute("INSERT INTO usage_hour(hour,workload_id,user_id,quota_id,gpu_s) VALUES (3600,'a','a','q',7200)")
+    assert store.ranking(5400, 1800, since=3600)['rows'][0]['gpu_s'] == 7200
+    assert store.ranking(5400, 900, since=4500)['rows'][0]['gpu_s'] == 3600
+    with store.connect() as c:
+        c.execute("UPDATE usage_hour SET gpu_s=0.5")
+    assert store.ranking(3600.5, 0.5, since=3600)['rows'][0]['gpu_s'] == 0.5
+
+
+def test_http_reporting_config_controls_window_and_metadata(store, cfg, monkeypatch):
+    from datetime import datetime
+    from gpumon.api import pai
+    from gpumon.api.app import create_app
+    cfg.db_path = str(store.path)
+    cfg.ranking_timezone, cfg.ranking_week_start, cfg.ranking_reset_time = 'Asia/Kolkata', 'friday', '08:45'
+    monkeypatch.setattr(pai, 'load_pai_settings', lambda: cfg)
+    monkeypatch.setattr(pai.time, 'time', lambda: datetime.fromisoformat('2026-10-09T04:00:00+00:00').timestamp())
+    data = TestClient(create_app()).get('/api/pai/ranking').json()
+    assert data['since'] == datetime.fromisoformat('2026-10-09T03:15:00+00:00').timestamp()
+    assert (data['timezone'], data['week_start'], data['reset_time'], data['boundary_estimate']) == ('Asia/Kolkata', 'friday', '08:45', True)

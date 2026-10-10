@@ -104,3 +104,13 @@ Actions 页面手工执行 `workflow_dispatch`。
 短暂中断后保留最近数值和均值，以及主机不可达。状态与静态导出使用同一个冻结时钟，
 黄色边框、卡片斜纹、过载图例、降频提示和未知值
 由真实页面逻辑渲染。全部为合成数据，不向真实 GPU 发起查询。
+
+
+PAI 演示默认同样使用北京时间周一 00:00；导出时可通过以下参数生成其他周界，
+不读取真实 `pai.toml`：
+
+```sh
+--with-pai --pai-ranking-timezone America/New_York \
+  --pai-ranking-week-start sunday --pai-ranking-reset-time 06:30
+```
+静态 demo 的时刻冻结于构建时；周界及时间显示使用同一组配置。

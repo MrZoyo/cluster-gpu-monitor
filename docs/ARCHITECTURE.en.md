@@ -48,6 +48,9 @@ Bare-metal usage is attributed to operating-system usernames; PAI uses RAM owner
 The two forms of accounting stay separate. PAI retains raw metrics for 24 hours by default;
 workload/UTC-hour usage estimates and per-quota hourly usage history are kept for 32 days. Physical counts, requests, quota allocation and
 idle-time capacity are distinct; see the [PAI guide](PAI.en.md) for semantics and service isolation.
+The weekly API reads hourly history using the configured IANA timezone, first weekday and rollover time.
+The page, CSV and synthetic demo share that calendar rule; fractional boundary hours are apportioned by overlap.
+
 
 ## Collection model
 

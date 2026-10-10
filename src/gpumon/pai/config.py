@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
+from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..config import ROOT
 
@@ -20,6 +22,19 @@ class PaiSettings(BaseModel):
     profile: str = ""
     db_path: str = "data/pai.db"
     baremetal_notice: str = ""
+    ranking_timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=128)
+    ranking_week_start: Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] = "monday"
+    ranking_reset_time: str = Field(default="00:00", pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+
+    @field_validator("ranking_timezone")
+    @classmethod
+    def valid_ranking_timezone(cls, value):
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("ranking_timezone must be a valid IANA timezone") from None
+        return value
+
     poll_interval_s: int = Field(default=120, ge=120, le=3600)
     degraded_interval_s: int = Field(default=180, ge=180, le=7200)
     topology_interval_s: int = Field(default=300, ge=300, le=3600)

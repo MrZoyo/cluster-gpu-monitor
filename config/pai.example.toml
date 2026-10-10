@@ -18,3 +18,8 @@ round_timeout_s = 100
 request_timeout_s = 12
 metric_window_s = 600
 retention_hours = 24
+
+# Weekly ranking rollover, in the selected IANA timezone (not the collector poll cadence).
+ranking_timezone = "Asia/Shanghai"
+ranking_week_start = "monday" # monday ... sunday
+ranking_reset_time = "00:00" # local HH:MM

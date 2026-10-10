@@ -66,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--out", default="dist/demo", help="输出目录")
     ap.add_argument("--force", action="store_true", help="清空已存在的输出目录")
+    ap.add_argument("--pai-ranking-timezone", default="Asia/Shanghai", help="Synthetic PAI reporting timezone")
+    ap.add_argument("--pai-ranking-week-start", default="monday", help="Synthetic PAI first weekday")
+    ap.add_argument("--pai-ranking-reset-time", default="00:00", help="Synthetic PAI weekly rollover HH:MM")
     ap.add_argument("--with-pai", action="store_true", help="加入完全虚构的 PAI 示例（不读取真实 PAI 配置或数据库）")
     ap.add_argument(
         "--allow-unmarked-inputs",
@@ -93,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
         import yaml
         from gpumon.models import Inventory, Settings
 
+        from gpumon.pai.config import PaiSettings
+        pai_reporting = PaiSettings(ranking_timezone=args.pai_ranking_timezone,
+                                    ranking_week_start=args.pai_ranking_week_start,
+                                    ranking_reset_time=args.pai_ranking_reset_time)
         inventory_model = Inventory.model_validate(yaml.safe_load(inv.read_text(encoding="utf-8")))
         with settings.open("rb") as handle:
             settings_model = Settings.model_validate(tomllib.load(handle))
@@ -186,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     windows = list(WINDOWS)
     if args.with_pai:
         from pai_demo import fixtures
-        for name, payload in fixtures(meta["server_time"], WINDOWS).items():
+        for name, payload in fixtures(meta["server_time"], WINDOWS, ranking_timezone=pai_reporting.ranking_timezone,
+                ranking_week_start=pai_reporting.ranking_week_start, ranking_reset_time=pai_reporting.ranking_reset_time).items():
             dump(name, payload)
     for w in windows:
         dump(f"overview.{w}.json", routes.overview(window=w))

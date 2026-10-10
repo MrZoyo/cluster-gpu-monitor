@@ -65,7 +65,7 @@ fleets, second-level alerts, quotas, or billing.
   notes, planned capacity, and soft retirement.
 - **NVIDIA and AMD:** auto-detect `nvidia-smi`, `amd-smi`, or `rocm-smi`; set `vendor` in the
   inventory for known hosts to skip the extra per-round detection.
-- **Optional PAI monitoring:** read cloud APIs into a separate SQLite snapshot for quotas, GPUs, workload charts, and weekly feature/user rankings; disabled by default.
+- **Optional PAI monitoring:** read cloud APIs into a separate SQLite snapshot for quotas, GPUs, workload charts, and weekly feature/user rankings with configurable timezone and weekly rollover; disabled by default.
 - **Page recovery guidance:** loading failures and incompatible responses show the force-reload shortcut for the operating system.
 - **Small self-hosted stack:** SQLite, FastAPI, vanilla JavaScript, and bundled ECharts; no frontend
   build step.

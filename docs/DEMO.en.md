@@ -110,3 +110,12 @@ are rendered by the production UI code. All examples are synthetic; no GPU queri
 ### Optional synthetic PAI pages
 
 Pass `--with-pai` to the exporter to include fictional quotas, four nodes, running/queued/idle-capacity workloads, GPU charts and feature/user rankings. `scripts/pai_demo.py` never reads cloud credentials, PAI settings, or a production database. The Pages workflow enables this option; ordinary deployments and exports remain PAI-free by default.
+
+
+The synthetic PAI demo also defaults to Monday 00:00 Asia/Shanghai. Export flags can select another reporting rule without reading runtime `pai.toml`:
+
+```sh
+--with-pai --pai-ranking-timezone America/New_York \
+  --pai-ranking-week-start sunday --pai-ranking-reset-time 06:30
+```
+The static demo clock remains frozen at build time; boundaries and displayed dates share these settings.

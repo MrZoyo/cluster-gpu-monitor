@@ -14,6 +14,17 @@ UTIL_COLUMNS = {"compute": "compute", "memory": "gmem", "cpu": "cpu_util", "ram"
 USAGE_RETENTION_S = 32 * 86400
 
 
+def _window_cte(table, since, until, observed_until):
+    # Hourly history cannot locate usage inside a boundary hour. Apportion only
+    # boundary buckets by overlap, including fractional-offset timezones. The
+    # ongoing hour already contains partial observations, so use its elapsed span.
+    return f"""WITH weighted AS (SELECT *,
+        1.0 * MAX(0.0, MIN(hour + 3600, ?, ?) - MAX(hour, ?)) /
+        MAX(1e-9, MIN(hour + 3600, ?) - hour) AS weight
+        FROM {table} WHERE hour >= ? AND hour < ? AND hour < ?) """, (
+        until, observed_until, since, observed_until, int(since // 3600) * 3600, until, observed_until)
+
+
 class PaiStore:
     def __init__(self, path, read_only=False):
         self.path = Path(path)
@@ -251,30 +262,33 @@ class PaiStore:
                 c.execute("DELETE FROM quota_cursor WHERE quota_id=?", (qid,))
             c.execute("DELETE FROM quota_hour WHERE hour < ?", (now - USAGE_RETENTION_S,))
 
-    def quota_ranking(self, since, until):
+    def quota_ranking(self, since, until, *, observed_until=None):
+        observed_until = until if observed_until is None else observed_until
         with self.connect() as c:
             # Older databases can still be read during a rolling deployment.
             if not c.execute("SELECT 1 FROM sqlite_master WHERE name='quota_hour'").fetchone():
                 return []
-            rows = c.execute("""SELECT quota_id, MAX(quota_name) quota_name, MIN(hour) first_hour,
-                SUM(observed_s) observed_s, SUM(capacity_gpu_s) capacity_gpu_s, SUM(used_gpu_s) used_gpu_s
-                FROM quota_hour WHERE hour >= ? AND hour < ? GROUP BY quota_id LIMIT 1000""",
-                (since, until)).fetchall()
+            cte, params = _window_cte("quota_hour", since, until, observed_until)
+            rows = c.execute(cte + """SELECT quota_id, MAX(quota_name) quota_name, MIN(hour) first_hour,
+                SUM(observed_s * weight) observed_s, SUM(capacity_gpu_s * weight) capacity_gpu_s, SUM(used_gpu_s * weight) used_gpu_s
+                FROM weighted WHERE weight > 0 GROUP BY quota_id LIMIT 1000""", params).fetchall()
         return [dict(r) for r in rows]
 
-    def ranking(self, now, window_s, *, since=None, group_by="user"):
+    def ranking(self, now, window_s, *, since=None, group_by="user", observed_until=None):
+        observed_until = now if observed_until is None else observed_until
         since = int(now - window_s) // 3600 * 3600 if since is None else since
         grouping = "user_id, quota_id" if group_by == "user" else "quota_id"
         with self.connect() as c:
-            rows = c.execute(f"""SELECT user_id, MAX(user_name) AS user_name, quota_id,
-                    SUM(gpu_s) gpu_s, SUM(oversold_gpu_s) oversold_gpu_s, SUM(cpu_s) cpu_s, SUM(mem_gib_s) mem_gib_s,
-                    SUM(CASE WHEN compute_n > 0 THEN gpu_s * compute_sum / compute_n / 100 END) effective_gpu_s,
-                    SUM(CASE WHEN compute_n > 0 THEN gpu_s END) measured_gpu_s,
-                    SUM(compute_sum) compute_sum, SUM(compute_n) compute_n, SUM(gmem_sum) gmem_sum, SUM(gmem_n) gmem_n,
-                    SUM(cpu_util_sum) cpu_util_sum, SUM(cpu_util_n) cpu_util_n,
-                    SUM(ram_util_sum) ram_util_sum, SUM(ram_util_n) ram_util_n,
+            cte, params = _window_cte("usage_hour", since, now, observed_until)
+            rows = c.execute(cte + f"""SELECT user_id, MAX(user_name) AS user_name, quota_id,
+                    SUM(gpu_s * weight) gpu_s, SUM(oversold_gpu_s * weight) oversold_gpu_s, SUM(cpu_s * weight) cpu_s, SUM(mem_gib_s * weight) mem_gib_s,
+                    SUM(CASE WHEN compute_n > 0 THEN gpu_s * weight * compute_sum / compute_n / 100 END) effective_gpu_s,
+                    SUM(CASE WHEN compute_n > 0 THEN gpu_s * weight END) measured_gpu_s,
+                    SUM(compute_sum * weight) compute_sum, SUM(compute_n * weight) compute_n, SUM(gmem_sum * weight) gmem_sum, SUM(gmem_n * weight) gmem_n,
+                    SUM(cpu_util_sum * weight) cpu_util_sum, SUM(cpu_util_n * weight) cpu_util_n,
+                    SUM(ram_util_sum * weight) ram_util_sum, SUM(ram_util_n * weight) ram_util_n,
                     COUNT(DISTINCT workload_id) workloads
-                FROM usage_hour WHERE hour >= ? AND hour < ? GROUP BY {grouping} LIMIT 5001""", (since, now)).fetchall()
+                FROM weighted WHERE weight > 0 GROUP BY {grouping} LIMIT 5001""", params).fetchall()
             first = c.execute("SELECT MIN(hour) FROM usage_hour").fetchone()[0]
         return {"since": since, "first_hour": first, "rows": [dict(r) for r in rows[:5000]],
                 "truncated": len(rows) > 5000}

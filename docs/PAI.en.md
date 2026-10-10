@@ -57,6 +57,9 @@ Relative `db_path` values resolve against `GPUMON_ROOT`. The default configurati
 | `cli_path` / `profile` | `pai-tui` / empty | Executable and CLI profile; profile credentials override environment variables |
 | `db_path` | `data/pai.db` | Separate PAI database |
 | `baremetal_notice` | Empty | Optional notice on bare-metal pages when PAI is enabled |
+| `ranking_timezone` | `Asia/Shanghai` | IANA timezone used by weekly boundaries, page timestamps and CSV |
+| `ranking_week_start` | `monday` | First weekday: `monday` through `sunday`, lowercase |
+| `ranking_reset_time` | `00:00` | Weekly rollover in local `HH:MM` (24-hour time) |
 | `poll_interval_s` / `degraded_interval_s` | `120` / `180` | Normal and repeated-failure polling intervals |
 | `topology_interval_s` / `stale_after_s` | `300` / `600` | Quota/node cache cadence and ordinary-source stale threshold |
 | `request_timeout_s` / `round_timeout_s` | `12` / `100` | Per-CLI-call and total-round time budgets |
@@ -115,11 +118,39 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 ### Weekly feature ranking
 
 The default window runs from Monday 00:00 Beijing time (Asia/Shanghai) to now; last week is the
-previous full calendar week. Rolling windows remain available. PAI window and dimension choices are
+previous full configured reporting week. The timezone, weekday and rollover time are configurable. Rolling windows remain available. PAI window and dimension choices are
 independent of bare-metal pages and survive automatic refresh. Features group workloads by the
 `QuotaId` used at submission, so one user can appear under several features. Direct root-quota
 submissions stay in their own row; the page never guesses an algorithm group from usernames. Weekly
 reports per group therefore require submitters to choose the matching quota.
+
+Configure the installed version in private `config/pai.toml`:
+
+```toml
+ranking_timezone = "Asia/Shanghai"
+ranking_week_start = "monday"
+ranking_reset_time = "00:00"
+```
+
+For example, `America/New_York`, `sunday`, `06:30` starts each week on Sunday at 06:30 New York time.
+The next ranking request uses the updated rule, including historical queries; it does not erase history.
+These fields control weekly rollover, not the page's 120-second auto-refresh or collector cadence.
+Validate before applying with `GPUMON_ROOT=/path/to/runtime uv run python -c
+'from gpumon.pai.config import load_pai_settings; load_pai_settings(); print("PAI config OK")'`.
+Unknown zones, invalid weekdays and malformed times fail validation. Install the supporting version before
+adding these fields. IANA timezone data is supplied by the system or the bundled `tzdata` dependency.
+
+Weeks follow the local calendar across daylight-saving changes, so last week may contain 167 or 169 hours.
+If the configured wall time does not exist during a spring-forward transition, it shifts forward by the gap;
+if repeated during fall-back, its first occurrence is used. API fields `timezone`, `week_start`, `reset_time`
+and CSV metadata state the rule; page dates and CSV local timestamps use that timezone.
+
+History remains in UTC-hour buckets. If a boundary is not aligned to a UTC hour (including fractional-offset
+zones), resource-seconds and metric sums/counts in that boundary bucket are apportioned by overlap duration.
+This preserves additive totals between adjacent windows but cannot reconstruct within-hour starts, stops or
+missing observations; job counts include jobs present in the overlapping bucket. `boundary_estimate=true`
+flags this in the API and CSV. An ongoing hour is not discounted a second time. Exact hourly-aligned
+boundaries, including the default, retain the existing accounting.
 
 - **Task GPU hours** include in-quota and idle-time workloads, with idle-time shown separately. A workload
   counts only toward its submission quota and is never added again to a parent quota.

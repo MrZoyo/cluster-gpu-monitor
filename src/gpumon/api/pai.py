@@ -3,13 +3,13 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
-from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from ..db.store import WINDOWS
 from ..pai.config import load_pai_settings
 from ..pai.store import PaiStore
+from ..pai.reporting import reporting_period, reporting_metadata
 from ..pai.view import overview
 from .deps import mask_username, valid_window
 from .query_control import bounded_query
@@ -108,24 +108,19 @@ def pai_ranking(response: Response, window: str = Query("week")):
     """Feature and user rankings, with observed quota denominators (<= 32 days)."""
     response.headers["Cache-Control"] = "no-store"
     now = time.time()
-    if window in ("week", "last_week"):
-        # PAI reporting weeks are Monday 00:00 in China, independent of browser timezone.
-        local = datetime.fromtimestamp(now, timezone(timedelta(hours=8)))
-        monday = (local - timedelta(days=local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-        since, until = monday.timestamp(), now
-        if window == "last_week":
-            since, until = since - 7 * 86400, since
-    else:
-        window = valid_window(window)
-        since, until = int(now - WINDOWS[window]) // 3600 * 3600, now
     cfg = load_pai_settings()
     if not cfg.enabled:
         raise HTTPException(404, "PAI disabled")
+    if window in ("week", "last_week"):
+        since, until = reporting_period(now, cfg, previous=window == "last_week")
+    else:
+        window = valid_window(window)
+        since, until = int(now - WINDOWS[window]) // 3600 * 3600, now
     try:
         store = PaiStore(cfg.db_path, read_only=True)
-        data = store.ranking(until, until - since, since=since)
-        feature_data = store.ranking(until, until - since, since=since, group_by="feature")
-        quota_history = store.quota_ranking(since, until)
+        data = store.ranking(until, until - since, since=since, observed_until=now)
+        feature_data = store.ranking(until, until - since, since=since, group_by="feature", observed_until=now)
+        quota_history = store.quota_ranking(since, until, observed_until=now)
         quota_source = store.sources().get("quotas", {})
         quota_rows = quota_source.get("payload") or []
         quota_names = {q.get("quota_id"): q.get("quota_name") for q in quota_rows}
@@ -208,7 +203,8 @@ def pai_ranking(response: Response, window: str = Query("week")):
                         "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads"):
                 f[key] = None
     return {"window": window, "since": since, "until": until, "generated_at": now,
-            "timezone": "Asia/Shanghai", "first_hour": data["first_hour"],
+            **reporting_metadata(cfg), "first_hour": data["first_hour"],
+            "boundary_estimate": bool(since % 3600 or (until < now and until % 3600)),
             "bucket_s": 3600, "users": result[:200], "features": ordered[:200],
             "quota_fetched_at": quota_source.get("fetched_at"), "quota_fresh": fresh,
             "truncated": len(result) > 200 or len(ordered) > 200 or data["truncated"] or feature_data["truncated"]}

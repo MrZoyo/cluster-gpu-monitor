@@ -2,19 +2,20 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
 import tempfile
 from pathlib import Path
 
 from gpumon.pai.config import PaiSettings
 from gpumon.pai.store import PaiStore
+from gpumon.pai.reporting import reporting_period, reporting_metadata
 from gpumon.pai.view import overview
 
 
-def fixtures(now: int, windows: dict[str, int]) -> dict:
+def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shanghai", ranking_week_start="monday", ranking_reset_time="00:00") -> dict:
     now = int(now) // 120 * 120
     cfg = PaiSettings(enabled=True, account_id="0000000000000000", region="demo-region",
-                      workspace_id="demo-workspace", quota_id="demo-root")
+                      workspace_id="demo-workspace", quota_id="demo-root", ranking_timezone=ranking_timezone,
+                      ranking_week_start=ranking_week_start, ranking_reset_time=ranking_reset_time)
     # Two development instances, a training job, an idle-capacity job, and a queued job.
     specs = [
         ("demo-dsw-vision", "演示 · 视觉开发", "dsw", "demo-alice", "Demo Alice", "demo-dev", 2, 36, False),
@@ -87,10 +88,8 @@ def fixtures(now: int, windows: dict[str, int]) -> dict:
             result = {"pai_status.json": {"enabled": True, "state": "ok", "synthetic": True}, "pai_overview.json": snapshot}
             for wid, *_ in specs:
                 result[f"pai_series.{wid}.json"] = store.series(wid, now)
-            local = datetime.fromtimestamp(now, timezone(timedelta(hours=8)))
-            monday = (local - timedelta(days=local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
             periods = {w: (now - seconds, now) for w, seconds in windows.items()}
-            periods.update(week=(monday, now), last_week=(monday - 7 * 86400, monday))
+            periods.update(week=reporting_period(now, cfg), last_week=reporting_period(now, cfg, previous=True))
             for window, (since, until) in periods.items():
                 seconds = until - since
                 hours = max(0, until - max(since, now - 72 * 3600)) / 3600
@@ -123,8 +122,14 @@ def fixtures(now: int, windows: dict[str, int]) -> dict:
                         observed_quota_hours=hours, quota_coverage_pct=hours*3600/seconds*100 if seconds else 0,
                         workloads=sum(u["workloads"] for u in members) if hours else 0))
                 features.sort(key=lambda f: -f["gpu_hours"])
+                if not hours:
+                    users = []
+                    for f in features:
+                        for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours", "workloads"):
+                            f[key] = None
                 result[f"pai_ranking.{window}.json"] = dict(window=window, since=since, until=until, generated_at=now,
-                    timezone="Asia/Shanghai", quota_fresh=True, features=features,
+                    **reporting_metadata(cfg), boundary_estimate=bool(since % 3600 or (until < now and until % 3600)),
+                    quota_fresh=True, features=features,
                     first_hour=now - 72 * 3600, bucket_s=3600, users=users, truncated=False, synthetic=True)
             return result
         finally:

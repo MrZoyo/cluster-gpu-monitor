@@ -52,6 +52,9 @@ uv run gpumon web --host 127.0.0.1 --port 8848
 | `cli_path` / `profile` | `pai-tui` / 空 | CLI 路径和身份配置名；CLI profile 中的凭证优先于环境变量 |
 | `db_path` | `data/pai.db` | 独立 PAI 数据库，不与裸金属共用 |
 | `baremetal_notice` | 空 | 启用 PAI 后可在裸金属页面显示的说明文字 |
+| `ranking_timezone` | `Asia/Shanghai` | 周界、页面时间及 CSV 使用的 IANA 时区 |
+| `ranking_week_start` | `monday` | 每周第一天，英文小写 `monday` 至 `sunday` |
+| `ranking_reset_time` | `00:00` | 本地时区的每周换榜时刻，24 小时制 `HH:MM` |
 | `poll_interval_s` / `degraded_interval_s` | `120` / `180` | 正常及连续失败后的采集间隔 |
 | `topology_interval_s` / `stale_after_s` | `300` / `600` | 配额/节点目录缓存周期及普通来源陈旧阈值 |
 | `request_timeout_s` / `round_timeout_s` | `12` / `100` | 单次 CLI 调用与整轮时间预算 |
@@ -97,10 +100,36 @@ uv run gpumon web --host 127.0.0.1 --port 8848
 
 ### Feature 周排行
 
-默认按北京时间（Asia/Shanghai）周一 00:00 至今统计；上周是前一个完整自然周。
+默认按北京时间（Asia/Shanghai）周一 00:00 至今统计；上周是前一个完整配置周。
+时区、每周第一天和换榜时刻均可配置。
 滚动窗口仍保留，PAI 的时间窗和维度选择独立于裸金属页面，并在自动刷新时保留。
 Feature 使用任务提交时的 `QuotaId` 分组，同一用户可以出现在多个 feature 的任务中。
 根配额直接提交的任务单列，不根据用户名猜测算法组；要做算法组周报，需要提交者选择对应配额。
+
+在已升级版本的私有 `config/pai.toml` 中配置：
+
+```toml
+ranking_timezone = "Asia/Shanghai"
+ranking_week_start = "monday"
+ranking_reset_time = "00:00"
+```
+
+例如配置 `America/New_York`、`sunday`、`06:30`，表示纽约时间周日 06:30 开始新一周。
+修改后下一次排行请求按新周界查询已有历史，不清空历史。这里设置每周换榜时刻，
+页面每 120 秒自动刷新及采集频率仍分别沿用原设置。
+应用前可校验：`GPUMON_ROOT=/path/to/runtime uv run python -c
+'from gpumon.pai.config import load_pai_settings; load_pai_settings(); print("PAI config OK")'`。
+不存在的时区、非法星期或时间格式会被拒绝；先升级到支持这些字段的版本再添加配置。
+IANA 时区数据使用系统数据或随依赖安装的 `tzdata`。
+
+夏令时按本地日历计算，因此一周可能有 167 或 169 小时。若换榜时刻因夏令时跳过，
+按跳变时差向后顺延（如 02:30 → 03:30）；若重复出现，取第一次。
+API 的 `timezone`、`week_start`、`reset_time` 及 CSV 元数据说明实际周界，页面与导出使用同一时区。
+
+历史仍按 UTC 小时汇总。若周界未对齐 UTC 整点（含半小时时区），边界小时中的资源秒及
+指标和/计数按重叠时长比例分摊，使相邻窗口合计守恒；无法还原小时内部的启动、停止或缺测分布，
+任务数包含重叠小时内出现的任务。API 和 CSV 用 `boundary_estimate=true` 标记这一估算。
+正在积累的当前小时不会再次折减。默认周界对齐 UTC 整点，统计口径保持原样。
 
 - **任务 GPU·小时**包含配额内和闲时任务；闲时单列。任务只归属提交配额，不向父配额重复累计。
 - **当前配额 / 用量 / 占用率**来自最新 Quota 快照，始终表示当前值，即使选择上周也不会变成历史值。
