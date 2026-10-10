@@ -174,6 +174,11 @@ const server = http.createServer((req, res) => {
     check('PAI ranking defaults to reporting week', rankRequests.at(-1).endsWith('window=week'));
     check('PAI nav says ranking', await normal.locator('#navRankText').innerText() === '排行');
     check('feature is default dimension', await normal.getByRole('button', { name: 'Feature', exact: true }).getAttribute('aria-pressed') === 'true');
+    check('this week is default period', await normal.getByRole('button', { name: '本周', exact: true }).getAttribute('aria-pressed') === 'true');
+    await normal.locator('.pai-rank-table').waitFor();
+    check('ranking summary first', (await normal.locator('.pai-rank-stats').innerText()).includes('GPU·小时合计'));
+    check('usage bar per feature row', await normal.locator('.pai-rank-table .pai-rank-bar').count() === 1);
+    check('method notes collapsed by default', await normal.locator('.pai-rank-method').evaluate(n => !n.open));
     for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
       await normal.setViewportSize({ width, height: 1000 });
       await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
@@ -182,7 +187,7 @@ const server = http.createServer((req, res) => {
       await shot(normal, `ranking-feature-${locale}-${width}`);
     }
     await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
-    await normal.getByLabel('排行时间窗').selectOption('last_week');
+    await normal.getByRole('button', { name: '上周', exact: true }).click();
     await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
     check('last week request', rankRequests.at(-1).endsWith('window=last_week'));
     const downloadPromise = normal.waitForEvent('download');
@@ -190,10 +195,12 @@ const server = http.createServer((req, res) => {
     const download = await downloadPromise;
     const csv = fs.readFileSync(await download.path(), 'utf8');
     check('CSV includes denominator and coverage', csv.includes('capacity_gpu_hours') && csv.includes('quota_coverage_pct') && csv.includes('Example feature'));
+    const requestsBeforeSwitch = rankRequests.length;
     await normal.getByRole('button', { name: '用户', exact: true }).click();
     await normal.locator('.pai-rank-table a').waitFor();
+    check('dimension switch reuses loaded data', rankRequests.length === requestsBeforeSwitch);
     check('user ranking preserved', (await normal.locator('.pai-rank-table').innerText()).includes('Example user'));
-    await normal.getByLabel('排行时间窗').selectOption('24h');
+    await normal.getByLabel('滚动时间窗').selectOption('24h');
     await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
     check('legacy window preserved', rankRequests.at(-1).endsWith('window=24h'));
     await normal.evaluate(() => GM.render());
@@ -201,7 +208,7 @@ const server = http.createServer((req, res) => {
     check('bare-metal window unaffected', await normal.evaluate(() => GM.state.window) === '24h');
     check('ranking without browser errors', errors.length === 0);
     const displayed = await normal.locator('#view').innerText();
-    const expectedStart = new Date((now - 86400) * 1000).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    const expectedStart = new Date((now - 86400) * 1000).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16);
     check('24h dates match filter', displayed.includes(expectedStart));
     for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
       await normal.setViewportSize({ width, height: 1000 });
@@ -209,6 +216,32 @@ const server = http.createServer((req, res) => {
       check(`user ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       await shot(normal, `ranking-user-${locale}-${width}`);
     }
+    // Summary arithmetic must not add parent quota capacity to child capacity.
+    const savedRanking = fixtures['/api/pai/ranking'];
+    fixtures['/api/pai/ranking'] = { ...savedRanking, features: [...savedRanking.features, {
+      ...savedRanking.features[0], quota_id: 'root', quota_name: 'Root pool', is_root: true,
+      gpu_hours: 48, oversold_gpu_hours: 0, effective_gpu_hours: 24, measured_gpu_hours: 48,
+      current_capacity_gpu: 16, current_used_gpu: 4, current_occupancy_pct: 25,
+      capacity_gpu_hours: 384, used_gpu_hours: 96, occupancy_pct: 25, quota_coverage_pct: 0.02,
+    }] };
+    await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
+    check('summary sums direct task hours once', await normal.locator('.pai-rank-stat.total > b').innerText() === '72.0');
+    check('pool summary uses root occupancy', await normal.locator('.pai-rank-stat').nth(1).locator('b').innerText() === '25.0%');
+    check('small positive coverage is not rounded to zero', (await normal.locator('.pai-rank-stats').innerText()).includes('<0.1%'));
+    await normal.locator('.pai-rank-method summary').click();
+    await normal.waitForFunction(() => document.querySelector('.pai-rank-method').open);
+    await normal.getByRole('button', { name: 'Feature', exact: true }).click();
+    await normal.evaluate(() => GM.render());
+    check('method disclosure survives redraw and refresh', await normal.locator('.pai-rank-method').evaluate(n => n.open));
+    fixtures['/api/pai/ranking'] = { ...savedRanking, users: Array.from({ length: 35 }, (_, i) => ({ ...savedRanking.users[0], user_id: `u${i}`, username: `User ${i}` })) };
+    await normal.evaluate(() => GM.render());
+    await normal.getByRole('button', { name: '用户', exact: true }).click();
+    check('user preview is bounded to 30 rows', await normal.locator('.pai-rank-table tbody tr').count() === 30);
+    await normal.getByRole('button', { name: '显示全部 35 位用户' }).click();
+    check('show all reveals remaining users', await normal.locator('.pai-rank-table tbody tr').count() === 35);
+    await normal.evaluate(() => GM.render());
+    check('expanded user list survives refresh', await normal.locator('.pai-rank-table tbody tr').count() === 35);
+    fixtures['/api/pai/ranking'] = savedRanking;
     await normal.close(); enabled = false;
 
     for (const [platform, shortcut, width, locale] of [['Win32', 'Ctrl+Shift+R', 1440, 'zh'], ['MacIntel', 'Command+Shift+R', 1440, 'zh'], ['Linux', 'Ctrl+Shift+R', 390, 'en']]) {

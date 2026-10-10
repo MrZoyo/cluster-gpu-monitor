@@ -980,10 +980,22 @@ window.PaiUI = (() => {
     if (data.truncated) grid.after(note(t("结果达到上限，部分曲线未展示。", "Result limit reached; some series are omitted.")));
   }
 
-  // Independent PAI controls: reporting weeks do not alter bare-metal windows.
-  const rankState = { window: "week", dimension: "feature" };
+  // ── 排行：Feature / 用户。按小时历史汇总（最长 32 天），时间窗独立于裸金属 ─────
+  // 维度切换只重绘本面板（数据已含两种维度）；切换时间窗才重新请求。
+  const rankState = { window: "week", dimension: "feature", expanded: false, methodOpen: false };
+  const RANK_PAGE = 30, RANK_FULL = 90, RANK_IDLE = 10;
   const rankNumber = (v) => v == null ? "—" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
   const reportClock = (ts) => ts == null ? "—" : new Date(ts * 1000).toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" });
+  const minuteClock = (ts) => ts == null ? "—" : reportClock(ts).slice(0, 16);
+  // GPU·小时等累计量：大数取整加千分位，小数保留一位。
+  const hrs = (v) => v == null ? "—" : !v ? "0" : v >= 100 ? Math.round(v).toLocaleString() : Number(v).toFixed(1);
+  // 覆盖率可能极小（上线首日约 0.02%），不能显示成 0.0%。
+  const share = (v) => v == null ? "—" : v > 0 && v < 0.1 ? "<0.1%" : pct1(v);
+  const span = (sec) => {
+    const h = Math.floor(sec / 3600), d = Math.floor(h / 24);
+    if (!d) return dur(sec);
+    return h % 24 ? t(`${d} 天 ${h % 24} 小时`, `${d}d ${h % 24}h`) : t(`${d} 天`, `${d}d`);
+  };
   function exportRanking(data, dimension) {
     const feature = dimension === "feature";
     const rows = feature ? data.features || [] : data.users || [];
@@ -997,132 +1009,295 @@ window.PaiUI = (() => {
     const metadata = ["window", "since_Asia_Shanghai", "until_Asia_Shanghai", "generated_Asia_Shanghai", "history_first_hour", "truncated"];
     const prefix = [data.window, reportClock(data.since), reportClock(data.until), reportClock(data.generated_at), reportClock(data.first_hour), data.truncated];
     const csv = [metadata.concat(fields), ...rows.map(r => prefix.concat(fields.map(k => r[k])))].map(r => r.map(cell).join(",")).join("\r\n");
-    const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
+    const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
     const a = el("a", { href: url, download: `pai-${dimension}-${data.window}-${reportClock(data.until).slice(0, 10)}.csv` });
     a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  function featureRanking(data) {
-    const rows = data.features || [];
-    const cols = ["#", "Feature / Quota", t("当前用量 / 配额", "Current used / quota"), t("当前占用率", "Current occupancy"),
-      t("GPU·小时", "GPU-h"), t("其中闲时", "Idle GPU-h"), t("窗口配额占用率", "Period occupancy"),
-      t("有效 GPU·小时", "Effective GPU-h"), t("任务计算均值", "Task compute"), t("配额历史覆盖率", "Quota history coverage"), t("任务", "Jobs")];
-    const body = [note(t("按任务提交时的 Quota 归属 feature，按 GPU·小时降序。根配额直接提交的任务单列，无法自动归入算法组。父子配额容量不可相加。",
-      "Features follow the submission Quota, ranked by GPU-hours. Direct root submissions remain separate; parent and child capacities must not be added.")),
-      note(t("当前用量 / 配额与当前占用率是最新快照。窗口配额占用率 = 已观测配额用量 GPU·小时 ÷ 同期配额容量 GPU·小时，不含闲时资源；配额变更按观测时长加权。计算利用率表示任务实际计算忙碌程度，缺测不计零。",
-      "Current values are the latest snapshot. Period occupancy = observed quota used GPU-hours / capacity GPU-hours over the same intervals, excluding idle-time resources. Capacity changes are time-weighted. Compute measures workload activity; missing metrics are unknown.")),
-      note(t("配额历史从本次上线开始积累；覆盖率不足时，窗口占用率仅代表已观测部分。任务 GPU·小时沿用已有历史，两者覆盖区间可能不同。根配额的配额用量含子配额，任务小时仅含直接提交。",
-      "Quota history starts with this release. Partial coverage means occupancy covers only observed intervals. Task-hour history can be longer. Root quota usage includes descendants, while root task hours include only direct submissions."))];
-    if (!data.quota_fresh) body.push(note(t("当前配额快照陈旧或采集失败，当前数值仅供参考。", "Current quota snapshot is stale or failed; values are retained for reference."), "warn"));
-    if (!rows.length) return body.concat(note(t("该时间窗内还没有记录。", "No records in this window yet.")));
-    const td = (i, child, title) => el("td", { "data-label": cols[i], class: i > 1 ? "num" : "", title }, [child]);
-    body.push(el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table compact pai-rank-table" }, [
-      el("thead", {}, [el("tr", {}, cols.map(c => el("th", {}, [c])))]),
-      el("tbody", {}, rows.map((r, i) => el("tr", {}, [td(0, String(i + 1)),
-        td(1, el("span", {}, [r.quota_name, r.is_root ? el("small", { class: "pai-muted" }, [t(" · 根配额直接提交", " · root submissions")]) : null])),
-        td(2, `${rankNumber(r.current_used_gpu)} / ${rankNumber(r.current_capacity_gpu)}`, t(
-          `最新快照；资源上已分配 ${rankNumber(r.current_allocated_gpu)} 卡，其中祖先配额借用 ${rankNumber(r.current_borrowed_gpu)} 卡。资源被借用不等于本 feature 的任务用量。`,
-          `Latest snapshot; ${rankNumber(r.current_allocated_gpu)} GPUs allocated, including ${rankNumber(r.current_borrowed_gpu)} used by ancestors. Borrowed capacity is not feature task usage.`)),
-        td(3, pct1(r.current_occupancy_pct)), td(4, rankNumber(r.gpu_hours)), td(5, rankNumber(r.oversold_gpu_hours)),
-        td(6, pct1(r.occupancy_pct), t(`已观测用量 ${rankNumber(r.used_gpu_hours)} / 容量 ${rankNumber(r.capacity_gpu_hours)} GPU·小时`,
-          `Observed used ${rankNumber(r.used_gpu_hours)} / capacity ${rankNumber(r.capacity_gpu_hours)} GPU-hours`)),
-        td(7, r.measured_gpu_hours ? rankNumber(r.effective_gpu_hours) : "—", t(`指标覆盖 ${rankNumber(r.measured_gpu_hours)} / ${rankNumber(r.gpu_hours)} GPU·小时`,
-          `Metrics cover ${rankNumber(r.measured_gpu_hours)} / ${rankNumber(r.gpu_hours)} GPU-hours`)),
-        td(8, bar(r.compute_mean)), td(9, pct1(r.quota_coverage_pct), t(`观测 ${rankNumber(r.observed_quota_hours)} 小时`, `Observed ${rankNumber(r.observed_quota_hours)} hours`)),
-        td(10, rankNumber(r.workloads)),
-      ]))),
-    ])]));
-    return body;
+
+  // Feature 区分色：只用于用户排行里同一根用量条的分段。按 quota_id 排序分配，各时间窗颜色一致；
+  // 色相避开利用率红橙、警示琥珀与闲时紫，饱和度压低；根配额直接提交和已删除的历史配额不是现有 feature，用中性灰。
+  const FEATURE_HUES = [199, 152, 330, 222, 95, 178, 300, 128];
+  function featureColors(data) {
+    const light = document.body.dataset.theme === "light";
+    const roots = new Set((data.features || []).filter((f) => f.is_root).map((f) => String(f.quota_id)));
+    const gone = new Set((data.features || []).filter((f) => f.current_capacity_gpu == null && f.current_used_gpu == null).map((f) => String(f.quota_id)));
+    const ids = [...new Set([...(data.features || []).map((f) => String(f.quota_id)),
+      ...(data.users || []).flatMap((u) => (u.quotas || []).map((q) => String(q.quota_id)))])].filter((id) => !roots.has(id) && !gone.has(id)).sort();
+    const n = FEATURE_HUES.length;
+    const map = new Map(ids.map((id, i) => [id, `hsl(${(FEATURE_HUES[i % n] + 17 * Math.floor(i / n)) % 360}, ${light ? 52 : 48}%, ${light ? 44 : 60}%)`]));
+    return (id) => (roots.has(String(id)) ? "var(--muted)" : map.get(String(id)) || "var(--faint)");
   }
 
-  // Feature / user ranking from hourly history, retained for 32 days.
-  async function rankingPanel(host) {
-    const w = rankState.window;
-    const choices = [["week", t("本周（周一至今）", "This week")], ["last_week", t("上周", "Last week")],
-      ...GM.state.meta.windows.map(k => [k, k])];
-    const controls = el("div", { class: "pai-tools pai-rank-controls" }, [
-      ...[["feature", "Feature"], ["user", t("用户", "User")]].map(([key, label]) => el("button", {
-        class: "btn" + (rankState.dimension === key ? " active" : ""), "aria-pressed": String(rankState.dimension === key),
-        onclick: () => { rankState.dimension = key; GM.render(); } }, [label])),
-      el("select", { "aria-label": t("排行时间窗", "Ranking window"), onchange: e => { rankState.window = e.target.value; GM.render(); } },
-        choices.map(([key, label]) => el("option", { value: key, selected: w === key ? "selected" : null }, [label]))),
+  // 横向用量条：实色为配额内（用户排行按 feature 分色），斜纹紫为闲时资源；长度按本榜最大值归一。
+  function usageBar(parts, max) {
+    return el("div", { class: "pai-rank-bar" }, parts.filter((p) => p.v > 0).map((p) => el("i", {
+      class: p.idle ? "idle" : null, title: p.title || null,
+      style: `width:${Math.max(0.8, p.v / max * 100)}%` + (p.color ? `;--c:${p.color}` : "") })));
+  }
+  function usageCell(total, idle, parts, max, sum) {
+    if (total == null) return el("span", { class: "pai-dash", title: t("该窗口无任务历史", "No task history in this window") }, ["—"]);
+    return el("div", { class: "pai-rank-usage" }, [
+      el("div", { class: "pai-rank-usage-top" }, [
+        el("b", {}, [hrs(total)]),
+        idle > 0 ? el("span", { class: "idle", title: OVERSOLD_TIP() }, [t(`闲时 ${hrs(idle)}`, `idle ${hrs(idle)}`)]) : null,
+        sum > 0 ? el("span", { class: "share", title: t("占本窗口合计", "Share of the window total") }, [share(total / sum * 100)]) : null,
+      ]),
+      usageBar(parts, max),
     ]);
-    const box = panel(t("排行", "Ranking") + " · " + (choices.find(c => c[0] === w)?.[1] || w), [note(t("读取中…", "Loading…"))],
-      { tools: controls });
+  }
+  // 读数 + 细条 + 次要说明。缺测显示 "—"，不画成 0。
+  function meterCell(v, opts) {
+    opts = opts || {};
+    const sub = opts.sub ? el("small", { class: opts.subTone || null }, [opts.sub]) : null;
+    if (v == null) return el("div", { class: "pai-rank-meter none", title: opts.title || null }, [el("b", {}, [opts.text && opts.always ? opts.text : "—"]), sub]);
+    return el("div", { class: "pai-rank-meter" + (opts.cls ? " " + opts.cls : ""), title: opts.title || null, style: opts.color ? `--m:${opts.color}` : null }, [
+      el("b", {}, [opts.text || pct1(v)]),
+      el("span", { class: "meter" }, [el("i", { style: `width:${Math.max(0, Math.min(100, v))}%` })]),
+      sub,
+    ]);
+  }
+  // 指标细条统一用强调色；只有“计算偏低”用琥珀色，与行内标签呼应。
+  const computeCell = (mean, measured, effective, total) => meterCell(mean, {
+    color: mean != null && mean < RANK_IDLE ? "var(--held)" : null, text: pct(mean),
+    sub: measured ? t(`有效 ${hrs(effective)} GPU·h`, `${hrs(effective)} eff. GPU-h`) : null,
+    title: total ? t(`指标覆盖 ${rankNumber(measured)} / ${rankNumber(total)} GPU·小时；有效 GPU·小时按单卡计算利用率加权`,
+      `Metrics cover ${rankNumber(measured)} / ${rankNumber(total)} GPU-hours; effective GPU-hours are weighted by compute`) : null });
+  // 没有任务历史时顺序没有意义，名次显示为 “—”。
+  const rankBadge = (i, live, unknown) => el("span", { class: "pai-rank-no" + (i < 3 && live ? " top" : "") }, [unknown ? "—" : String(i + 1)]);
+  const rankHead = (cols) => el("thead", {}, [el("tr", {}, cols.map(([label, cls, title]) =>
+    el("th", { class: cls, scope: "col", title: title || null }, [label])))]);
+  const rankTd = (cols) => (i, child) => el("td", { class: cols[i][1], "data-label": cols[i][0] }, [child]);
+
+  // 只标两类值得周报关注的情况；阈值写在提示里，不替代原始数字。
+  function rankFlags(r, quota) {
+    const flags = [];
+    if (quota && !r.is_root && r.occupancy_pct != null && r.occupancy_pct >= RANK_FULL) flags.push(el("span", { class: "pai-rank-flag full",
+      title: t(`窗口配额占用率 ≥ ${RANK_FULL}%：配额基本用满，排队或闲时任务可能增多`, `Quota occupancy ≥ ${RANK_FULL}%: the quota is nearly saturated`) }, [t("接近满额", "Near full")]));
+    if (r.gpu_hours > 0 && r.measured_gpu_hours > 0 && r.compute_mean != null && r.compute_mean < RANK_IDLE) flags.push(el("span", { class: "pai-rank-flag low",
+      title: t(`计算均值 < ${RANK_IDLE}%：占着 GPU 但计算很少`, `Compute mean < ${RANK_IDLE}%: GPUs held with little compute`) }, [t("计算偏低", "Low compute")]));
+    return flags;
+  }
+
+  function featureTable(data) {
+    const rows = data.features || [];
+    const sum = rows.reduce((a, r) => a + (r.gpu_hours || 0), 0);
+    const max = Math.max(0, ...rows.map((r) => r.gpu_hours || 0)) || 1;
+    const root = rows.find((r) => r.is_root);
+    const cols = [["#", "c-rank"], ["Feature", "c-name"],
+      [t("GPU·小时", "GPU-hours"), "c-usage", t("调度卡数 × 运行时长。实色为配额内，斜纹为闲时资源（配额外）；百分比为占本窗口合计", "Scheduled GPUs × running time. Solid is in-quota, hatched is idle-time capacity; % is the share of the window total")],
+      [t("配额占用率", "Quota occupancy"), "c-metric", t("窗口内已观测配额用量 ÷ 同期配额容量（GPU·小时），不含闲时资源", "Observed quota usage ÷ capacity over the window (GPU-hours), excluding idle-time")],
+      [t("计算均值", "Compute"), "c-metric", t("任务 GPU 计算利用率均值，缺测不计零", "Mean GPU compute utilization of workloads; missing metrics are not zero")],
+      [t("当前用量 / 配额", "Now used / quota"), "c-metric", t("最新配额快照（卡），与所选时间窗无关", "Latest quota snapshot (GPUs), independent of the window")],
+      [t("任务", "Jobs"), "c-jobs num"]];
+    const td = rankTd(cols);
+    return el("table", { class: "pai-rank-table feature" }, [rankHead(cols), el("tbody", {}, rows.map((r, i) => {
+      const idle = r.oversold_gpu_hours || 0, cap = r.current_capacity_gpu;
+      const inSnapshot = cap != null || r.current_used_gpu != null;
+      // 各行覆盖率通常与资源池相同，只在明显不同的行单独提示。
+      const ownCoverage = r.quota_coverage_pct != null && r.quota_coverage_pct < 99 &&
+        (!root || Math.abs(r.quota_coverage_pct - (root.quota_coverage_pct || 0)) > 1);
+      const occTitle = t(`已观测用量 ${rankNumber(r.used_gpu_hours)} / 容量 ${rankNumber(r.capacity_gpu_hours)} GPU·小时；观测 ${rankNumber(r.observed_quota_hours)} 小时，覆盖 ${share(r.quota_coverage_pct)}`,
+        `Observed used ${rankNumber(r.used_gpu_hours)} / capacity ${rankNumber(r.capacity_gpu_hours)} GPU-hours; ${rankNumber(r.observed_quota_hours)} hours observed, ${share(r.quota_coverage_pct)} coverage`);
+      const occSub = r.is_root ? t("资源池整体，含子配额", "Whole pool, incl. children")
+        : ownCoverage ? t(`仅覆盖 ${share(r.quota_coverage_pct)}`, `${share(r.quota_coverage_pct)} covered`)
+        : r.capacity_gpu_hours != null ? `${hrs(r.used_gpu_hours)} / ${hrs(r.capacity_gpu_hours)} GPU·h` : null;
+      const now = !inSnapshot ? meterCell(null, { sub: t("不在当前配额列表", "Not in current quotas") })
+        : meterCell(r.current_occupancy_pct, { text: `${gpus(r.current_used_gpu)} / ${gpus(cap)}`, always: true, cls: data.quota_fresh ? null : "stale",
+          sub: data.quota_fresh ? (r.current_occupancy_pct == null ? null : t(`占用 ${pct1(r.current_occupancy_pct)}`, `${pct1(r.current_occupancy_pct)} used`)) : t("快照陈旧", "Stale snapshot"),
+          subTone: data.quota_fresh ? null : "warn",
+          title: t(`最新快照；资源上已分配 ${rankNumber(r.current_allocated_gpu)} 卡，其中祖先配额借用 ${rankNumber(r.current_borrowed_gpu)} 卡。资源被借用不等于本 feature 的任务用量。`,
+            `Latest snapshot; ${rankNumber(r.current_allocated_gpu)} GPUs allocated, including ${rankNumber(r.current_borrowed_gpu)} used by ancestors. Borrowed capacity is not feature task usage.`) });
+      return el("tr", { class: [r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim() || null }, [
+        td(0, rankBadge(i, r.gpu_hours > 0, r.gpu_hours == null)),
+        td(1, el("div", { class: "pai-rank-name" }, [el("div", {}, [
+          el("b", { title: r.quota_name }, [r.quota_name]),
+          r.is_root ? el("small", {}, [t("根配额 · 直接提交", "Root quota · direct submissions")])
+            : !inSnapshot ? el("small", {}, [t("历史配额，已不在当前列表", "Historical quota")]) : null]), ...rankFlags(r, true)])),
+        td(2, usageCell(r.gpu_hours, idle, [{ v: (r.gpu_hours || 0) - idle, title: t(`配额内 ${hrs((r.gpu_hours || 0) - idle)} GPU·h`, `In quota ${hrs((r.gpu_hours || 0) - idle)} GPU-h`) },
+          { v: idle, idle: true, title: t(`闲时资源 ${hrs(idle)} GPU·h`, `Idle-time ${hrs(idle)} GPU-h`) }], max, sum)),
+        td(3, meterCell(r.occupancy_pct, { title: occTitle, sub: occSub, subTone: ownCoverage && r.quota_coverage_pct < 50 ? "warn" : null })),
+        td(4, computeCell(r.compute_mean, r.measured_gpu_hours, r.effective_gpu_hours, r.gpu_hours)),
+        td(5, now),
+        td(6, r.workloads == null ? "—" : String(r.workloads)),
+      ]);
+    }))]);
+  }
+
+  function userTable(data, colorOf, rows) {
+    const all = data.users || [];
+    const sum = all.reduce((a, u) => a + (u.gpu_hours || 0), 0);
+    const max = Math.max(0, ...all.map((u) => u.gpu_hours || 0)) || 1;
+    const cols = [["#", "c-rank"], [t("用户", "User"), "c-name"],
+      [t("GPU·小时", "GPU-hours"), "c-usage", t("调度卡数 × 运行时长。彩色分段按 feature，斜纹为闲时资源（配额外）；百分比为占本窗口合计", "Scheduled GPUs × running time, split by feature; hatched is idle-time capacity; % is the share of the window total")],
+      [t("计算均值", "Compute"), "c-metric", t("任务 GPU 计算利用率均值，缺测不计零", "Mean GPU compute utilization; missing metrics are not zero")],
+      [t("显存", "GPU memory"), "c-metric"],
+      ["CPU", "c-metric", t("CPU 利用率（占 Pod limit）；下方为申请核数 × 时长", "CPU utilization of the Pod limit; below: requested cores × time")],
+      [t("内存", "RAM"), "c-metric", t("内存利用率（占 Pod limit）；下方为申请量 × 时长", "RAM utilization of the Pod limit; below: requested GiB × time")],
+      [t("任务", "Jobs"), "c-jobs num"]];
+    const td = rankTd(cols);
+    return el("table", { class: "pai-rank-table user" }, [rankHead(cols), el("tbody", {}, rows.map((u, i) => {
+      // 接口按 (用户, 配额) 分组，每个配额只出现一次。
+      const tags = (u.quotas || []).filter((q) => q.gpu_hours > 0 || q.oversold_gpu_hours > 0).sort((a, b) => b.gpu_hours - a.gpu_hours);
+      const parts = tags.map((q) => ({ v: q.gpu_hours, color: colorOf(q.quota_id), title: `${q.quota_name} · ${hrs(q.gpu_hours)} GPU·h` }));
+      parts.push({ v: u.oversold_gpu_hours, idle: true, title: t(`闲时资源 ${hrs(u.oversold_gpu_hours)} GPU·h`, `Idle-time ${hrs(u.oversold_gpu_hours)} GPU-h`) });
+      return el("tr", { class: u.gpu_hours ? null : "zero" }, [
+        td(0, rankBadge(i, u.gpu_hours > 0)),
+        td(1, el("div", { class: "pai-rank-name" }, [el("div", {}, [
+          link(u.username, href("user", u.user_id)),
+          tags.length ? el("span", { class: "pai-rank-tags" }, [...tags.slice(0, 3).map((q) => el("span", { title: q.quota_name }, [
+            el("i", { style: `--c:${colorOf(q.quota_id)}` }), q.quota_name])), tags.length > 3 ? el("span", {}, ["+" + (tags.length - 3)]) : null]) : null]), ...rankFlags(u, false)])),
+        td(2, usageCell(u.gpu_hours, u.oversold_gpu_hours || 0, parts, max, sum)),
+        td(3, computeCell(u.compute_mean, u.measured_gpu_hours, u.effective_gpu_hours, u.gpu_hours)),
+        td(4, meterCell(u.gpu_memory_mean, { text: pct(u.gpu_memory_mean) })),
+        td(5, meterCell(u.cpu_util_mean, { text: pct(u.cpu_util_mean), sub: t(`${hrs(u.cpu_core_hours)} 核·h`, `${hrs(u.cpu_core_hours)} core-h`) })),
+        td(6, meterCell(u.ram_util_mean, { text: pct(u.ram_util_mean), sub: `${hrs(u.mem_gib_hours)} GiB·h` })),
+        td(7, String(u.workloads ?? "—")),
+      ]);
+    }))]);
+  }
+
+  // 本窗口汇总：两种维度共用。资源池口径取根配额（容量含全部子配额）。
+  function rankSummary(data) {
+    const fs = data.features || [];
+    const root = fs.find((f) => f.is_root);
+    const known = fs.some((f) => f.gpu_hours != null);
+    const add = (k) => fs.reduce((a, f) => a + (f[k] || 0), 0);
+    const total = known ? add("gpu_hours") : null, idle = add("oversold_gpu_hours");
+    const measured = add("measured_gpu_hours"), effective = add("effective_gpu_hours");
+    const users = (data.users || []).filter((u) => u.gpu_hours > 0).length;
+    const stat = (label, value, subs, extra, cls) => el("div", { class: "pai-rank-stat" + (cls ? " " + cls : "") }, [
+      el("span", {}, [label]), el("b", {}, [value]), extra || null, ...subs.filter(Boolean)]);
+    const small = (text, tone) => el("small", { class: tone || null }, [text]);
+    const meter = (v) => v == null ? null : el("span", { class: "meter" }, [el("i", { style: `width:${Math.max(0, Math.min(100, v))}%` })]);
+    const cover = root ? root.quota_coverage_pct : null;
+    return el("div", { class: "pai-rank-stats" }, [
+      stat(t("GPU·小时合计", "Total GPU-hours"), hrs(total), [total == null ? small(t("该窗口无任务历史", "No task history in this window"))
+        : small(t(`配额内 ${hrs(total - idle)} · 闲时 ${hrs(idle)}`, `${hrs(total - idle)} in quota · ${hrs(idle)} idle-time`))],
+        total ? usageBar([{ v: total - idle, color: "var(--accent)" }, { v: idle, idle: true }], total) : null, "total"),
+      stat(t("资源池配额占用率", "Pool quota occupancy"), root ? pct1(root.occupancy_pct) : "—", [
+        root && root.capacity_gpu_hours != null ? small(`${hrs(root.used_gpu_hours)} / ${hrs(root.capacity_gpu_hours)} GPU·h`) : null,
+        cover != null ? small(t(`配额历史覆盖 ${share(cover)}`, `${share(cover)} of window observed`), cover < 95 ? "warn" : null) : null], meter(root?.occupancy_pct)),
+      stat(t("有效 GPU·小时", "Effective GPU-hours"), measured ? hrs(effective) : "—", [measured
+        ? small(t(`按 GPU·小时加权的计算均值 ${pct(effective / measured * 100)}`, `GPU-hour weighted compute ${pct(effective / measured * 100)}`))
+        : small(t("暂无计算指标", "No compute metrics yet"))]),
+      stat(t("当前资源池", "Pool now"), root && root.current_capacity_gpu != null ? `${gpus(root.current_used_gpu)} / ${gpus(root.current_capacity_gpu)}` : "—", [
+        data.quota_fresh ? small(t(`占用 ${pct1(root?.current_occupancy_pct)} · 最新快照`, `${pct1(root?.current_occupancy_pct)} used · latest snapshot`))
+          : small(t("快照陈旧或采集失败", "Snapshot stale or failed"), "warn")], meter(root?.current_occupancy_pct), data.quota_fresh ? null : "stale"),
+      stat(t("活跃 feature", "Active features"), known ? String(fs.filter((f) => !f.is_root && f.gpu_hours > 0).length) : "—", [
+        known ? small(`${plural(users, "位用户", "user")} · ${plural(add("workloads"), "个任务", "job")}`) : null]),
+    ]);
+  }
+
+  function rankNotices(data) {
+    const root = (data.features || []).find((f) => f.is_root);
+    const out = [];
+    if (data.first_hour == null || data.first_hour >= data.until) out.push(["warn", t("该窗口尚无任务观测历史，任务用量显示为“—”，不代表零使用。", "No task history was observed in this window; usage shows “—”, not zero.")]);
+    else if (data.first_hour > data.since) out.push(["", t(`任务历史从 ${minuteClock(data.first_hour)} 开始，之前未采集，不代表零使用。`, `Task history starts at ${minuteClock(data.first_hour)}; earlier usage was not collected, not zero.`)]);
+    if (rankState.dimension === "feature" && root && !root.quota_coverage_pct) out.push(["", t("该窗口没有配额历史，配额占用率未知。", "No quota history in this window; occupancy is unknown.")]);
+    else if (rankState.dimension === "feature" && root && root.quota_coverage_pct < 95)
+      out.push(["", t(`配额历史只覆盖本窗口的 ${share(root.quota_coverage_pct)}，占用率仅代表已观测部分。`, `Quota history covers ${share(root.quota_coverage_pct)} of this window; occupancy reflects only observed intervals.`)]);
+    if (!data.quota_fresh) out.push(["warn", t("当前配额快照陈旧或采集失败，“当前”数值仅供参考。", "The current quota snapshot is stale or failed; current values are for reference only.")]);
+    if (data.truncated) out.push(["warn", t("结果达到上限，表格与导出只含已返回的数据。", "Results are truncated; the table and export contain only returned rows.")]);
+    return out.length ? el("div", { class: "pai-rank-notices" }, out.map(([tone, text]) => note(text, "pai-note " + tone))) : null;
+  }
+
+  function rankMethod(dimension) {
+    const items = dimension === "feature" ? [
+      t("按任务提交时的 Quota 归属 feature；根配额直接提交的任务单列，不推断算法组。父子配额容量不可相加。", "Workloads follow their submission Quota. Direct root submissions stay separate; parent and child capacities must not be added."),
+      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长（每轮约 2 分钟，长间隔最多计两倍降级周期，失败快照不累加）。闲时资源单列，不计入配额。", "GPU-hours = scheduled GPUs × observed running time (≈2-min rounds, long gaps capped, failed snapshots add nothing). Idle-time capacity is separate from the quota."),
+      t("配额占用率 = 已观测配额用量 GPU·小时 ÷ 同期配额容量 GPU·小时，不含闲时资源；配额变更按观测时长加权。根配额的用量含全部子配额，而它的任务小时只含直接提交。", "Quota occupancy = observed used GPU-hours ÷ capacity GPU-hours over the same intervals, excluding idle-time; changes are time-weighted. Root usage includes children, root task hours only direct submissions."),
+      t("配额历史从启用该统计起积累，任务 GPU·小时沿用已有历史，两者覆盖区间可能不同。", "Quota history starts when this report was enabled; task-hour history can be longer."),
+      t("计算均值为任务计算利用率均值，缺测不计零；有效 GPU·小时按单卡计算利用率加权。“当前用量 / 配额”是最新快照。", "Compute is the mean workload utilization, missing metrics are unknown; effective GPU-hours are compute-weighted. “Now” is the latest snapshot."),
+    ] : [
+      t("归属为任务提交者（RAM Owner），不代表共享容器内的逐进程使用人。", "Attribution is the submitter (RAM owner), not processes inside shared containers."),
+      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长；彩色分段按任务所属 feature，斜纹为闲时资源（配额外）。", "GPU-hours = scheduled GPUs × observed running time; colored segments follow the workload's feature, hatched is idle-time capacity."),
+      t("有效 GPU·小时按单卡计算利用率加权；CPU、内存为申请量 × 时长，利用率为占 Pod limit 的百分比。缺测不计零。", "Effective GPU-hours are compute-weighted; CPU and RAM are requested amounts × time, utilization is relative to the Pod limit. Missing metrics are unknown."),
+    ];
+    items.push(t("统计按整点汇总；周以北京时间周一 00:00 为起点；历史最长保留 32 天。CSV 包含分母、覆盖率及起止时间，可直接用于周报。", "Hourly buckets; weeks start Monday 00:00 Asia/Shanghai; history is kept for 32 days. The CSV includes denominators, coverage and the exact window."));
+    return el("details", { class: "pai-rank-method", open: rankState.methodOpen ? "" : null,
+      ontoggle: (e) => { rankState.methodOpen = e.target.open; } }, [
+      el("summary", {}, [t("统计口径", "How it is computed")]),
+      el("ul", {}, items.map((x) => el("li", {}, [x]))),
+      el("div", { class: "pai-docs" }, [doc("quota", t("资源配额", "Resource quotas")), doc("idle")]),
+    ]);
+  }
+
+  function rankLegend(data, colorOf) {
+    const items = [];
+    if (rankState.dimension === "user") {
+      const seen = new Map();
+      (data.users || []).forEach((u) => (u.quotas || []).forEach((q) => { if (q.gpu_hours > 0 && !seen.has(q.quota_id)) seen.set(q.quota_id, q.quota_name); }));
+      [...seen].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).forEach(([id, name]) => items.push(el("span", { class: "feature" }, [el("i", { style: `--c:${colorOf(id)}` }), name])));
+    } else items.push(el("span", {}, [el("i", {}), t("配额内", "In quota")]));
+    items.push(el("span", { title: OVERSOLD_TIP() }, [el("i", { class: "idle" }), t("闲时资源（配额外）", "Idle-time (outside quota)")]));
+    items.push(el("span", { class: "sort" }, [t("按 GPU·小时降序", "Sorted by GPU-hours")]));
+    return el("div", { class: "pai-rank-legend" }, items);
+  }
+
+  function rankContent(data, failed, redraw) {
+    const dim = rankState.dimension, w = rankState.window;
+    const rolling = !["week", "last_week"].includes(w);
+    const segButton = (key, label, pressed, onclick, attr) => el("button", { type: "button", class: pressed ? "active" : null,
+      "aria-pressed": String(pressed), [attr]: key, onclick }, [label]);
+    const setWindow = (key) => { if (key && key !== rankState.window) { rankState.window = key; rankState.expanded = false; GM.render({ soft: true }); } };
+    const controls = el("div", { class: "pai-tools pai-rank-controls" }, [
+      el("div", { class: "pai-seg", role: "group", "aria-label": t("排行维度", "Ranking dimension") }, [["feature", "Feature"], ["user", t("用户", "User")]].map(([key, label]) =>
+        segButton(key, label, dim === key, () => {
+          if (rankState.dimension === key) return;
+          rankState.dimension = key; rankState.expanded = false; redraw();
+          document.querySelector(`.pai-rank [data-dim="${key}"]`)?.focus();
+        }, "data-dim"))),
+      el("div", { class: "pai-seg period", role: "group", "aria-label": t("统计周期", "Reporting period") }, [
+        segButton("week", t("本周", "This week"), w === "week", () => setWindow("week"), "data-win"),
+        segButton("last_week", t("上周", "Last week"), w === "last_week", () => setWindow("last_week"), "data-win"),
+        el("select", { class: "pai-rank-roll" + (rolling ? " active" : ""), "aria-label": t("滚动时间窗", "Rolling window"),
+          onchange: (e) => setWindow(e.target.value) }, [
+          el("option", { value: "", selected: rolling ? null : "selected", disabled: "disabled" }, [t("滚动窗口", "Rolling")]),
+          ...GM.state.meta.windows.map((k) => el("option", { value: k, selected: w === k ? "selected" : null }, [t(`近 ${k}`, `Last ${k}`)]))]),
+      ]),
+      data ? el("button", { type: "button", class: "pai-rank-export", onclick: () => exportRanking(data, rankState.dimension),
+        title: t("导出当前维度与时间窗的 CSV（含分母与覆盖率）", "Export this view as CSV, with denominators and coverage") },
+        [el("span", { "aria-hidden": "true" }, ["↓"]), t("导出 CSV", "Export CSV")]) : null,
+    ]);
+    const range = data ? el("div", { class: "pai-rank-range" }, [
+      el("span", { class: "mono" }, [`${minuteClock(data.since)} → ${minuteClock(data.until)}`]),
+      el("span", {}, [t("北京时间", "Asia/Shanghai") + " · " + span(data.until - data.since) + (w === "week" ? t(" · 进行中", " · in progress") : "")]),
+    ]) : el("div", { class: "pai-rank-range" }, [t("读取中…", "Loading…")]);
+    const head = el("div", { class: "pai-panel-head pai-rank-head" }, [
+      el("div", { class: "pai-rank-heading" }, [el("h3", {}, [dim === "feature" ? t("Feature 排行", "Feature ranking") : t("用户排行", "User ranking")]), range]),
+      controls]);
+    if (failed) return [head, note(t("排行读取失败", "Failed to load ranking"))];
+    if (!data) return [head];
+    const colorOf = featureColors(data);
+    const rows = dim === "feature" ? data.features || [] : data.users || [];
+    const body = [rankSummary(data), rankNotices(data)];
+    if (!rows.length) body.push(el("div", { class: "pai-rank-empty" }, [t("该时间窗内还没有记录。", "No records in this window yet.")]));
+    else {
+      const shown = dim === "user" && !rankState.expanded ? rows.slice(0, RANK_PAGE) : rows;
+      const known = rows.some((r) => r.gpu_hours != null);
+      body.push(known ? rankLegend(data, colorOf) : null, el("div", { class: "pai-rank-scroll" }, [
+        dim === "feature" ? featureTable(data) : userTable(data, colorOf, shown)]));
+      if (shown.length < rows.length) body.push(el("button", { type: "button", class: "pai-rank-more",
+        onclick: () => { rankState.expanded = true; redraw(); } }, [t(`显示全部 ${rows.length} 位用户`, `Show all ${rows.length} users`)]));
+    }
+    body.push(rankMethod(dim));
+    return [head, ...body.filter(Boolean)];
+  }
+
+  async function rankingPanel(host) {
+    const box = el("section", { class: "panel pai-panel pai-rank" });
+    let data = null, failed = false;
+    const draw = () => box.replaceChildren(...rankContent(data, failed, draw));
+    draw();
     host.appendChild(box);
-    let data;
-    try { data = await API.paiRanking(w); } catch (e) {
+    try { data = await API.paiRanking(rankState.window); } catch (e) {
       if (!host.isConnected) return;
       PageRecovery.show();
-      box.lastChild.replaceWith(note(t("排行读取失败", "Failed to load ranking")));
+      failed = true; draw();
       return;
     }
     if (!host.isConnected) return;
-    controls.appendChild(el("button", { class: "btn", onclick: () => exportRanking(data, rankState.dimension) }, [t("导出 CSV", "Export CSV")]));
-    const body = [note(t(`统计窗口：${reportClock(data.since)} — ${reportClock(data.until)}（北京时间，周一为一周起点）。`,
-      `Reporting window: ${reportClock(data.since)} — ${reportClock(data.until)} (Asia/Shanghai, weeks start Monday).`))];
-    if (rankState.dimension === "feature") {
-      body.push(...featureRanking(data));
-      if (data.first_hour == null || data.first_hour >= data.until) body.push(note(t("该窗口尚无任务观测历史，任务用量显示未知。", "No task history was observed in this window; task usage is unknown.")));
-      if (data.first_hour != null && data.first_hour > data.since) body.push(note(t(`任务历史从 ${reportClock(data.first_hour)} 开始，之前未采集，不代表零使用。`,
-        `Task history starts at ${reportClock(data.first_hour)}; earlier usage was not collected, not zero.`)));
-      if (data.truncated) body.push(note(t("结果达到上限，导出同样只含当前返回数据。", "Results are truncated; the export contains only returned data.")));
-      box.lastChild.replaceWith(...body);
-      return;
-    }
-    const since = data.first_hour && data.first_hour > data.since ? data.first_hour : data.since;
-    body.push(el("div", { class: "pai-note" }, [t(
-      `统计区间按整点汇总，自 ${reportClock(since)}（北京时间）起` + (data.first_hour && data.first_hour > data.since ? "（历史从这一时刻才开始积累，窗口内更早的部分没有数据）" : "") +
-        "。GPU·小时 = 调度卡数 × 采集器观测到的运行时长（每轮约 2 分钟，长间隔最多计两倍降级周期；失败快照不继续累加）；有效 GPU·小时按单卡计算利用率加权；CPU、内存为申请量 × 时长，利用率为占 Pod limit 的百分比。闲时资源单列，不计入配额。",
-      `Hourly buckets since ${reportClock(since)} (Asia/Shanghai)` + (data.first_hour && data.first_hour > data.since ? " (history starts here)" : "") +
-        ". GPU-hours = scheduled GPUs × observed running time (≈2-min rounds; long gaps capped at twice the degraded interval; failed snapshots add no usage). Effective GPU-hours are weighted by compute utilization; CPU/RAM are requested amounts × time.")]));
-    if (!data.users.length) { body.push(note(t("该时间窗内还没有记录。", "No records in this window yet."))); box.lastChild.replaceWith(...body); return; }
-    // 堆叠条：配额内按配额分色，闲时资源用紫色。
-    const users = data.users.slice(0, 20);
-    const quotaNames = [...new Set(users.flatMap((u) => u.quotas.filter((q) => q.gpu_hours > 0).map((q) => q.quota_name)))];
-    const colors = UI.Palette.seriesColors(quotaNames.length);
-    const dom = el("div", { class: "chart", style: `height:${Math.max(160, 48 + users.length * 30)}px` });
-    body.push(dom);
-    const r1 = (v) => (v == null ? "—" : v >= 100 ? Math.round(v).toLocaleString() : v.toFixed(1));
-    const cols = ["#", t("用户", "User"), t("GPU·小时", "GPU-h"), t("其中闲时", "Idle-time"), t("有效 GPU·小时", "Effective GPU-h"),
-      t("平均计算", "Compute"), t("平均显存", "GPU mem"), t("CPU 核·小时", "CPU core-h"), t("平均 CPU", "CPU"), t("内存 GiB·小时", "RAM GiB-h"), t("平均内存", "RAM"), t("任务", "Jobs")];
-    body.push(el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table compact pai-rank-table" }, [
-      el("thead", {}, [el("tr", {}, cols.map((c, i) => el("th", { class: i >= 2 && i !== 5 && i !== 6 && i !== 8 && i !== 10 ? "num" : "" }, [c])))]),
-      el("tbody", {}, data.users.map((u, i) => el("tr", {}, [
-        el("td", { "data-label": "#", class: "mono" }, [String(i + 1)]),
-        el("td", { "data-label": cols[1] }, [link(u.username, href("user", u.user_id)),
-          el("small", { class: "pai-muted" }, [" " + u.quotas.map((q) => q.quota_name).filter((v, j, a) => a.indexOf(v) === j).join(" · ")])]),
-        el("td", { "data-label": cols[2], class: "num" }, [r1(u.gpu_hours)]),
-        el("td", { "data-label": cols[3], class: "num" }, [u.oversold_gpu_hours ? oversoldChip(r1(u.oversold_gpu_hours)) : "—"]),
-        el("td", { "data-label": cols[4], class: "num", title: u.gpu_hours ? t(`指标覆盖 ${Math.round(u.measured_gpu_hours / u.gpu_hours * 100)}% 的 GPU·小时`, `Metrics cover ${Math.round(u.measured_gpu_hours / u.gpu_hours * 100)}%`) : "" },
-          [u.measured_gpu_hours ? r1(u.effective_gpu_hours) : "—"]),
-        el("td", { "data-label": cols[5] }, [bar(u.compute_mean)]),
-        el("td", { "data-label": cols[6] }, [bar(u.gpu_memory_mean, { memory: true })]),
-        el("td", { "data-label": cols[7], class: "num" }, [r1(u.cpu_core_hours)]),
-        el("td", { "data-label": cols[8] }, [bar(u.cpu_util_mean, { memory: true })]),
-        el("td", { "data-label": cols[9], class: "num" }, [r1(u.mem_gib_hours)]),
-        el("td", { "data-label": cols[10] }, [bar(u.ram_util_mean, { memory: true })]),
-        el("td", { "data-label": cols[11], class: "num" }, [String(u.workloads)]),
-      ]))),
-    ])]));
-    if (data.truncated) body.push(note(t("用户较多，只显示前 200 名。", "Only the top 200 users are shown.")));
-    box.lastChild.replaceWith(...body);
-    const text = cssVar("--chart-text", "#93a0b4"), ink = cssVar("--ink", "#eef2f8"), mem = cssVar("--mem", "#a78bfa");
-    const names = users.map((u) => u.username || "—");
-    const series = quotaNames.map((qn, i) => ({ name: qn, type: "bar", stack: "gpu", itemStyle: { color: colors[i] }, barMaxWidth: 18,
-      data: users.map((u) => Number(u.quotas.filter((q) => q.quota_name === qn).reduce((a, q) => a + q.gpu_hours, 0).toFixed(2))) }));
-    series.push({ name: t("闲时资源（配额外）", "Idle-time"), type: "bar", stack: "gpu", barMaxWidth: 18,
-      itemStyle: { color: mem, decal: { symbol: "rect", dashArrayX: [1, 0], dashArrayY: [3, 3], rotation: -Math.PI / 4, color: "rgba(255,255,255,.25)" } },
-      data: users.map((u) => Number(u.oversold_gpu_hours.toFixed(2))) });
-    const chart = echarts.init(dom);
-    chart.setOption({ backgroundColor: "transparent", animation: false,
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, renderMode: "richText", backgroundColor: cssVar("--tooltip-bg", "#141924"),
-        borderColor: cssVar("--tooltip-border", "#2c3543"), textStyle: { color: ink }, valueFormatter: (v) => (v == null ? "—" : Number(v).toFixed(1) + " GPU·h") },
-      legend: { top: 0, left: 0, textStyle: { color: text, fontSize: 11 }, itemWidth: 14, itemHeight: 8 },
-      grid: { left: 110, right: 24, top: 30, bottom: 24 },
-      xAxis: { type: "value", name: "GPU·h", nameTextStyle: { color: text }, axisLabel: { color: text }, splitLine: { lineStyle: { color: cssVar("--chart-split", "#212836") } } },
-      yAxis: { type: "category", inverse: true, data: names, axisLabel: { color: text }, axisLine: { lineStyle: { color: cssVar("--chart-axis", "#3a4453") } } },
-      series });
-    GM.onResize(chart);
+    draw();
   }
 
   function metaList(items) {

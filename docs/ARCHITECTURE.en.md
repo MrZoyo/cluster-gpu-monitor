@@ -45,8 +45,8 @@ pod mappings, workloads and metrics in `pai.db`. Web reads the database without 
 page requests never initiate cloud collection. Disabled PAI has no registered routes.
 
 Bare-metal usage is attributed to operating-system usernames; PAI uses RAM owners/submitters.
-The two forms of accounting stay separate. PAI retains raw metrics for 24 hours by default and
-workload/UTC-hour usage estimates for 32 days. Physical counts, requests, quota allocation and
+The two forms of accounting stay separate. PAI retains raw metrics for 24 hours by default;
+workload/UTC-hour usage estimates and per-quota hourly usage history are kept for 32 days. Physical counts, requests, quota allocation and
 idle-time capacity are distinct; see the [PAI guide](PAI.en.md) for semantics and service isolation.
 
 ## Collection model

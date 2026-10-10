@@ -80,7 +80,7 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 | Nodes | Per-card mappings, quotas, health and workload drill-down |
 | Workloads | Search/filter/sort, requested/scheduled resources, submission policies, pod specs and one-hour charts |
 | Users | Owner/submitter workloads, in-quota and idle-time usage, source discrepancies |
-| Rankings | GPU hours, utilization-weighted GPU hours, CPU core-hours and RAM GiB-hours by window |
+| Rankings | Feature/Quota ranking for the current week by default; switch to users, last week or the existing rolling windows; CSV export |
 
 - Physical GPUs are deduplicated by node/card. Parent quotas include children and must not be added together.
   Requested, scheduled, quota-allocated and physically mapped resources are separate quantities.
@@ -111,6 +111,41 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 - GPU hours use workloads successfully read in the current round with status Running. Long gaps count at
   most twice the degraded interval; known zero scheduled GPUs remain zero. UTC-hour buckets retain 32 days;
   window edges may include part of an extra hour. These are observed estimates, not billing records.
+
+### Weekly feature ranking
+
+The default window runs from Monday 00:00 Beijing time (Asia/Shanghai) to now; last week is the
+previous full calendar week. Rolling windows remain available. PAI window and dimension choices are
+independent of bare-metal pages and survive automatic refresh. Features group workloads by the
+`QuotaId` used at submission, so one user can appear under several features. Direct root-quota
+submissions stay in their own row; the page never guesses an algorithm group from usernames. Weekly
+reports per group therefore require submitters to choose the matching quota.
+
+- **Task GPU hours** include in-quota and idle-time workloads, with idle-time shown separately. A workload
+  counts only toward its submission quota and is never added again to a parent quota.
+- **Current quota / usage / occupancy** come from the latest quota snapshot and always describe now, even
+  when last week is selected. A stale snapshot is flagged. Allocated and ancestor-borrowed GPUs appear in the
+  usage tooltip; they are not the feature's task usage.
+- **Window quota occupancy** divides observed quota used GPU-seconds by capacity GPU-seconds over the same
+  intervals, weighting quota changes by duration. It uses the platform's `gpu_used` and excludes idle-time
+  capacity. Parent usage can include children; neither capacity nor usage can be added across levels.
+  Missing data, zero capacity or no historical denominator leaves occupancy unknown; current capacity is
+  never used to reconstruct history.
+- **Compute utilization** is the mean of available workload samples. Effective GPU hours keep the existing
+  compute-weighted estimate and show metric coverage. Compute is not quota occupancy, and occupancy is not
+  compute efficiency.
+- Quota history starts at the first observation after this feature was deployed and integrates the previous
+  snapshot (the quota catalog refreshes about every five minutes). The first observation is not backfilled,
+  failed snapshots are not carried forward, and long gaps count at most twice the degraded interval. Pool
+  coverage appears in the summary; a quota whose coverage differs clearly from the pool is marked in its row.
+  With partial coverage, occupancy describes only observed intervals, and task history may be longer.
+  Quota history is kept for 32 days with the same hourly boundaries as task rankings.
+- The page opens with a window summary: total GPU hours, pool quota occupancy, effective GPU hours, the
+  current pool and active features. “Near full” (window occupancy ≥ 90%) and “Low compute” (compute mean
+  < 10%) are cues only and do not change the order. Calculation notes are collapsed below the table.
+- **CSV export** includes the window, generation time, task-history start, truncation flag and every returned
+  row. Feature exports add capacity GPU hours, used GPU hours, observed hours, coverage and compute metrics
+  for checking weekly reports. Unknown values are empty; exporting never sends reports or messages.
 
 Pages refresh every 120 seconds while retaining scroll, filters and expanded sections; typing in the
 search field postpones refresh. Source details include fetch times, sample times and failure categories.
@@ -143,7 +178,7 @@ monitoring. Configure a separate PAI collector service and CLI for your deployme
 | `/api/pai/overview` | Complete current snapshot |
 | `/api/pai/nodes` / `/api/pai/workloads` / `/api/pai/users` | Node, workload or user subsets |
 | `/api/pai/metrics/series?workload_id=...` | One hour by default, configurable to 1–6 hours; at most 20,000 source points with `truncated` on overflow |
-| `/api/pai/ranking?window=24h` | Hourly user aggregates for existing windows, at most 200 users |
+| `/api/pai/ranking?window=week` | Current week by default, `last_week` for the previous week; existing rolling windows remain valid. Returns `features` and `users`, at most 200 rows each |
 
 Overview `summary` adds `task_compute_mean` / `task_measured_gpus` and `cluster_compute_mean` /
 `cluster_known_gpus` / `cluster_unallocated_gpus`. The legacy `compute_mean` remains the fresh mapped
