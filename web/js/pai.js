@@ -1192,7 +1192,6 @@ window.PaiUI = (() => {
     const root = (data.features || []).find((f) => f.is_root);
     const out = [];
     if (data.first_hour == null || data.first_hour >= data.until) out.push(["warn", t("该窗口尚无任务观测历史，任务用量显示为“—”，不代表零使用。", "No task history was observed in this window; usage shows “—”, not zero.")]);
-    else if (data.first_hour > data.since) out.push(["", t(`任务历史从 ${minuteClock(data.first_hour)} 开始，之前未采集，不代表零使用。`, `Task history starts at ${minuteClock(data.first_hour)}; earlier usage was not collected, not zero.`)]);
     if (rankState.dimension === "feature" && root && !root.quota_coverage_pct) out.push(["", t("该窗口没有配额历史，配额占用率未知。", "No quota history in this window; occupancy is unknown.")]);
     else if (rankState.dimension === "feature" && root && root.quota_coverage_pct < 95)
       out.push(["", t(`配额历史只覆盖本窗口的 ${share(root.quota_coverage_pct)}，占用率仅代表已观测部分。`, `Quota history covers ${share(root.quota_coverage_pct)} of this window; occupancy reflects only observed intervals.`)]);
