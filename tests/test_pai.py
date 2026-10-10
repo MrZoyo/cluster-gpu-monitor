@@ -611,8 +611,31 @@ def test_borrowing_stays_in_owned_capacity_and_hidden_cards_are_unknown(store, c
     assert s['pool_compute_estimate']==50  # (100+50+50)/4, not /6 and not /3.
     assert s['cluster_compute_mean'] is None and s['cluster_unallocated_gpus']==0
     assert s['cluster_known_gpus']==1 and d['nodes'][0]['free_known'] is False
+    assert d['nodes'][0]['possibly_borrowed'] is True
+    assert d['nodes'][0]['cards'][1]['compute'] is None  # Display zero is not telemetry.
     store.failure('metric:borrowed:compute','unavailable',now=990)
     assert overview(store,cfg,1000)['summary']['pool_compute_estimate'] is None
+
+
+@pytest.mark.parametrize('problem', ['pods_failed', 'nodes_stale', 'workloads_failed', 'request_mismatch', 'regular_unmapped'])
+def test_borrowing_display_does_not_hide_mapping_failures(store, cfg, problem):
+    seed(store)
+    workloads = store.sources()['workloads']['payload']
+    workloads.append({'WorkloadId': 'borrowed', 'WorkloadStatus': 'Running',
+                      'UserId': 'b', 'scheduled_gpu': 1, 'requested_gpu': 1,
+                      'oversold': problem != 'regular_unmapped'})
+    store.save('workloads', workloads, now=960)
+    if problem == 'pods_failed':
+        store.failure('pods:node', 'unavailable', now=990)
+    elif problem == 'nodes_stale':
+        store.save('nodes', store.sources()['nodes']['payload'], now=1)
+    elif problem == 'workloads_failed':
+        store.failure('workloads', 'unavailable', now=990)
+    elif problem == 'request_mismatch':
+        store.save('nodes', [{'NodeName': 'node', 'GPU': '4', 'RequestGPU': 2}], now=960)
+    node = overview(store, cfg, 1000)['nodes'][0]
+    assert node['possibly_borrowed'] is False
+    assert node['free_known'] is False
 
 
 def test_cluster_history_preserves_coverage_capacity_changes_and_gaps(store):

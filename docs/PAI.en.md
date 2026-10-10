@@ -101,7 +101,17 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   running tasks, with equal weight per GPU, including unmapped idle-time tasks. Unallocated GPUs and missing
   or stale values are excluded. This is not an equal-weight average of task averages.
 - Pool GPU utilization is a monitored-workspace workload estimate over the owned physical capacity, including borrowing once.
-  Hidden donors prevent treating unmapped cards as idle. It is not a complete per-card measurement of the whole tenant.
+  Hidden donors prevent counting unmapped cards as measured idle GPUs. It is not a complete per-card measurement of the whole tenant.
+- “Allocated GPUs” sums running workloads’ scheduled GPUs, falling back to requested counts when absent,
+  and includes borrowing once. A purple “Including N borrowed GPUs” label appears in the same card.
+  “Mapped allocation” describes only the subset with known physical mapping.
+- The heatmap distinguishes original-quota allocation from measured compute. With fresh, consistent node,
+  workload and Pod mapping, GPUs idle for the original quota display `0`. If only borrowing workloads lack
+  physical mapping, these GPUs are labeled “Possibly borrowed”. The original quota can request them with
+  priority; borrowing is reclaimed, resources are released and the borrower requeues.
+  This `0` is an allocation display value, not measured GPU utilization, and never fills compute, efficiency
+  or history metrics. Failed or stale sources, inconsistent node requests and unmapped regular workloads
+  still display `?`. Scheduling also depends on node health, CPU, memory and quota policy.
 
 - Workload and user detail pages may retain last-successful stale metrics and mark them; the overview task
   mean uses fresh metrics only.
@@ -211,7 +221,8 @@ The audit separates three questions:
    `task_estimate_coverage_pct` reports the observed share of the selected window in the page and CSV.
 
 Cluster history starts when this audit feature is enabled, retains 32 days and never backfills past capacity from today's state.
-`physical_utilization_pct` is available only when all physical card states/compute are known; unmapped borrowing remains unknown.
+`physical_utilization_pct` is available only when all physical card states/compute are known; unmapped borrowing remains unknown
+in compute statistics even when the heatmap displays original-quota idle `0`.
 `physical_metric_coverage_pct` reports confirmed capacity-time coverage. Cluster estimates and per-feature/user metrics can cover different
 intervals, so compare their coverage too. CSV carries `cluster_*` metadata and per-row occupied/borrowed time, efficiency and coverage.
 

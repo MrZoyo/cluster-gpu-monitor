@@ -104,6 +104,8 @@ def overview(store, cfg, now):
         return w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu")
     running = [w for w in workloads if w["WorkloadId"] in running_ids]
     unlocated = any((scheduled(w) or 0) > len(w["cards"]) for w in running)
+    unlocated_regular = any((scheduled(w) or 0) > len(w["cards"]) and w.get("oversold") is not True
+                            for w in running)
     expected_gpus = sum(scheduled(w) or 0 for w in running)
     complete_task_metrics = all(scheduled(w) is not None and scheduled(w) >= 0 and
         sum(m["metric"] == "compute" and m["fresh"] for m in w["metrics"]) == scheduled(w) for w in running)
@@ -118,9 +120,13 @@ def overview(store, cfg, now):
     for node in nodes:
         node_assigned = sum(bool(c["assignments"]) for c in node["cards"])
         requested = number(node.get("RequestGPU"))
-        free_known = (fresh("nodes") and fresh("workloads") and fresh("pods:" + node["NodeName"])
-                      and requested is not None and requested <= node_assigned and not unlocated)
+        mapping_complete = (fresh("nodes") and fresh("workloads") and fresh("pods:" + node["NodeName"])
+                            and requested is not None and requested <= node_assigned)
+        free_known = mapping_complete and not unlocated
         node["free_known"] = free_known
+        # Original-quota idle cards remain reclaimable while borrowing is unlocated.
+        # This is an allocation display hint, never a measured zero for accounting.
+        node["possibly_borrowed"] = mapping_complete and unlocated and not unlocated_regular
         for card in node["cards"]:
             if card["compute"] and card["compute"]["fresh"]:
                 cluster_values.append(card["compute"]["value"])

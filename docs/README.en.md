@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.1 release notes](RELEASE_0.6.1.md#english) — PAI task means, cluster utilization, and home status fixes.
+Current version: [v0.6.2 release notes](RELEASE_0.6.2.md#english) — PAI allocation totals include borrowing, with quota-idle display fixes.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |

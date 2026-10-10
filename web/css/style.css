@@ -1252,8 +1252,10 @@ body[data-theme="light"] .pai-chip.ok { color: #3d6300; }
 .pai-alloc-legend i.unknown { background: repeating-linear-gradient(135deg, var(--line-strong) 0 3px, transparent 3px 6px); border: 1px solid var(--line-strong); }
 .pai-alloc-legend i.free { border: 1px dashed var(--line-strong); }
 .pai-alloc-total { margin-left: auto; color: var(--faint); }
-.pai-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.pai-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .pai-kpis .hint { white-space: normal; line-height: 1.5; }
+.pai-borrowed-subset { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--mem); font-size: 12px; font-weight: 600; line-height: 1.5; }
+.pai-allocation-kpi .pai-borrowed-subset { margin-top: 6px; }
 
 /* 页内标签：下划线式，区别于顶栏模块切换 */
 .pai-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 6px 0 16px; overflow-x: auto; }
