@@ -87,7 +87,7 @@ def overview(store, cfg, now):
         own = [w for w in workloads if w.get("UserId") == u["UserId"]]
         running = sum(w["WorkloadStatus"] == "Running" for w in own)
         users.append({**u, "running_workloads": running, "workload_ids": [w["WorkloadId"] for w in own],
-                      # Oversold workloads run outside the quota, so zero quota usage is expected for them.
+                      # Borrowing uses owned pool GPUs but may be absent from the submitting quota accounting.
                       "conflict": u["used_gpu"] == 0 and running > 0 and any(
                           (w["requested_gpu"] or 0) > 0 and not w.get("oversold")
                           for w in own if w["WorkloadStatus"] == "Running")})
@@ -98,6 +98,19 @@ def overview(store, cfg, now):
                    and w.get("scheduled") is not False}
     task_values = [m["value"] for m in metrics if m["metric"] == "compute" and m["fresh"]
                    and m["workload_id"] in running_ids and fresh("workloads")]
+    # A hidden borrowing task can occupy any otherwise unmapped card. No donor
+    # quota/node is published, so these cards must not be classified as idle.
+    def scheduled(w):
+        return w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu")
+    running = [w for w in workloads if w["WorkloadId"] in running_ids]
+    unlocated = any((scheduled(w) or 0) > len(w["cards"]) for w in running)
+    expected_gpus = sum(scheduled(w) or 0 for w in running)
+    complete_task_metrics = all(scheduled(w) is not None and scheduled(w) >= 0 and
+        sum(m["metric"] == "compute" and m["fresh"] for m in w["metrics"]) == scheduled(w) for w in running)
+    outside_workloads = any(a["workload_id"] not in running_ids for c in physical.values() for a in c["assignments"])
+    task_estimate_ready = (fresh("nodes") and fresh("workloads") and bool(physical) and
+                          complete_task_metrics and not outside_workloads and expected_gpus <= len(physical)
+                          and all(len(c["assignments"]) <= 1 for c in physical.values()))
     # Only confirmed unallocated cards contribute zero. Missing allocated metrics and
     # uncertain allocation remain unknown, never silently reducing the cluster mean.
     cluster_values = []
@@ -106,7 +119,8 @@ def overview(store, cfg, now):
         node_assigned = sum(bool(c["assignments"]) for c in node["cards"])
         requested = number(node.get("RequestGPU"))
         free_known = (fresh("nodes") and fresh("workloads") and fresh("pods:" + node["NodeName"])
-                      and requested is not None and requested <= node_assigned)
+                      and requested is not None and requested <= node_assigned and not unlocated)
+        node["free_known"] = free_known
         for card in node["cards"]:
             if card["compute"] and card["compute"]["fresh"]:
                 cluster_values.append(card["compute"]["value"])
@@ -132,4 +146,12 @@ def overview(store, cfg, now):
                 "task_compute_mean": sum(task_values) / len(task_values) if task_values else None,
                 "task_measured_gpus": len(task_values),
                 "cluster_compute_mean": sum(cluster_values) / len(physical) if cluster_complete else None,
+                "cluster_effective_gpus": sum(cluster_values) / 100,
+                "cluster_snapshot_fresh": fresh("nodes") and fresh("workloads"),
+                "pool_scheduled_gpus": expected_gpus if fresh("workloads") else None,
+                "pool_compute_estimate": sum(task_values) / len(physical) if task_estimate_ready else None,
+                "pool_task_effective_gpus": sum(task_values) / 100 if task_estimate_ready else None,
+                "pool_task_metric_coverage_pct": min(100, len(task_values) / expected_gpus * 100) if expected_gpus else None,
+                "pool_estimate_scope": "monitored_workspace_workloads_over_physical_pool",
+                "unlocated_running_gpu_tasks": sum((scheduled(w) or 0) > len(w["cards"]) for w in running),
                 "cluster_known_gpus": len(cluster_values), "cluster_unallocated_gpus": unallocated}}

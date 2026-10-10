@@ -18,7 +18,7 @@ const pai = { enabled: true, state: 'ok', now, region: 'example-region', workspa
   quota_id: 'quota-example', poll_interval_s: 120, round: { finished_at: now },
   sources: [{ name: 'nodes', state: 'ok', fetched_at: now }],
   summary: { physical_gpus: 8, mapped_gpus: 1, measured_gpus: 1, compute_mean: 20,
-    task_compute_mean: 20, task_measured_gpus: 1, cluster_compute_mean: 2.5,
+    task_compute_mean: 20, task_measured_gpus: 1, cluster_compute_mean: 2.5, pool_compute_estimate: 2.5,
     cluster_known_gpus: 8, cluster_unallocated_gpus: 7 },
   quotas: [{ quota_id: 'quota-example', quota_name: 'Example quota', gpu_capacity: 8, gpu_used: 1 }],
   nodes: [{ NodeName: 'node-example', GPU: 8, GPUType: 'Example GPU', NodeStatus: 'Ready', RequestGPU: 1,
@@ -37,15 +37,15 @@ const fixtures = {
   '/api/topology': { clusters: [] }, '/api/users/ranking': { users: [] },
   '/api/collector/status': { hosts: [] }, '/api/health': { last_sample_ts: now, last_sample_age_s: 0 },
   '/api/pai/status': { enabled: true, state: 'ok' }, '/api/pai/overview': pai,
-  '/api/pai/ranking': { window: 'week', timezone: 'Asia/Shanghai', week_start: 'monday', reset_time: '00:00', users: [{ user_id: 'u', username: 'Example user', gpu_hours: 24,
-    oversold_gpu_hours: 8, effective_gpu_hours: 12, measured_gpu_hours: 24, cpu_core_hours: 192,
+  '/api/pai/ranking': { window: 'week', timezone: 'Asia/Shanghai', week_start: 'monday', reset_time: '00:00', cluster: { task_utilization_estimate_pct: 25, task_estimate_coverage_pct: 14.3, task_estimate_hours: 24, task_occupied_gpu_hours: 96, task_capacity_gpu_hours: 384, task_effective_gpu_hours: 96, scope: 'monitored_workspace_workloads_over_physical_pool' }, current_pool: { capacity_gpu: 8, occupied_gpu: 6, borrowed_gpu: 2, occupancy_pct: 75, fresh: true }, users: [{ user_id: 'u', username: 'Example user', gpu_hours: 24,
+    oversold_gpu_hours: 8, borrowed_gpu_hours: 8, hardware_efficiency_pct: 50, gpu_metric_coverage_pct: 100, effective_gpu_hours: 12, measured_gpu_hours: 24, cpu_core_hours: 192,
     mem_gib_hours: 768, workloads: 2, compute_mean: 50, gpu_memory_mean: 20, cpu_util_mean: null, ram_util_mean: null,
     quotas: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 16, oversold_gpu_hours: 8 }] }],
     since: now - 7 * 86400, until: now, generated_at: now, first_hour: now - 86400, quota_fresh: true,
     features: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 24, oversold_gpu_hours: 8,
       current_capacity_gpu: 8, current_used_gpu: 4, current_occupancy_pct: 50, current_allocated_gpu: 6,
-      current_borrowed_gpu: 2, capacity_gpu_hours: 192, used_gpu_hours: 96, occupancy_pct: 50,
-      measured_gpu_hours: 24, effective_gpu_hours: 12, compute_mean: 50, quota_coverage_pct: 14.3,
+      current_ancestor_allocated_gpu: 2, current_borrowed_gpu: 2, capacity_gpu_hours: 192, used_gpu_hours: 96, occupancy_pct: 50,
+      borrowed_gpu_hours: 8, hardware_efficiency_pct: 50, gpu_metric_coverage_pct: 100, measured_gpu_hours: 24, effective_gpu_hours: 12, compute_mean: 50, quota_coverage_pct: 14.3,
       observed_quota_hours: 24, workloads: 2 }] },
   '/api/pai/metrics/series': { points: ['compute', 'memory', 'cpu', 'ram'].flatMap(key =>
     [1, 2, 3].map(i => ({ ...metric(key), ts: now - i * 120, mean: 20 }))) },
@@ -138,7 +138,7 @@ const server = http.createServer((req, res) => {
       }
       if (route === 'workload/job-example') check('metric charts', await normal.locator('.pai-chart canvas').count() === 3);
       if (route === 'overview') {
-        const cluster = normal.locator('.pai-kpis .kpi').filter({ hasText: '集群占用' });
+        const cluster = normal.locator('.pai-kpis .kpi').filter({ hasText: '集群 GPU 利用率（估算）' });
         check('cluster utilization replaces memory mean', (await cluster.locator('.v').innerText()) === '3%' && !(await normal.locator('.pai-kpis').innerText()).includes('显存均值'));
         check('task mean label', (await normal.locator('.pai-kpis').innerText()).includes('计算均值（任务）'));
         await shot(normal, 'pai-overview');
@@ -177,6 +177,9 @@ const server = http.createServer((req, res) => {
     check('this week is default period', await normal.getByRole('button', { name: '本周', exact: true }).getAttribute('aria-pressed') === 'true');
     await normal.locator('.pai-rank-table').waitFor();
     check('ranking summary first', (await normal.locator('.pai-rank-stats').innerText()).includes('GPU·小时合计'));
+    check('borrowed hours are included once', await normal.locator('.pai-rank-stat.total > b').innerText() === '24.0');
+    check('physical capacity excludes borrowing additions', await normal.locator('.pai-rank-stat').nth(3).locator('b').innerText() === '6 / 8');
+    check('occupied efficiency is separate from pool utilization', await normal.locator('.pai-rank-stat').nth(2).locator('b').innerText() === '50.0%');
     check('usage bar per feature row', await normal.locator('.pai-rank-table .pai-rank-bar').count() === 1);
     check('method notes collapsed by default', await normal.locator('.pai-rank-method').evaluate(n => !n.open));
     for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
@@ -200,10 +203,13 @@ const server = http.createServer((req, res) => {
     const download = await downloadPromise;
     const csv = fs.readFileSync(await download.path(), 'utf8');
     check('CSV includes denominator and coverage', csv.includes('capacity_gpu_hours') && csv.includes('quota_coverage_pct') && csv.includes('Example feature'));
+    const csvHeaders = csv.split('\n')[0].split(',');
+    check('CSV audit fields and unique headers', new Set(csvHeaders).size === csvHeaders.length && ['borrowed_gpu_hours', 'hardware_efficiency_pct', 'gpu_metric_coverage_pct', 'cluster_task_utilization_estimate_pct'].every(k => csv.includes(k)));
     const requestsBeforeSwitch = rankRequests.length;
     await normal.getByRole('button', { name: '用户', exact: true }).click();
     await normal.locator('.pai-rank-table a').waitFor();
     check('dimension switch reuses loaded data', rankRequests.length === requestsBeforeSwitch);
+    check('user bar borrowing is a subset', Math.abs(await normal.locator('.pai-rank-table .pai-rank-bar i').evaluateAll(ns => ns.reduce((a, n) => a + parseFloat(n.style.width), 0)) - 100) < 0.01);
     check('user ranking preserved', (await normal.locator('.pai-rank-table').innerText()).includes('Example user'));
     await normal.getByLabel('滚动时间窗').selectOption('24h');
     await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
@@ -218,6 +224,7 @@ const server = http.createServer((req, res) => {
     for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
       await normal.setViewportSize({ width, height: 1000 });
       await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
+      check(`user metric coverage visible ${width} ${locale}`, await normal.locator('.c-compute .pai-rank-meter small').first().isVisible());
       check(`user ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       await shot(normal, `ranking-user-${locale}-${width}`);
     }
@@ -227,11 +234,11 @@ const server = http.createServer((req, res) => {
       ...savedRanking.features[0], quota_id: 'root', quota_name: 'Root pool', is_root: true,
       gpu_hours: 48, oversold_gpu_hours: 0, effective_gpu_hours: 24, measured_gpu_hours: 48,
       current_capacity_gpu: 16, current_used_gpu: 4, current_occupancy_pct: 25,
-      capacity_gpu_hours: 384, used_gpu_hours: 96, occupancy_pct: 25, quota_coverage_pct: 0.02,
+      capacity_gpu_hours: 384, used_gpu_hours: 288, occupancy_pct: 75, quota_coverage_pct: 0.02,
     }] };
     await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
     check('summary sums direct task hours once', await normal.locator('.pai-rank-stat.total > b').innerText() === '72.0');
-    check('pool summary uses root occupancy', await normal.locator('.pai-rank-stat').nth(1).locator('b').innerText() === '25.0%');
+    check('pool summary uses cluster history rather than root counter', await normal.locator('.pai-rank-stat').nth(1).locator('b').innerText() === '25.0%');
     check('small positive coverage is not rounded to zero', (await normal.locator('.pai-rank-stats').innerText()).includes('<0.1%'));
     await normal.locator('.pai-rank-method summary').click();
     await normal.waitForFunction(() => document.querySelector('.pai-rank-method').open);
@@ -261,7 +268,7 @@ const server = http.createServer((req, res) => {
     check('configured timezone formats the reporting window', (await normal.locator('.pai-rank-range').innerText()).includes('2026-10-04 06:30'));
     check('configured week rule replaces hardcoded Monday', (await normal.locator('.pai-rank-method').textContent()).includes('America/New_York Sunday 06:30'));
     check('duplicate coverage notice removed', !(await normal.locator('#view').innerText()).includes('occupancy reflects only observed intervals'));
-    check('coverage remains in summary', (await normal.locator('.pai-rank-stats').innerText()).includes('of window observed'));
+    check('coverage remains in summary', (await normal.locator('.pai-rank-stats').innerText()).includes('14.3% coverage'));
     const configuredDownload = normal.waitForEvent('download');
     await normal.getByRole('button', { name: 'Export CSV' }).click();
     const configCSV = fs.readFileSync(await (await configuredDownload).path(), 'utf8');

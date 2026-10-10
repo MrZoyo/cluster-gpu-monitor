@@ -116,7 +116,7 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                         compute_mean=sum(u["effective_gpu_hours"] for u in members)/gh*100 if gh else None,
                         current_capacity_gpu=q["gpu_capacity"], current_used_gpu=q["gpu_used"],
                         current_occupancy_pct=q["gpu_used"]/q["gpu_capacity"]*100,
-                        current_allocated_gpu=q["gpu_used"], current_borrowed_gpu=0, quota_fresh=True,
+                        current_allocated_gpu=q["gpu_used"], current_ancestor_allocated_gpu=0, current_borrowed_gpu=0, quota_fresh=True,
                         capacity_gpu_hours=q["gpu_capacity"]*hours, used_gpu_hours=q["gpu_used"]*hours,
                         occupancy_pct=q["gpu_used"]/q["gpu_capacity"]*100 if hours else None,
                         observed_quota_hours=hours, quota_coverage_pct=hours*3600/seconds*100 if seconds else 0,
@@ -127,7 +127,21 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                     for f in features:
                         for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours", "workloads"):
                             f[key] = None
-                result[f"pai_ranking.{window}.json"] = dict(window=window, since=since, until=until, generated_at=now,
+                for row in [*users, *features]:
+                    row["borrowed_gpu_hours"] = row["oversold_gpu_hours"]
+                    row["hardware_efficiency_pct"] = row["effective_gpu_hours"] / row["measured_gpu_hours"] * 100 if row["measured_gpu_hours"] else None
+                    row["gpu_metric_coverage_pct"] = 100 if row["gpu_hours"] else None
+                # Fictional pool is 32 GPUs; borrowing is included in the 20 occupied GPUs.
+                effective = sum(u["effective_gpu_hours"] for u in users)
+                cluster = dict(scope="monitored_workspace_workloads_over_physical_pool", first_hour=now-72*3600,
+                    observed_hours=hours, capacity_gpu_hours=32*hours, task_estimate_hours=hours,
+                    task_estimate_coverage_pct=hours*3600/seconds*100 if seconds else 0,
+                    task_capacity_gpu_hours=32*hours, task_occupied_gpu_hours=20*hours,
+                    task_effective_gpu_hours=effective,
+                    task_utilization_estimate_pct=effective/(32*hours)*100 if hours else None,
+                    task_occupancy_pct=20/32*100 if hours else None,
+                    physical_utilization_pct=None, physical_metric_coverage_pct=37.5 if hours else None)
+                result[f"pai_ranking.{window}.json"] = dict(cluster=cluster,current_pool={"capacity_gpu":32,"occupied_gpu":20,"borrowed_gpu":8,"occupancy_pct":62.5,"fresh":True},window=window, since=since, until=until, generated_at=now,
                     **reporting_metadata(cfg), boundary_estimate=bool(since % 3600 or (until < now and until % 3600)),
                     quota_fresh=True, features=features,
                     first_hour=now - 72 * 3600, bucket_s=3600, users=users, truncated=False, synthetic=True)

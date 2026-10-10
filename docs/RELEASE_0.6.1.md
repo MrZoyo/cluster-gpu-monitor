@@ -1,5 +1,8 @@
 # v0.6.1：PAI 任务平均与集群占用
 
+> 历史发布记录。2026-10-10 已修正隐藏借用卡不能判空闲，并新增时间维度审计；当前口径见 [PAI 指南](PAI.md)。
+> Historical release notes: hidden borrowing and time-based audit semantics were corrected on 2026-10-10; see the [current PAI guide](PAI.en.md).
+
 - 总览原“显存均值”改为“集群占用”：全部物理卡参与平均，已确认未占用的卡按 0% 计入。
   已用卡缺测或分配关系不明时显示“—”，避免把未知算为空闲；首页也展示这一指标。
 - “计算均值（任务）”平均运行任务各 GPU 的新鲜指标，每卡等权，包含闲时任务。

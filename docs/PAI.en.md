@@ -90,8 +90,8 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 - Physical mapping requires the pod metric GPU-index set to match `GPUIndexes`. Ambiguous mappings or
   multiple workloads sharing a card remain unknown.
 - `UseOversoldResource` describes actual idle-time allocation for a scheduled workload. It differs from
-  submission policy and quota sharing. Hidden nodes do not prove that a workload runs outside the listed
-  nodes; idle-time workload GPU counts are not added to the physical total.
+  submission policy and quota sharing. Borrowing stays inside owned capacity, with undisclosed donors;
+  borrowed GPU counts are never added to the physical total.
 - Queue guidance considers submission policy, quota capacity and per-pod specifications while preserving
   the scheduler's reason. Missing evidence does not justify a definite scheduling conclusion.
 - Charts retain workload/pod/GPU dimensions and source timestamps in fixed 120-second buckets. Late points
@@ -100,11 +100,9 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 - “Compute mean (tasks)” on home and overview averages the latest fresh compute metrics across GPUs in
   running tasks, with equal weight per GPU, including unmapped idle-time tasks. Unallocated GPUs and missing
   or stale values are excluded. This is not an equal-weight average of task averages.
-- “Cluster utilization” averages across all physical GPUs, counting confirmed unallocated cards as 0%.
-  Confirmation requires fresh nodes, workloads and pod mappings, with node GPU requests no greater than
-  mapped allocations. Missing allocated metrics or uncertain allocation produces “—”, not assumed idle.
-  Unmapped idle-time tasks are excluded from both numerator and denominator. For example, 64 fully busy
-  and 64 unallocated GPUs in a 128-GPU cluster yield 50%.
+- Pool GPU utilization is a monitored-workspace workload estimate over the owned physical capacity, including borrowing once.
+  Hidden donors prevent treating unmapped cards as idle. It is not a complete per-card measurement of the whole tenant.
+
 - Workload and user detail pages may retain last-successful stale metrics and mark them; the overview task
   mean uses fresh metrics only.
 - Low-utilization cues use a ten-minute mean with at least five minute samples. Stale values remain visible
@@ -113,7 +111,7 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   processes inside shared containers.
 - GPU hours use workloads successfully read in the current round with status Running. Long gaps count at
   most twice the degraded interval; known zero scheduled GPUs remain zero. UTC-hour buckets retain 32 days;
-  window edges may include part of an extra hour. These are observed estimates, not billing records.
+  fractional boundaries are estimated by hourly overlap. These are observed estimates, not billing records.
 
 ### Weekly feature ranking
 
@@ -152,18 +150,16 @@ missing observations; job counts include jobs present in the overlapping bucket.
 flags this in the API and CSV. An ongoing hour is not discounted a second time. Exact hourly-aligned
 boundaries, including the default, retain the existing accounting.
 
-- **Task GPU hours** include in-quota and idle-time workloads, with idle-time shown separately. A workload
+- **Task GPU hours** include regular and borrowed workloads; borrowing is a subset of the occupied total. A workload
   counts only toward its submission quota and is never added again to a parent quota.
 - **Current quota / usage / occupancy** come from the latest quota snapshot and always describe now, even
-  when last week is selected. A stale snapshot is flagged. Allocated and ancestor-borrowed GPUs appear in the
+  when last week is selected. A stale snapshot is flagged. Allocated GPUs and ancestor-quota allocations appear in the
   usage tooltip; they are not the feature's task usage.
 - **Window quota occupancy** divides observed quota used GPU-seconds by capacity GPU-seconds over the same
-  intervals, weighting quota changes by duration. It uses the platform's `gpu_used` and excludes idle-time
-  capacity. Parent usage can include children; neither capacity nor usage can be added across levels.
+  intervals, weighting quota changes by duration. It uses the platform's `gpu_used` counter, which may exclude borrowing within the pool. Parent usage can include children; neither capacity nor usage can be added across levels.
   Missing data, zero capacity or no historical denominator leaves occupancy unknown; current capacity is
   never used to reconstruct history.
-- **Compute utilization** is the mean of available workload samples. Effective GPU hours keep the existing
-  compute-weighted estimate and show metric coverage. Compute is not quota occupancy, and occupancy is not
+- **Compute while occupied** divides effective GPU time by measured occupied GPU time and reports its coverage. Compute is not quota occupancy, and occupancy is not
   compute efficiency.
 - Quota history starts at the first observation after this feature was deployed and integrates the previous
   snapshot (the quota catalog refreshes about every five minutes). The first observation is not backfilled,
@@ -171,8 +167,8 @@ boundaries, including the default, retain the existing accounting.
   coverage appears in the summary; a quota whose coverage differs clearly from the pool is marked in its row.
   With partial coverage, occupancy describes only observed intervals, and task history may be longer.
   Quota history is kept for 32 days with the same hourly boundaries as task rankings.
-- The page opens with a window summary: total GPU hours, pool quota occupancy, effective GPU hours, the
-  current pool and active features. “Near full” (window occupancy ≥ 90%) and “Low compute” (compute mean
+- The page opens with a window summary: occupied GPU hours, estimated pool GPU utilization, compute efficiency while occupied,
+  current pool task occupancy and active features. “Near full” (window occupancy ≥ 90%) and “Low compute” (occupied-time compute efficiency
   < 10%) are cues only and do not change the order. Calculation notes are collapsed below the table.
 - **CSV export** includes the window, generation time, task-history start, truncation flag and every returned
   row. Feature exports add capacity GPU hours, used GPU hours, observed hours, coverage and compute metrics
@@ -182,6 +178,42 @@ Pages refresh every 120 seconds while retaining scroll, filters and expanded sec
 search field postpones refresh. Source details include fetch times, sample times and failure categories.
 Collection failure does not imply a failed cloud node, and no visible allocation does not guarantee
 schedulable capacity. Health guidance never restarts DSW, stops DLC or changes cloud resources.
+
+## Owned-pool borrowing and audit metrics
+
+On 2026-10-10 this project aligned the owned-pool interpretation with provider confirmation:
+
+- `UseOversoldResource` / oversold means temporarily borrowing unused nodes from other quotas in the owned pool.
+  It adds neither physical GPU capacity nor additional GPU resource charges. Never add borrowed GPUs to pool capacity.
+- The lending quota and node ownership are undisclosed. The owning quota always has priority; when reclaimed,
+  the borrowing workload pauses, releases resources and requeues. Do not imply an extra compute pool or guaranteed permanent termination.
+- Borrowed GPU time belongs to the **borrowing workload's submitting feature/user**, not an inferred donor team.
+  Features follow submission Quota, users follow RAM owner/submitter; direct root submissions stay separate.
+- Existing Quota `gpu_used` / `occupancy_pct` remain **quota accounting counters**, which can exclude borrowing.
+  These counters are not physical pool occupancy or GPU compute utilization.
+
+The audit separates three questions:
+
+1. **Occupied GPU time:** `gpu_hours` integrates observed running scheduled GPUs, including borrowing once.
+   Requested GPUs remain the fallback when scheduled counts are unavailable. `borrowed_gpu_hours` is a subset;
+   legacy `oversold_gpu_hours` is an alias, not another amount to add. Queued/paused intervals do not accrue.
+   After an observed pause or failed snapshot, missing fresh dequeue evidence means counting resumes only after the new observation.
+2. **Compute while occupied:** each per-GPU compute sample represents 60 seconds.
+   `measured_gpu_hours = min(occupied GPU-hours, compute sample count / 60)` within each workload/hour.
+   `effective_gpu_hours` weights that measured time by compute utilization; `hardware_efficiency_pct` divides effective by measured time.
+   `gpu_metric_coverage_pct` reports the measured share of occupied GPU time. Missing samples are neither zero nor extrapolated to a full hour.
+   Legacy `compute_mean` remains a sample mean; audit tables use GPU-time-weighted efficiency.
+   GPU busy percentage is not FLOPS or training throughput efficiency.
+3. **Pool utilization over a period:** new `cluster` history integrates each observation with physical capacity counted once.
+   `task_utilization_estimate_pct` is workspace effective GPU time / physical pool capacity GPU time over the same valid intervals.
+   `task_occupancy_pct` is occupied GPU time / capacity over those intervals. Borrowing contributes usage without adding capacity.
+   This estimate covers the configured workspace; undisclosed workloads of other workspaces are not in its numerator.
+   `task_estimate_coverage_pct` reports the observed share of the selected window in the page and CSV.
+
+Cluster history starts when this audit feature is enabled, retains 32 days and never backfills past capacity from today's state.
+`physical_utilization_pct` is available only when all physical card states/compute are known; unmapped borrowing remains unknown.
+`physical_metric_coverage_pct` reports confirmed capacity-time coverage. Cluster estimates and per-feature/user metrics can cover different
+intervals, so compare their coverage too. CSV carries `cluster_*` metadata and per-row occupied/borrowed time, efficiency and coverage.
 
 ## Production deployment
 
@@ -232,3 +264,6 @@ and physical mappings may be incomplete. Overlapping reads do not guarantee comp
 API references: [ListQuotaWorkloads](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listquotaworkloads),
 [ListQuotas](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listquotas),
 [DescribeMetricList](https://help.aliyun.com/en/cms/cloudmonitor-1-0/developer-reference/api-cms-2019-01-01-describemetriclist).
+
+`current_ancestor_allocated_gpu` is the ancestor allocation counter, not the hidden idle-time donor mapping.
+`current_borrowed_gpu` remains a legacy API alias for that counter; CSV uses the explicit name.

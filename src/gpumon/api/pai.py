@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from ..db.store import WINDOWS
 from ..pai.config import load_pai_settings
 from ..pai.store import PaiStore
+from ..pai.values import number
 from ..pai.reporting import reporting_period, reporting_metadata
 from ..pai.view import overview
 from .deps import mask_username, valid_window
@@ -120,12 +121,26 @@ def pai_ranking(response: Response, window: str = Query("week")):
         store = PaiStore(cfg.db_path, read_only=True)
         data = store.ranking(until, until - since, since=since, observed_until=now)
         feature_data = store.ranking(until, until - since, since=since, group_by="feature", observed_until=now)
+        cluster_history = store.cluster_ranking(since, until, observed_until=now)
         quota_history = store.quota_ranking(since, until, observed_until=now)
-        quota_source = store.sources().get("quotas", {})
+        sources = store.sources()
+        quota_source = sources.get("quotas", {})
         quota_rows = quota_source.get("payload") or []
         quota_names = {q.get("quota_id"): q.get("quota_name") for q in quota_rows}
     except (sqlite3.Error, OSError):
         raise HTTPException(503, "PAI ranking unavailable") from None
+    source_fresh = lambda key: sources.get(key, {}).get("state") == "ok" and now - (sources.get(key, {}).get("fetched_at") or 0) <= cfg.stale_after_s
+    node_counts = [number(n.get("GPU")) for n in (sources.get("nodes", {}).get("payload") or [])]
+    capacity = sum(node_counts) if node_counts and all(n is not None and n.is_integer() and 0 <= n <= 128 for n in node_counts) else None
+    running = [w for w in (sources.get("workloads", {}).get("payload") or [])
+               if w.get("WorkloadStatus") == "Running" and w.get("scheduled") is not False]
+    counts = [(w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu"), w.get("oversold")) for w in running]
+    occupied = sum(n for n, _ in counts) if all(n is not None and n >= 0 for n, _ in counts) else None
+    current_fresh = source_fresh("nodes") and source_fresh("workloads")
+    current_pool = {"capacity_gpu": capacity, "occupied_gpu": occupied,
+                    "borrowed_gpu": sum(n for n, borrowed in counts if borrowed) if all(n is not None and n >= 0 for n, borrowed in counts if borrowed) else None, "fresh": current_fresh,
+                    "occupancy_pct": occupied / capacity * 100 if capacity and occupied is not None and occupied <= capacity else None,
+                    "scope": "monitored_workspace_workloads_over_physical_pool"}
     users = {}
     hours = lambda s: (s or 0) / 3600
     for r in data["rows"]:
@@ -165,7 +180,7 @@ def pai_ranking(response: Response, window: str = Query("week")):
             "cpu_core_hours": 0, "mem_gib_hours": 0, "workloads": 0,
             "compute_mean": None, "gpu_memory_mean": None, "cpu_util_mean": None, "ram_util_mean": None,
             "current_capacity_gpu": None, "current_used_gpu": None, "current_occupancy_pct": None,
-            "current_allocated_gpu": None, "current_borrowed_gpu": None, "quota_fresh": False,
+            "current_allocated_gpu": None, "current_ancestor_allocated_gpu": None, "current_borrowed_gpu": None, "quota_fresh": False,
             "observed_quota_hours": 0, "capacity_gpu_hours": None, "used_gpu_hours": None,
             "occupancy_pct": None, "quota_coverage_pct": 0, "quota_first_hour": None})
     for q in quota_rows:
@@ -174,7 +189,8 @@ def pai_ranking(response: Response, window: str = Query("week")):
         f["current_capacity_gpu"] = q.get("gpu_capacity")
         f["current_used_gpu"] = q.get("gpu_used")
         f["current_allocated_gpu"] = q.get("allocated_gpu")
-        f["current_borrowed_gpu"] = q.get("ancestors_allocated_gpu")
+        f["current_ancestor_allocated_gpu"] = q.get("ancestors_allocated_gpu")
+        f["current_borrowed_gpu"] = f["current_ancestor_allocated_gpu"]  # Legacy alias; not oversold donor data.
         cap, used = q.get("gpu_capacity"), q.get("gpu_used")
         f["current_occupancy_pct"] = used / cap * 100 if cap and used is not None else None
     for r in feature_data["rows"]:
@@ -202,7 +218,15 @@ def pai_ranking(response: Response, window: str = Query("week")):
             for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours",
                         "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads"):
                 f[key] = None
-    return {"window": window, "since": since, "until": until, "generated_at": now,
+    for row in [*result, *ordered]:
+        measured, occupied = row["measured_gpu_hours"], row["gpu_hours"]
+        row["hardware_efficiency_pct"] = row["effective_gpu_hours"] / measured * 100 if measured else None
+        row["gpu_metric_coverage_pct"] = min(100, measured / occupied * 100) if measured is not None and occupied else None
+        row["borrowed_gpu_hours"] = row["oversold_gpu_hours"]
+    return {"window": window, "since": since, "until": until, "cluster": cluster_history, "current_pool": current_pool,
+            "efficiency_method": "gpu_minute_samples_capped_by_observed_allocation",
+            "resource_semantics": "owned_pool_borrowing_not_additional_capacity",
+            "generated_at": now,
             **reporting_metadata(cfg), "first_hour": data["first_hour"],
             "boundary_estimate": bool(since % 3600 or (until < now and until % 3600)),
             "bucket_s": 3600, "users": result[:200], "features": ordered[:200],

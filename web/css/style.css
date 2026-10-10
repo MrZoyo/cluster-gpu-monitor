@@ -1671,3 +1671,8 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   .pai-rank-controls .pai-seg.period { order: 3; display: flex; width: 100%; }
   .pai-rank-controls .pai-seg.period > * { flex: 1 1 0; justify-content: center; min-width: 0; }
 }
+
+/* Audit coverage remains visible beside occupied-time efficiency on mobile. */
+@media (max-width: 760px) {
+  .pai-rank-table.user .c-compute .pai-rank-meter small { display: block; }
+}

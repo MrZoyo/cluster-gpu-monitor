@@ -188,3 +188,8 @@ The public API removes SSH aliases and GPU UUIDs, but may still return display n
 usernames, and process names. `mask_users=true` is readable masking, not irreversible anonymization
 and not access control. Never commit real inventory, settings, SSH configuration, keys, or a
 production database to the public repository.
+
+
+PAI audit adds `cluster_hour` / `cluster_cursor` observations and `usage_paused` pause boundaries.
+Borrowing adds no pool capacity; unmapped cards stay unknown. GPU-minute samples cover measured time only;
+efficiency divides effective by measured occupied time. Tables are additive and can be ignored on rollback.

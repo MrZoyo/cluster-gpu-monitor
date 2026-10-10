@@ -98,9 +98,18 @@ class PaiStore:
                     hour INTEGER NOT NULL, quota_id TEXT NOT NULL, quota_name TEXT,
                     observed_s REAL NOT NULL, capacity_gpu_s REAL NOT NULL, used_gpu_s REAL NOT NULL,
                     PRIMARY KEY(hour, quota_id));
+                CREATE TABLE IF NOT EXISTS cluster_hour (
+                    hour INTEGER PRIMARY KEY, observed_s REAL NOT NULL,
+                    capacity_gpu_s REAL NOT NULL, known_gpu_s REAL NOT NULL, physical_effective_gpu_s REAL NOT NULL,
+                    task_valid_s REAL NOT NULL, task_capacity_gpu_s REAL NOT NULL,
+                    task_occupied_gpu_s REAL NOT NULL, task_effective_gpu_s REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS cluster_cursor (
+                    id INTEGER PRIMARY KEY CHECK(id=1), observed_at REAL NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS quota_cursor (
                     quota_id TEXT PRIMARY KEY, quota_name TEXT, observed_at REAL NOT NULL,
                     capacity REAL NOT NULL, used REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS usage_paused (
+                    workload_id TEXT PRIMARY KEY, observed_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS usage_cursor (
                     workload_id TEXT PRIMARY KEY, observed_at REAL NOT NULL);
             """)
@@ -177,7 +186,7 @@ class PaiStore:
         return [dict(r) for r in rows]
 
     # ---- usage history ----------------------------------------------------------
-    def record_usage(self, workloads, now, max_gap):
+    def record_usage(self, workloads, now, max_gap, *, workload_snapshot=None):
         """Add observed running time since the previous round, split across UTC hours.
 
         Only observed intervals count: a gap longer than ``max_gap`` (collector down) adds at
@@ -185,12 +194,22 @@ class PaiStore:
         dequeue time. Resource-seconds use scheduled amounts, not utilization.
         """
         with self.connect() as c:
+            if workload_snapshot is False:
+                c.execute("INSERT OR REPLACE INTO usage_paused VALUES ('',?)", (now,))
+            elif workload_snapshot is not None:
+                c.executemany("INSERT OR REPLACE INTO usage_paused VALUES (?,?)",
+                    [(w["WorkloadId"], now) for w in workload_snapshot
+                     if w.get("WorkloadStatus") != "Running" or w.get("scheduled") is False])
+            paused = dict(c.execute("SELECT workload_id, observed_at FROM usage_paused").fetchall())
             cursors = dict(c.execute("SELECT workload_id, observed_at FROM usage_cursor").fetchall())
             for w in workloads:
                 wid = w["WorkloadId"]
                 dequeued = w.get("dequeued_at")
                 start = cursors.get(wid, dequeued if dequeued is not None else now)
                 start = max(start, now - max_gap, dequeued if dequeued is not None else start)
+                barrier = max(paused.get(wid, float("-inf")), paused.get("", float("-inf")))
+                if barrier > float("-inf"):
+                    start = max(start, dequeued if dequeued is not None and dequeued >= barrier else now)
                 t = start
                 while t < now:
                     hour = int(t // 3600 * 3600)
@@ -209,6 +228,10 @@ class PaiStore:
                     t = end
                 c.execute("""INSERT INTO usage_cursor VALUES (?,?)
                     ON CONFLICT(workload_id) DO UPDATE SET observed_at=excluded.observed_at""", (wid, now))
+                c.execute("DELETE FROM usage_paused WHERE workload_id=?", (wid,))
+            if workload_snapshot is not False:
+                c.execute("DELETE FROM usage_paused WHERE workload_id=''")
+            c.execute("DELETE FROM usage_paused WHERE observed_at < ?", (now - 7 * 86400,))
             c.execute("DELETE FROM usage_cursor WHERE observed_at < ?", (now - 7 * 86400,))
             c.execute("DELETE FROM usage_hour WHERE hour < ?", (now - USAGE_RETENTION_S,))
 
@@ -262,6 +285,70 @@ class PaiStore:
                 c.execute("DELETE FROM quota_cursor WHERE quota_id=?", (qid,))
             c.execute("DELETE FROM quota_hour WHERE hour < ?", (now - USAGE_RETENTION_S,))
 
+    def record_cluster_usage(self, summary, now, max_gap):
+        """Time-integrate bounded observations; no retrospective capacity or donor inference."""
+        cap = summary.get("physical_gpus")
+        valid = summary.get("cluster_snapshot_fresh") and cap is not None and cap > 0
+        with self.connect() as c:
+            old = c.execute("SELECT observed_at,payload FROM cluster_cursor WHERE id=1").fetchone()
+            if not valid:
+                c.execute("DELETE FROM cluster_cursor WHERE id=1")
+                return
+            if old and now <= old["observed_at"]:
+                return
+            task = summary.get("pool_task_effective_gpus")
+            values = [1, cap, summary.get("cluster_known_gpus", 0), summary.get("cluster_effective_gpus", 0),
+                      int(task is not None), cap if task is not None else 0,
+                      summary.get("pool_scheduled_gpus", 0) if task is not None else 0, task or 0]
+            if old:
+                t = old["observed_at"]
+                stop = min(now, t + max_gap)
+                previous = json.loads(old["payload"])
+                while t < stop:
+                    hour = int(t // 3600 * 3600)
+                    end = min(stop, hour + 3600)
+                    c.execute("""INSERT INTO cluster_hour VALUES (?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(hour) DO UPDATE SET observed_s=observed_s+excluded.observed_s,
+                            capacity_gpu_s=capacity_gpu_s+excluded.capacity_gpu_s,
+                            known_gpu_s=known_gpu_s+excluded.known_gpu_s,
+                            physical_effective_gpu_s=physical_effective_gpu_s+excluded.physical_effective_gpu_s,
+                            task_valid_s=task_valid_s+excluded.task_valid_s,
+                            task_capacity_gpu_s=task_capacity_gpu_s+excluded.task_capacity_gpu_s,
+                            task_occupied_gpu_s=task_occupied_gpu_s+excluded.task_occupied_gpu_s,
+                            task_effective_gpu_s=task_effective_gpu_s+excluded.task_effective_gpu_s""",
+                        (hour, *(v * (end-t) for v in previous)))
+                    t = end
+            c.execute("INSERT OR REPLACE INTO cluster_cursor VALUES (1,?,?)", (now, json.dumps(values)))
+            c.execute("DELETE FROM cluster_hour WHERE hour < ?", (now - USAGE_RETENTION_S,))
+
+    def cluster_ranking(self, since, until, *, observed_until=None):
+        names = ("observed_s", "capacity_gpu_s", "known_gpu_s", "physical_effective_gpu_s", "task_valid_s",
+                 "task_capacity_gpu_s", "task_occupied_gpu_s", "task_effective_gpu_s")
+        result = {name: 0 for name in names} | {"first_hour": None}
+        with self.connect() as c:
+            if c.execute("SELECT 1 FROM sqlite_master WHERE name='cluster_hour'").fetchone():
+                cte, params = _window_cte("cluster_hour", since, until, until if observed_until is None else observed_until)
+                row = c.execute(cte + "SELECT MIN(hour) first_hour," + ",".join(
+                    f"SUM({name} * weight) {name}" for name in names) + " FROM weighted WHERE weight > 0", params).fetchone()
+                result = {name: row[name] or 0 for name in names} | {"first_hour": row["first_hour"]}
+        r = result
+        ratio = lambda numerator, denominator: numerator / denominator * 100 if denominator else None
+        return {"first_hour": r["first_hour"], "scope": "monitored_workspace_workloads_over_physical_pool",
+                "observed_hours": r["observed_s"] / 3600,
+                "capacity_gpu_hours": r["capacity_gpu_s"] / 3600,
+                "known_gpu_hours": r["known_gpu_s"] / 3600,
+                "physical_metric_coverage_pct": ratio(r["known_gpu_s"], r["capacity_gpu_s"]),
+                "physical_utilization_pct": ratio(r["physical_effective_gpu_s"], r["capacity_gpu_s"])
+                    if abs(r["known_gpu_s"] - r["capacity_gpu_s"]) < 1e-6 else None,
+                "known_part_utilization_pct": ratio(r["physical_effective_gpu_s"], r["known_gpu_s"]),
+                "task_utilization_estimate_pct": ratio(r["task_effective_gpu_s"], r["task_capacity_gpu_s"]),
+                "task_occupancy_pct": ratio(r["task_occupied_gpu_s"], r["task_capacity_gpu_s"]),
+                "task_estimate_hours": r["task_valid_s"] / 3600,
+                "task_estimate_coverage_pct": ratio(r["task_valid_s"], until-since),
+                "task_capacity_gpu_hours": r["task_capacity_gpu_s"] / 3600,
+                "task_occupied_gpu_hours": r["task_occupied_gpu_s"] / 3600,
+                "task_effective_gpu_hours": r["task_effective_gpu_s"] / 3600}
+
     def quota_ranking(self, since, until, *, observed_until=None):
         observed_until = until if observed_until is None else observed_until
         with self.connect() as c:
@@ -282,8 +369,8 @@ class PaiStore:
             cte, params = _window_cte("usage_hour", since, now, observed_until)
             rows = c.execute(cte + f"""SELECT user_id, MAX(user_name) AS user_name, quota_id,
                     SUM(gpu_s * weight) gpu_s, SUM(oversold_gpu_s * weight) oversold_gpu_s, SUM(cpu_s * weight) cpu_s, SUM(mem_gib_s * weight) mem_gib_s,
-                    SUM(CASE WHEN compute_n > 0 THEN gpu_s * weight * compute_sum / compute_n / 100 END) effective_gpu_s,
-                    SUM(CASE WHEN compute_n > 0 THEN gpu_s * weight END) measured_gpu_s,
+                    SUM(CASE WHEN compute_n > 0 THEN MIN(gpu_s, compute_n * 60.0) * weight * compute_sum / compute_n / 100 END) effective_gpu_s,
+                    SUM(CASE WHEN compute_n > 0 THEN MIN(gpu_s, compute_n * 60.0) * weight END) measured_gpu_s,
                     SUM(compute_sum * weight) compute_sum, SUM(compute_n * weight) compute_n, SUM(gmem_sum * weight) gmem_sum, SUM(gmem_n * weight) gmem_n,
                     SUM(cpu_util_sum * weight) cpu_util_sum, SUM(cpu_util_n * weight) cpu_util_n,
                     SUM(ram_util_sum * weight) ram_util_sum, SUM(ram_util_n * weight) ram_util_n,

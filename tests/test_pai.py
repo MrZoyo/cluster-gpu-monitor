@@ -110,11 +110,13 @@ def test_denominator_owner_and_conflict_are_preserved(store, cfg):
     store.put_metrics(normalize_metrics([{"jobId": "job", "pod": "pod", "gpu": "0",
         "timestamp": 900, "Value": 42, "userId": "account_not_person"}], cfg, "job", "compute", 960), 0)
     d = overview(store, cfg, 1000)
-    assert d["summary"] == {"physical_gpus": 2, "mapped_gpus": 1, "measured_gpus": 1,
+    expected = {"physical_gpus": 2, "mapped_gpus": 1, "measured_gpus": 1,
                             "metric_denominator": 2, "compute_mean": 42,
                             "task_compute_mean": 42, "task_measured_gpus": 1,
                             "cluster_compute_mean": 21, "cluster_known_gpus": 2,
                             "cluster_unallocated_gpus": 1}
+    assert {k: d["summary"][k] for k in expected} == expected
+    assert d["summary"]["pool_compute_estimate"] == 21
     assert d["nodes"][0]["cards"][1]["compute"] is None
     assert d["nodes"][0]["cards"][0]["assignments"][0]["owner_id"] == "person"
     assert d["users"][0]["conflict"] is True
@@ -151,7 +153,9 @@ def test_task_mean_includes_unmapped_idle_gpus_with_equal_per_gpu_weight(store, 
     summary = overview(store, cfg, 1000)["summary"]
     assert summary["task_compute_mean"] == 60  # Three GPUs, not two task averages (45%).
     assert summary["task_measured_gpus"] == 3
-    assert summary["cluster_compute_mean"] == 0  # Mapped idle GPU plus one unallocated card.
+    assert summary["cluster_compute_mean"] is None  # Hidden borrowing makes unmapped cards unknown.
+    assert summary["cluster_unallocated_gpus"] == 0
+    assert summary["pool_compute_estimate"] is None  # Three scheduled GPUs cannot fit this two-GPU pool.
     store.failure("metric:idle:compute", "unavailable", now=980)
     assert overview(store, cfg, 1000)["summary"]["task_measured_gpus"] == 1
 
@@ -306,7 +310,8 @@ def test_usage_counts_only_observed_time_and_splits_hours(store):
     data = store.ranking(3780 + 60, 3600)
     row = data["rows"][0]
     assert row["compute_n"] == 2 and row["compute_sum"] == 100
-    assert row["effective_gpu_s"] == 8 * 180 * 0.5
+    assert row["effective_gpu_s"] == 2 * 60 * 0.5
+    assert row["measured_gpu_s"] == 2 * 60  # Two samples cannot cover all 8 GPUs for 180 seconds.
 
 
 def test_ranking_api_aggregates_users(store, cfg, monkeypatch):
@@ -558,7 +563,8 @@ def test_fractional_boundary_buckets_preserve_additive_usage_and_denominators(st
         c.execute("INSERT INTO quota_hour VALUES (3600,'q','q',3600,57600,28800)")
     r = store.ranking(5400, 3600, since=1800, observed_until=7200)['rows']
     assert {x['user_id']: x['gpu_s'] / 3600 for x in r} == {'a': 4, 'b': 2}
-    assert sum(x['effective_gpu_s'] for x in r) / 3600 == 4
+    assert sum(x['effective_gpu_s'] for x in r) == 45
+    assert sum(x['measured_gpu_s'] for x in r) == 60
     q = store.quota_ranking(1800, 5400, observed_until=7200)[0]
     assert (q['observed_s'], q['capacity_gpu_s'] / 3600, q['used_gpu_s'] / 3600) == (3600, 12, 5)
     pieces = [(0, 1800), (1800, 5400), (5400, 7200)]
@@ -587,3 +593,105 @@ def test_http_reporting_config_controls_window_and_metadata(store, cfg, monkeypa
     data = TestClient(create_app()).get('/api/pai/ranking').json()
     assert data['since'] == datetime.fromisoformat('2026-10-09T03:15:00+00:00').timestamp()
     assert (data['timezone'], data['week_start'], data['reset_time'], data['boundary_estimate']) == ('Asia/Kolkata', 'friday', '08:45', True)
+
+
+def test_borrowing_stays_in_owned_capacity_and_hidden_cards_are_unknown(store, cfg):
+    seed(store)
+    store.save('nodes', [{'NodeName': 'node', 'GPU': '4', 'RequestGPU': 1}], now=960)
+    ws=store.sources()['workloads']['payload']
+    ws.append({'WorkloadId':'borrowed','WorkloadName':'borrowed','WorkloadStatus':'Running',
+               'UserId':'b','scheduled_gpu':2,'requested_gpu':2,'oversold':True})
+    store.save('workloads', ws, now=960)
+    for wid, values in [('job',[100]),('borrowed',[50,50])]:
+        store.save(f'metric:{wid}:compute',[{'sampled_at':900}],now=960)
+        store.put_metrics(normalize_metrics([{'jobId':wid,'pod':'pod','gpu':str(i),'timestamp':900,'Value':v}
+                                            for i,v in enumerate(values)],cfg,wid,'compute',960),0)
+    d=overview(store,cfg,1000); s=d['summary']
+    assert s['physical_gpus']==4 and s['pool_scheduled_gpus']==3
+    assert s['pool_compute_estimate']==50  # (100+50+50)/4, not /6 and not /3.
+    assert s['cluster_compute_mean'] is None and s['cluster_unallocated_gpus']==0
+    assert s['cluster_known_gpus']==1 and d['nodes'][0]['free_known'] is False
+    store.failure('metric:borrowed:compute','unavailable',now=990)
+    assert overview(store,cfg,1000)['summary']['pool_compute_estimate'] is None
+
+
+def test_cluster_history_preserves_coverage_capacity_changes_and_gaps(store):
+    def sample(cap, known, task):
+        return dict(cluster_snapshot_fresh=True,physical_gpus=cap,cluster_known_gpus=known,
+                    cluster_effective_gpus=1,pool_scheduled_gpus=3,pool_task_effective_gpus=task)
+    store.record_cluster_usage(sample(4,1,2),3500,360)
+    assert store.cluster_ranking(0,4000)['observed_hours']==0
+    store.record_cluster_usage(sample(8,8,None),3660,360)
+    store.record_cluster_usage(sample(8,8,None),3780,360)
+    r=store.cluster_ranking(0,4000)
+    assert r['observed_hours']==280/3600
+    assert r['capacity_gpu_hours']==(4*160+8*120)/3600
+    assert r['task_utilization_estimate_pct']==50 and r['task_occupancy_pct']==75
+    assert r['task_estimate_hours']==160/3600
+    assert r['task_estimate_coverage_pct']==4
+    assert r['physical_utilization_pct'] is None
+    store.record_cluster_usage(sample(8,8,2),7380,360)
+    assert store.cluster_ranking(0,8000)['observed_hours']==640/3600
+    store.record_cluster_usage({},7500,360)
+    store.record_cluster_usage(sample(8,8,2),7620,360)
+    assert store.cluster_ranking(0,8000)['observed_hours']==640/3600
+    store.record_cluster_usage(sample(8,8,2),7620,360)
+    assert store.cluster_ranking(0,8000)['observed_hours']==640/3600
+
+
+def test_efficiency_uses_measured_gpu_time_not_full_missing_hour(store,cfg,monkeypatch):
+    from gpumon.api import pai
+    cfg.db_path=str(store.path)
+    with store.connect() as c:
+        c.execute("INSERT INTO usage_hour(hour,workload_id,user_id,quota_id,gpu_s,oversold_gpu_s,compute_sum,compute_n) VALUES (0,'a','u','q',3600,3600,50,1)")
+        c.execute("INSERT INTO usage_hour(hour,workload_id,user_id,quota_id,gpu_s,compute_sum,compute_n) VALUES (0,'b','u','q',3600,6000,60)")
+    monkeypatch.setattr(pai,'load_pai_settings',lambda:cfg)
+    monkeypatch.setattr(pai.time,'time',lambda:3600)
+    d=pai.pai_ranking(Response(),'24h')
+    for row in [d['users'][0],d['features'][0]]:
+        assert row['gpu_hours']==2 and row['borrowed_gpu_hours']==1
+        assert row['measured_gpu_hours']==pytest.approx(61/60)
+        assert row['effective_gpu_hours']==pytest.approx(1+0.5/60)
+        assert row['gpu_metric_coverage_pct']==pytest.approx(61/120*100)
+        assert row['hardware_efficiency_pct']==pytest.approx(60.5/61*100)
+    with store.connect() as c:
+        c.execute('DROP TABLE cluster_hour')
+    assert store.cluster_ranking(0,3600)['task_utilization_estimate_pct'] is None
+
+
+def test_paused_borrowing_and_failed_snapshots_do_not_accrue_gpu_time(store):
+    w={'WorkloadId':'b','WorkloadStatus':'Running','gpus':4,'dequeued_at':900,'oversold':True}
+    store.record_usage([w],1000,360,workload_snapshot=[w])
+    store.record_usage([],1120,360,workload_snapshot=[{**w,'WorkloadStatus':'Pending','scheduled':False}])
+    store.record_usage([],1240,360,workload_snapshot=[{**w,'WorkloadStatus':'Pending','scheduled':False}])
+    store.record_usage([w],1360,360,workload_snapshot=[w])  # No new dequeue timestamp: do not invent resume time.
+    assert sum(r['gpu_s'] for r in store.ranking(1361,3600)['rows'])==400
+    store.record_usage([w],1480,360,workload_snapshot=[w])
+    store.record_usage([],1600,360,workload_snapshot=False)
+    store.record_usage([w],1720,360,workload_snapshot=[w])
+    assert sum(r['gpu_s'] for r in store.ranking(1721,3600)['rows'])==880
+    store.record_usage([],1840,360,workload_snapshot=[{**w,'WorkloadStatus':'Pending'}])
+    resumed={**w,'dequeued_at':1900}
+    store.record_usage([resumed],1960,360,workload_snapshot=[resumed])
+    assert sum(r['gpu_s'] for r in store.ranking(1961,3600)['rows'])==1120
+
+
+def test_current_pool_counts_borrowed_once_and_keeps_quota_counters_separate(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    cfg.db_path = str(store.path)
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(pai.time, "time", lambda: 3600)
+    store.save("nodes", [{"GPU": 8}], now=3600)
+    store.save("workloads", [
+        {"WorkloadStatus": "Running", "scheduled_gpu": 4, "requested_gpu": 8},
+        {"WorkloadStatus": "Running", "scheduled_gpu": 2, "oversold": True},
+        {"WorkloadStatus": "Pending", "requested_gpu": 8, "oversold": True}], now=3600)
+    store.save("quotas", [{"quota_id": "f", "gpu_capacity": 8, "gpu_used": 4, "ancestors_allocated_gpu": 1}], now=3600)
+    d = pai.pai_ranking(Response(), "week")
+    p = d["current_pool"]
+    assert (p["capacity_gpu"], p["occupied_gpu"], p["borrowed_gpu"], p["occupancy_pct"]) == (8, 6, 2, 75)
+    assert p["fresh"]
+    assert d["features"][0]["current_ancestor_allocated_gpu"] == 1
+    assert d["features"][0]["current_used_gpu"] == 4
+    store.failure("workloads", "test", now=3600)
+    assert pai.pai_ranking(Response(), "week")["current_pool"]["fresh"] is False

@@ -64,7 +64,7 @@ def mem_gib(value):
 
 
 def workload_row(w):
-    # UseOversoldResource marks workloads dequeued onto idle (oversold) capacity outside the quota.
+    # UseOversoldResource marks workloads dequeued onto idle (oversold) capacity borrowed from other quotas in the owned pool.
     # Reason/Code come from the scheduler and explain why a queued workload is not placed.
     return {**select(w, "WorkloadId WorkloadName WorkloadType WorkloadStatus UserId UserName QuotaId WorkspaceId Status Phase"),
             "requested_gpu": number((w.get("Resource") or {}).get("GPU")),
@@ -167,6 +167,9 @@ def run_once(cfg, store, client=None):
                      lambda d: select(d, "AccountId UserId IdentityType"))
     if not identity or identity.get("AccountId") != cfg.account_id or "identity" in errors:
         store.failure("round", "identity_unverified")
+        store.record_usage([], started, 2 * cfg.degraded_interval_s, workload_snapshot=False)
+        store.record_quota_usage([], started, 2 * cfg.degraded_interval_s)
+        store.record_cluster_usage({}, started, 2 * cfg.degraded_interval_s)
         return {"ok": False, "calls": client.calls,
                 "errors": {"identity": errors.get("identity", "identity_unverified")}}
 
@@ -279,7 +282,8 @@ def run_once(cfg, store, client=None):
         observed = [] if "workloads" in errors else running.values()
         store.record_usage([{**w, "gpus": w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu"),
                              "cpu": w.get("requested_cpu"), "mem_gib": w.get("requested_mem_gib")}
-                            for w in observed], now, 2 * cfg.degraded_interval_s)
+                            for w in observed], now, 2 * cfg.degraded_interval_s,
+                           workload_snapshot=False if "workloads" in errors else workloads)
         store.record_quota_usage([] if "quotas" in errors else quota_rows, now, 2 * cfg.degraded_interval_s)
         store.refresh_utilization(now)
     except sqlite3.Error:
@@ -290,6 +294,14 @@ def run_once(cfg, store, client=None):
                "metric_workloads": min(len(active), cfg.max_workloads),
                "expected_metric_workloads": len(active)}
     store.save("round", summary, state="ok" if not errors else "partial")
+    # Derive from existing local snapshots only; this adds no cloud API calls.
+    try:
+        from .view import overview
+        store.record_cluster_usage(overview(store, cfg, time.time())["summary"], time.time(), 2 * cfg.degraded_interval_s)
+    except (sqlite3.Error, ValueError):
+        errors["cluster_history"] = "store_error"
+        summary["ok"] = False
+        store.save("round", summary, state="partial")
     return summary
 
 

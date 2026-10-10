@@ -86,8 +86,8 @@ window.PaiUI = (() => {
     roleMaximumResource: ["超过角色配置的资源上限", "Exceeds the role's configured resource limit"],
   };
   // 控制台称“闲时资源”，接口字段为 OverSold（UseOversoldResource / OversoldType）。
-  const OVERSOLD_TIP = () => t("闲时资源（配额外）：任务使用租户内其他配额此刻空闲的同规格资源，不计入配额用量、不受配额总量限制，节点名不公开、具体位置未核实；资源方需要时任务会被回收。接口字段：UseOversoldResource。",
-    "Idle-time resources (outside the quota): idle same-spec capacity of other quotas in the tenant. Not counted in or limited by quota usage; node names hidden and location unverified; reclaimed when the owner needs it. API field: UseOversoldResource.");
+  const OVERSOLD_TIP = () => t("闲时借用：任务临时使用自有资源池内其他 Quota 暂不需要的节点，不是额外计算资源，借用机制不新增 GPU 容量费用。出借 Quota 和节点归属不公开；原 Quota 始终优先，需要资源时借用任务暂停、释放资源并重新等待。提交配额的用量计数可能不含借用，但占用 GPU 时间必须包含。接口字段：UseOversoldResource。",
+    "Idle borrowing temporarily uses unused nodes of other quotas in the owned pool. It adds neither physical capacity nor GPU capacity charges. The lending quota/node is undisclosed; its owner has priority, so borrowed workloads pause, release resources and requeue when reclaimed. Submission-quota counters may exclude borrowing, but occupied GPU time includes it. API: UseOversoldResource.");
   const oversoldChip = (text) => el("span", { class: "pai-chip oversold", title: OVERSOLD_TIP() }, [text || t("闲时", "Idle-time")]);
 
   // 复用裸金属 .cellbar：计算用利用率热力色，显存固定用紫色（避免与"满载红"语义混淆）。
@@ -113,6 +113,8 @@ window.PaiUI = (() => {
     const prefix = commonPrefix(names);
     const short = (name) => (prefix.length >= 6 && name.length - prefix.length >= 4 ? "…" + name.slice(prefix.length) : name);
     const quotas = Object.fromEntries((d.quotas || []).map((q) => [q.quota_id, q]));
+    const unlocatedGpu = d.workloads.some(w => w.WorkloadStatus === "Running" && w.scheduled !== false &&
+      (num(w.scheduled_gpu) ?? num(w.requested_gpu) ?? 0) > (w.cards || []).length);
     const maxNodeGpu = Math.max(0, ...d.nodes.map((n) => num(n.GPU) || 0));
     const quotaOrder = (id) => { const i = (d.quotas || []).findIndex((q) => q.quota_id === id); return i < 0 ? 999 : i; };
     const cards = [];
@@ -126,7 +128,7 @@ window.PaiUI = (() => {
       const assigned = n.cards.filter((c) => c.assignments.length).length;
       const requested = num(n.RequestGPU);
       // 仅当本节点 Pod 映射新鲜、且节点请求量不超过已关联卡数时，未关联的卡才判定为空闲；否则保持未知。
-      const canBeFree = n.mapping_state === "ok" && requested != null && requested <= assigned;
+      const canBeFree = n.free_known ?? (n.mapping_state === "ok" && requested != null && requested <= assigned && !unlocatedGpu);
       n.cards.forEach((c) => {
         c.nodeName = n.NodeName;
         c.state = c.assignments.length ? (c.compute ? "measured" : "assigned") : (canBeFree ? "free" : "unknown");
@@ -215,7 +217,7 @@ window.PaiUI = (() => {
       u.mapped = cards.filter((c) => c.assignments.some((a) => a.owner_id === u.UserId)).length;
     });
     const physicalMem = cards.filter((c) => c.memory?.fresh).map((c) => c.memory.value);
-    const gpuOf = (w) => num(w.requested_gpu) || 0;
+    const gpuOf = (w) => num(w.scheduled_gpu) ?? num(w.requested_gpu) ?? 0;
     const running = d.workloads.filter((w) => w.WorkloadStatus === "Running" && !w.queued);
     const quotaName = (id) => quotas[id]?.quota_name || id || "—";
     const childrenOf = (id) => (d.quotas || []).filter((c) => c.parent_quota_id === id);
@@ -311,7 +313,7 @@ window.PaiUI = (() => {
   // 数字 = 计算利用率（热力色），底部细条 = 显存占用（紫色）；空闲卡虚线，未知卡斜纹。
   function cardTip(c, opts) {
     const lines = [(opts.label || "GPU " + c.index)];
-    if (c.state === "free") lines.push(t("未见占用：节点 GPU 请求为 0，且与 Pod 映射一致。闲时任务的物理位置不公开，可能未计入", "No visible allocation: node GPU request is 0 and matches Pod mapping. Idle-time pods are hidden and may not be counted"));
+    if (c.state === "free") lines.push(t("未见占用：节点 GPU 请求为 0，且与 Pod 映射一致。有无法定位的借用任务时，此类卡应保持未知", "No visible allocation: node GPU request is 0 and matches Pod mapping. Unmapped borrowing prevents declaring these cards idle"));
     if (c.state === "unknown") lines.push(t("分配状态未知：Pod 映射缺失或与节点请求量不一致", "Allocation unknown: Pod mapping missing or inconsistent"));
     if (c.compute || c.state === "measured" || c.state === "assigned") {
       lines.push(t("计算 ", "Compute ") + pct1(c.compute?.value) + (c.compute && !c.compute.fresh ? t("（陈旧）", " (stale)") : ""));
@@ -447,11 +449,11 @@ window.PaiUI = (() => {
     const side = el("div", { class: "pai-head-side" }, [
       el("div", { class: "ops-strip", style: `--alert-count:${s.queued.length ? 4 : 3}` }, [
         alertBox(s.free, t("未见 GPU 占用的卡", "GPUs with no visible allocation"), s.free ? "good" : "",
-          t("节点清单中 GPU 请求为 0、且与 Pod 映射一致的卡。闲时任务的物理位置不公开、可能未计入；能否调度还取决于 CPU、内存、健康和配额策略，不代表一定能立即使用。",
-            "Node GPU request is 0 and matches Pod mapping. Idle-time pods are hidden and may not be counted; schedulability also depends on CPU, memory, health and quota policy.")),
+          t("节点与 Pod 映射一致，且没有无法定位的运行 GPU 任务时，未分配的卡才可确认空闲；能否调度还取决于 CPU、内存、健康和配额策略，不代表一定能立即使用。",
+            "Node GPU request is 0 and matches Pod mapping. Unmapped borrowing prevents declaring these cards idle; schedulability also depends on CPU, memory, health and quota policy.")),
         alertBox(s.lowDims, t(`已分配但近 10 分钟计算 <${LOW}%`, `Allocated, 10-min compute <${LOW}%`), s.lowDims ? "hot" : "",
-          t(`按任务的卡统计（闲时卡没有物理节点，不能按物理卡算），用近 10 分钟均值判断，至少 5 个分钟点。点击查看任务，按低负载卡数排序。`,
-            `Counted per workload GPU (idle-time GPUs have no physical node), using the 10-minute mean with at least 5 points. Click to open workloads sorted by low-utilization GPUs.`),
+          t(`按任务的卡统计（借用任务的节点归属不公开，不能定位具体物理卡），用近 10 分钟均值判断，至少 5 个分钟点。点击查看任务，按低负载卡数排序。`,
+            `Counted per workload GPU (borrowed GPUs have undisclosed physical mapping), using the 10-minute mean with at least 5 points. Click to open workloads sorted by low-utilization GPUs.`),
           { sub: s.lowDims ? t(`配额内 ${s.lowDims - s.oversoldLow} · 闲时 ${s.oversoldLow}`, `in quota ${s.lowDims - s.oversoldLow} · idle-time ${s.oversoldLow}`) : null,
             onclick: s.lowDims ? goLowUtil : null }),
         alertBox(attention, attention ? issueLabel(issues[0]) : t("需核对：无", "Nothing to reconcile"), attention ? "hot" : "",
@@ -477,17 +479,18 @@ window.PaiUI = (() => {
         item(t("未见占用", "no visible allocation"), String(s.free), s.free ? "good" : ""),
         item(t("已分配", "allocated"), `${sum.mapped_gpus ?? "—"} / ${s.physical}`),
         item(t("计算均值（任务）", "task mean"), pct(sum.task_compute_mean)),
-        item(t("集群占用", "cluster utilization"), pct(sum.cluster_compute_mean)),
+        item(t("集群计算（估算）", "pool compute (est.)"), pct(sum.pool_compute_estimate)),
         item(t("运行任务", "running"), String(s.running)),
-        s.oversoldGpu ? item(t("闲时卡", "idle-time"), String(s.oversoldGpu), "oversold") : null,
+        s.oversoldGpu ? item(t("借用卡", "borrowed"), String(s.oversoldGpu), "oversold") : null,
       ]),
     ]);
   }
 
   const taskMeanHint = (sum) => t(`运行任务中 ${sum.task_measured_gpus || 0} 张 GPU 的新鲜指标，每卡等权；含闲时任务，缺测不计零`,
     `Fresh metrics from ${sum.task_measured_gpus || 0} GPUs in running tasks, weighted equally per GPU; includes idle-time tasks, excludes missing values`);
-  const clusterMeanHint = (sum) => t(`全部 ${gpus(sum.physical_gpus)} 张物理卡平均，未占用按 0%；已确认 ${sum.cluster_known_gpus || 0} 张，缺测时不显示均值`,
-    `Mean across all ${gpus(sum.physical_gpus)} physical GPUs; unallocated = 0%. ${sum.cluster_known_gpus || 0} confirmed; no mean when data is incomplete`);
+  const clusterMeanHint = (sum) => t(`监控工作空间的任务 GPU 计算之和 ÷ 自有池 ${gpus(sum.physical_gpus)} 张物理卡；含池内借用，不增加容量。仅任务/指标完整且数量不超容量时折算；不是可逐卡核实的全池实测值。`,
+    `Monitored workspace workload compute / ${gpus(sum.physical_gpus)} owned physical GPUs, including borrowing without adding capacity. Estimated only with complete workload metrics and consistent counts; not a fully mapped physical measurement.`);
+
 
   function kpis(m) {
     const s = m.sx, sum = m.summary || {};
@@ -495,9 +498,9 @@ window.PaiUI = (() => {
       [String(s.physical), t("物理 GPU", "Physical GPUs"), plural(m.nodes.length, "节点", "node") + (s.types.length ? " · " + s.types.join(" / ") : "")],
       [sum.mapped_gpus == null ? "—" : `${sum.mapped_gpus} / ${s.physical}`, t("已分配物理卡", "Allocated GPUs"), t("按 Pod GPUIndexes 去重", "Deduplicated from Pod GPUIndexes")],
       [pct(sum.task_compute_mean), t("计算均值（任务）", "Compute mean (tasks)"), taskMeanHint(sum)],
-      [pct(sum.cluster_compute_mean), t("集群占用", "Cluster utilization"), clusterMeanHint(sum)],
+      [pct(sum.pool_compute_estimate), t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)"), clusterMeanHint(sum)],
       [String(s.running), t("运行中任务", "Running workloads"), `DSW ${s.dsw} · DLC ${s.dlc}`],
-      [String(s.oversoldGpu), t("闲时资源卡（配额外）", "Idle-time GPUs"), t(`${s.oversoldJobs} 个任务 · 不计入配额 · 可被回收`, `${s.oversoldJobs} workloads · outside quota · reclaimable`), "idle"],
+      [String(s.oversoldGpu), t("其中：闲时借用 GPU", "Idle-time GPUs"), t(`${s.oversoldJobs} 个任务 · 池内借用 · 原 Quota 优先`, `${s.oversoldJobs} workloads · owned pool · preemptible`), "idle"],
     ];
     return el("div", { class: "kpis pai-kpis" }, items.map(([v, k, hint, docKey]) => el("div", { class: "kpi" + (docKey ? " oversold" : "") }, [
       el("div", { class: "v" }, [v]), el("div", { class: "k" }, [k, docKey ? doc(docKey, t("说明", "Docs")) : null]),
@@ -544,8 +547,8 @@ window.PaiUI = (() => {
         link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", doc("selfHeal")]))),
       el("div", { class: "pai-node-grid" }, m.nodes.map(nodeTile)),
       s.oversoldGpu ? el("div", { class: "pai-note oversold" }, [t(
-        `${s.oversoldJobs} 个运行任务使用闲时资源，申请共 ${s.oversoldGpu} 卡。这是任务申请量，与图中物理卡的对应关系未确认，不代表额外物理容量。`,
-        `${s.oversoldJobs} running workloads use idle-time resources and request ${s.oversoldGpu} GPUs in total. This is requested capacity, not additional physical capacity; correspondence with the GPUs shown is unconfirmed. `), doc("idle")]) : null,
+        `${s.oversoldJobs} 个运行任务使用闲时资源，占用共 ${s.oversoldGpu} 卡。这是自有池内部借用的任务用量；具体出借 Quota/节点不公开，不增加物理容量。`,
+        `${s.oversoldJobs} running workloads borrow idle resources and occupy ${s.oversoldGpu} GPUs in total. This is borrowing within the owned pool, not additional capacity; the lending quota/node is undisclosed. `), doc("idle")]) : null,
     ], { tools: legend(), id: "paiHeat" });
   }
 
@@ -741,8 +744,8 @@ window.PaiUI = (() => {
     const unmapped = m.sx.unmapped.length, hidden = m.sx.hidden.length;
     return panel(opts.title || t("运行任务", "Workloads"), [
       hidden ? el("div", { class: "pai-note oversold" }, [t(
-        `${hidden} 个任务使用闲时资源（配额外），其中 ${m.sx.oversoldJobs} 个申请 GPU、共 ${gpus(m.sx.oversoldGpu)} 卡：不计入配额用量，节点不公开，原资源方需要时会被终止。GPU 列为任务申请量。`,
-        `${hidden} workloads run on idle-time resources outside the quota (${m.sx.oversoldJobs} with GPUs, ${gpus(m.sx.oversoldGpu)} total): not counted in quota usage, node names hidden, terminated when reclaimed. GPU is the requested amount. `), doc("idle")]) : null,
+        `${hidden} 个任务使用闲时借用（自有资源），其中 ${m.sx.oversoldJobs} 个申请 GPU、共 ${gpus(m.sx.oversoldGpu)} 卡：不计入提交 Quota 的原有用量计数，出借方不公开，原 Quota 需要时暂停、释放资源并重新等待。GPU 列为任务申请量。`,
+        `${hidden} workloads borrow resources within the owned pool (${m.sx.oversoldJobs} with GPUs, ${gpus(m.sx.oversoldGpu)} total): excluded from the submission-quota counter, donor hidden, paused and requeued when reclaimed. GPU is the requested amount. `), doc("idle")]) : null,
       unmapped ? el("div", { class: "pai-note" }, [t(
         `${unmapped} 个配额内任务有单卡指标，但没有可信的物理节点关联（节点列显示"未关联"）；它们的卡不计入上方物理卡统计。`,
         `${unmapped} in-quota workloads have GPU metrics without trusted node mapping ("Unmapped"); they are not counted as physical cards.`)]) : null,
@@ -764,7 +767,7 @@ window.PaiUI = (() => {
   function quotaChips(u) {
     if (!u.quotaUse.length) return el("span", { class: "pai-dash" }, ["—"]);
     return el("span", { class: "pai-inline" }, u.quotaUse.map((q) => el("span", { class: "pai-user-chip" + (q.oversold ? " oversold" : ""),
-      title: q.oversold ? OVERSOLD_TIP() : t("配额内运行任务的申请卡数", "Requested GPUs of in-quota running workloads") },
+      title: q.oversold ? OVERSOLD_TIP() : t("常规运行任务卡数（优先调度量，缺失时用申请量）", "Running GPUs (scheduled, requested as fallback)") },
       [q.name, el("b", {}, [gpus(q.gpus)]), q.oversold ? t(" 闲时", " idle-time") : null])));
   }
 
@@ -826,8 +829,8 @@ window.PaiUI = (() => {
           title: t("绑定节点中状态就绪且健康的数量；配置容量不等于健康可调度的卡", "Bound nodes that are ready and healthy; configured capacity is not schedulable capacity") },
           [t(`可接新任务的节点 ${q.nodesSchedulable}/${q.nodesTotal}`, `Schedulable nodes ${q.nodesSchedulable}/${q.nodesTotal}`)]));
         if (q.mismatch) who.push(el("span", { class: "pai-flag", title: q.hasBreakdown
-          ? t("配额内运行任务的申请卡数与配额接口的“本配额分配”不一致；页面不推断原因，需在 PAI 控制台核实。", "Requested GPUs of in-quota workloads differ from the quota's own allocation; check the PAI console.")
-          : t("配额内运行任务的申请卡数（含子配额用量）与配额用量不一致；页面不推断原因，需在 PAI 控制台核实。", "Requested GPUs (plus subquota usage) differ from quota usage; check the PAI console.") },
+          ? t("常规运行任务卡数（优先调度量，缺失时用申请量）与配额接口的“本配额分配”不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (scheduled, requested as fallback) differ from the quota's own allocation; check the PAI console.")
+          : t("常规运行任务卡数（优先调度量，缺失时用申请量）（含子配额用量）与配额用量不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (plus subquota usage) differ from quota usage; check the PAI console.") },
           [t(`任务申请 ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "分配" : "用量"} ${gpus(q.reported)}`, `Requested ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "allocated" : "used"} ${gpus(q.reported)}`)]));
         return el("div", { class: "pai-quota" + (root ? " root" : "") }, [
           el("div", { class: "pai-quota-main" }, [
@@ -843,10 +846,10 @@ window.PaiUI = (() => {
       anyBreakdown ? el("div", { class: "pai-quota-legend" }, [
         el("span", {}, [el("i"), t("本配额任务", "This quota")]), el("span", {}, [el("i", { class: "child" }), t("子配额", "Subquotas")]),
         el("span", {}, [el("i", { class: "borrowed" }), t("父配额任务占用", "Parent-quota workloads")]),
-        el("span", {}, [el("i", { class: "oversold" }), t("闲时资源（不计入配额）", "Idle-time (not counted)")]),
+        el("span", {}, [el("i", { class: "oversold" }), t("闲时借用（计入团队总占用）", "Borrowing (included in team total)")]),
       ]) : null,
-      note(t("数字为配额资源上的实际分配 / 容量，来自配额接口；父配额包含子配额。人名按任务的 QuotaId 归入其直接提交的配额，卡数为任务申请量。“闲时共享”只在与上级不同时于子配额单独标注。",
-        "Numbers are allocation / capacity from the quota API; parents include subquotas. Users are listed under the quota their workloads were submitted to, with requested GPUs. Idle sharing is shown on a subquota only when it differs from its parent.")),
+      note(t("数字为配额资源上的实际分配 / 容量，来自配额接口；父配额包含子配额。人名按任务的 QuotaId 归入其直接提交的配额，卡数优先使用调度量，缺失时使用申请量。“闲时共享”只在与上级不同时于子配额单独标注。",
+        "Numbers are allocation / capacity from the quota API; parents include subquotas. Users are listed under the quota their workloads were submitted to, with scheduled GPUs (requested as fallback). Idle sharing is shown on a subquota only when it differs from its parent.")),
     ], { tools: el("div", { class: "pai-tools" }, [doc("quota", t("配额", "Quotas")), doc("preempt", t("抢占", "Preemption")), doc("idle", t("闲时资源", "Idle-time"))]), id: "paiQuotas" });
   }
 
@@ -1005,15 +1008,18 @@ window.PaiUI = (() => {
   function exportRanking(data, dimension) {
     const feature = dimension === "feature";
     const rows = feature ? data.features || [] : data.users || [];
-    const fields = feature ? ["quota_id", "quota_name", "is_root", "gpu_hours", "quota_gpu_hours", "oversold_gpu_hours",
+    const fields = feature ? ["quota_id", "quota_name", "is_root", "gpu_hours", "quota_gpu_hours", "borrowed_gpu_hours",
       "capacity_gpu_hours", "used_gpu_hours", "occupancy_pct", "observed_quota_hours", "quota_coverage_pct",
-      "effective_gpu_hours", "measured_gpu_hours", "compute_mean", "gpu_memory_mean", "cpu_core_hours", "mem_gib_hours", "workloads",
-      "current_capacity_gpu", "current_used_gpu", "current_occupancy_pct", "current_allocated_gpu", "current_borrowed_gpu", "quota_fresh"]
-      : ["user_id", "username", "gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours",
-        "compute_mean", "gpu_memory_mean", "cpu_core_hours", "cpu_util_mean", "mem_gib_hours", "ram_util_mean", "workloads"];
+      "effective_gpu_hours", "measured_gpu_hours", "hardware_efficiency_pct", "gpu_metric_coverage_pct", "compute_mean", "gpu_memory_mean", "cpu_core_hours", "mem_gib_hours", "workloads",
+      "current_capacity_gpu", "current_used_gpu", "current_occupancy_pct", "current_allocated_gpu", "current_ancestor_allocated_gpu", "quota_fresh"]
+      : ["user_id", "username", "gpu_hours", "borrowed_gpu_hours", "effective_gpu_hours", "measured_gpu_hours",
+        "hardware_efficiency_pct", "gpu_metric_coverage_pct", "compute_mean", "gpu_memory_mean", "cpu_core_hours", "cpu_util_mean", "mem_gib_hours", "ram_util_mean", "workloads"];
     const cell = (v) => '"' + String(v == null ? "" : v).replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
     const metadata = ["window", "timezone", "week_start", "reset_time", "since_local", "until_local", "generated_local", "history_first_hour_local", "truncated", "boundary_estimate"];
     const prefix = [data.window, data.timezone, data.week_start, data.reset_time, ...[data.since, data.until, data.generated_at, data.first_hour].map(ts => reportClock(ts, data.timezone)), data.truncated, data.boundary_estimate];
+    const clusterFields = ["task_utilization_estimate_pct", "task_occupancy_pct", "task_estimate_coverage_pct", "task_estimate_hours", "task_capacity_gpu_hours", "task_occupied_gpu_hours", "task_effective_gpu_hours", "physical_utilization_pct", "physical_metric_coverage_pct", "scope"];
+    metadata.push(...clusterFields.map(k => "cluster_" + k));
+    prefix.push(...clusterFields.map(k => data.cluster?.[k]));
     const csv = [metadata.concat(fields), ...rows.map(r => prefix.concat(fields.map(k => r[k])))].map(r => r.map(cell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" }));
     const a = el("a", { href: url, download: `pai-${dimension}-${data.window}-${reportClock(data.until, data.timezone).slice(0, 10)}.csv` });
@@ -1065,7 +1071,8 @@ window.PaiUI = (() => {
   // 指标细条统一用强调色；只有“计算偏低”用琥珀色，与行内标签呼应。
   const computeCell = (mean, measured, effective, total) => meterCell(mean, {
     color: mean != null && mean < RANK_IDLE ? "var(--held)" : null, text: pct(mean),
-    sub: measured ? t(`有效 ${hrs(effective)} GPU·h`, `${hrs(effective)} eff. GPU-h`) : null,
+    sub: total ? t(`指标覆盖 ${share((measured || 0) / total * 100)} · 有效 ${measured ? hrs(effective) : "—"} GPU·h`,
+      `${share((measured || 0) / total * 100)} measured · ${measured ? hrs(effective) : "—"} eff. GPU-h`) : null,
     title: total ? t(`指标覆盖 ${rankNumber(measured)} / ${rankNumber(total)} GPU·小时；有效 GPU·小时按单卡计算利用率加权`,
       `Metrics cover ${rankNumber(measured)} / ${rankNumber(total)} GPU-hours; effective GPU-hours are weighted by compute`) : null });
   // 没有任务历史时顺序没有意义，名次显示为 “—”。
@@ -1079,8 +1086,8 @@ window.PaiUI = (() => {
     const flags = [];
     if (quota && !r.is_root && r.occupancy_pct != null && r.occupancy_pct >= RANK_FULL) flags.push(el("span", { class: "pai-rank-flag full",
       title: t(`窗口配额占用率 ≥ ${RANK_FULL}%：配额基本用满，排队或闲时任务可能增多`, `Quota occupancy ≥ ${RANK_FULL}%: the quota is nearly saturated`) }, [t("接近满额", "Near full")]));
-    if (r.gpu_hours > 0 && r.measured_gpu_hours > 0 && r.compute_mean != null && r.compute_mean < RANK_IDLE) flags.push(el("span", { class: "pai-rank-flag low",
-      title: t(`计算均值 < ${RANK_IDLE}%：占着 GPU 但计算很少`, `Compute mean < ${RANK_IDLE}%: GPUs held with little compute`) }, [t("计算偏低", "Low compute")]));
+    if (r.gpu_hours > 0 && r.measured_gpu_hours > 0 && r.hardware_efficiency_pct != null && r.hardware_efficiency_pct < RANK_IDLE) flags.push(el("span", { class: "pai-rank-flag low",
+      title: t(`占用期间计算效率 < ${RANK_IDLE}%：占着 GPU 但计算很少`, `Compute while occupied < ${RANK_IDLE}%: GPUs held with little compute`) }, [t("计算偏低", "Low compute")]));
     return flags;
   }
 
@@ -1090,9 +1097,9 @@ window.PaiUI = (() => {
     const max = Math.max(0, ...rows.map((r) => r.gpu_hours || 0)) || 1;
     const root = rows.find((r) => r.is_root);
     const cols = [["#", "c-rank"], ["Feature", "c-name"],
-      [t("GPU·小时", "GPU-hours"), "c-usage", t("调度卡数 × 运行时长。实色为配额内，斜纹为闲时资源（配额外）；百分比为占本窗口合计", "Scheduled GPUs × running time. Solid is in-quota, hatched is idle-time capacity; % is the share of the window total")],
-      [t("配额占用率", "Quota occupancy"), "c-metric", t("窗口内已观测配额用量 ÷ 同期配额容量（GPU·小时），不含闲时资源", "Observed quota usage ÷ capacity over the window (GPU-hours), excluding idle-time")],
-      [t("计算均值", "Compute"), "c-metric", t("任务 GPU 计算利用率均值，缺测不计零", "Mean GPU compute utilization of workloads; missing metrics are not zero")],
+      [t("占用 GPU·小时", "Occupied GPU-hours"), "c-usage", t("调度卡数 × 运行时长。实色为常规占用，斜纹为池内借用；百分比为占本窗口合计", "Scheduled GPUs × running time. Solid is regular usage, hatched is borrowing within the pool; % is the share of the window total")],
+      [t("配额记账占用率", "Quota counter usage"), "c-metric", t("窗口内已观测配额用量 ÷ 同期配额容量（GPU·小时），API 记账可能不含池内借用", "Observed quota usage ÷ capacity over the window (GPU-hours), API counters may exclude pool borrowing")],
+      [t("占用期间计算效率", "Compute while occupied"), "c-metric c-compute", t("按已观测 GPU 时间加权的计算利用率，缺测不计零", "Compute utilization weighted by measured GPU time; missing metrics are not zero")],
       [t("当前用量 / 配额", "Now used / quota"), "c-metric", t("最新配额快照（卡），与所选时间窗无关", "Latest quota snapshot (GPUs), independent of the window")],
       [t("任务", "Jobs"), "c-jobs num"]];
     const td = rankTd(cols);
@@ -1111,8 +1118,8 @@ window.PaiUI = (() => {
         : meterCell(r.current_occupancy_pct, { text: `${gpus(r.current_used_gpu)} / ${gpus(cap)}`, always: true, cls: data.quota_fresh ? null : "stale",
           sub: data.quota_fresh ? (r.current_occupancy_pct == null ? null : t(`占用 ${pct1(r.current_occupancy_pct)}`, `${pct1(r.current_occupancy_pct)} used`)) : t("快照陈旧", "Stale snapshot"),
           subTone: data.quota_fresh ? null : "warn",
-          title: t(`最新快照；资源上已分配 ${rankNumber(r.current_allocated_gpu)} 卡，其中祖先配额借用 ${rankNumber(r.current_borrowed_gpu)} 卡。资源被借用不等于本 feature 的任务用量。`,
-            `Latest snapshot; ${rankNumber(r.current_allocated_gpu)} GPUs allocated, including ${rankNumber(r.current_borrowed_gpu)} used by ancestors. Borrowed capacity is not feature task usage.`) });
+          title: t(`最新快照；资源上已分配 ${rankNumber(r.current_allocated_gpu)} 卡，其中祖先配额任务占用 ${rankNumber(r.current_ancestor_allocated_gpu)} 卡。这不是闲时借用来源信息，也不是本 feature 的任务用量。`,
+            `Latest snapshot; ${rankNumber(r.current_allocated_gpu)} GPUs allocated, including ${rankNumber(r.current_ancestor_allocated_gpu)} used by ancestors. This is neither idle-time donor information nor feature task usage.`) });
       return el("tr", { class: [r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim() || null }, [
         td(0, rankBadge(i, r.gpu_hours > 0, r.gpu_hours == null)),
         td(1, el("div", { class: "pai-rank-name" }, [el("div", {}, [
@@ -1122,7 +1129,7 @@ window.PaiUI = (() => {
         td(2, usageCell(r.gpu_hours, idle, [{ v: (r.gpu_hours || 0) - idle, title: t(`配额内 ${hrs((r.gpu_hours || 0) - idle)} GPU·h`, `In quota ${hrs((r.gpu_hours || 0) - idle)} GPU-h`) },
           { v: idle, idle: true, title: t(`闲时资源 ${hrs(idle)} GPU·h`, `Idle-time ${hrs(idle)} GPU-h`) }], max, sum)),
         td(3, meterCell(r.occupancy_pct, { title: occTitle, sub: occSub, subTone: ownCoverage && r.quota_coverage_pct < 50 ? "warn" : null })),
-        td(4, computeCell(r.compute_mean, r.measured_gpu_hours, r.effective_gpu_hours, r.gpu_hours)),
+        td(4, computeCell(r.hardware_efficiency_pct, r.measured_gpu_hours, r.effective_gpu_hours, r.gpu_hours)),
         td(5, now),
         td(6, r.workloads == null ? "—" : String(r.workloads)),
       ]);
@@ -1134,8 +1141,8 @@ window.PaiUI = (() => {
     const sum = all.reduce((a, u) => a + (u.gpu_hours || 0), 0);
     const max = Math.max(0, ...all.map((u) => u.gpu_hours || 0)) || 1;
     const cols = [["#", "c-rank"], [t("用户", "User"), "c-name"],
-      [t("GPU·小时", "GPU-hours"), "c-usage", t("调度卡数 × 运行时长。彩色分段按 feature，斜纹为闲时资源（配额外）；百分比为占本窗口合计", "Scheduled GPUs × running time, split by feature; hatched is idle-time capacity; % is the share of the window total")],
-      [t("计算均值", "Compute"), "c-metric", t("任务 GPU 计算利用率均值，缺测不计零", "Mean GPU compute utilization; missing metrics are not zero")],
+      [t("占用 GPU·小时", "Occupied GPU-hours"), "c-usage", t("调度卡数 × 运行时长。彩色分段按 feature，斜纹为池内借用；百分比为占本窗口合计", "Scheduled GPUs × running time, split by feature; hatched is borrowing within the owned pool; % is the share of the window total")],
+      [t("占用期间计算效率", "Compute while occupied"), "c-metric c-compute", t("按已观测 GPU 时间加权的计算利用率，缺测不计零", "Compute utilization weighted by measured GPU time; missing metrics are not zero")],
       [t("显存", "GPU memory"), "c-metric"],
       ["CPU", "c-metric", t("CPU 利用率（占 Pod limit）；下方为申请核数 × 时长", "CPU utilization of the Pod limit; below: requested cores × time")],
       [t("内存", "RAM"), "c-metric", t("内存利用率（占 Pod limit）；下方为申请量 × 时长", "RAM utilization of the Pod limit; below: requested GiB × time")],
@@ -1153,7 +1160,7 @@ window.PaiUI = (() => {
           tags.length ? el("span", { class: "pai-rank-tags" }, [...tags.slice(0, 3).map((q) => el("span", { title: q.quota_name }, [
             el("i", { style: `--c:${colorOf(q.quota_id)}` }), q.quota_name])), tags.length > 3 ? el("span", {}, ["+" + (tags.length - 3)]) : null]) : null]), ...rankFlags(u, false)])),
         td(2, usageCell(u.gpu_hours, u.oversold_gpu_hours || 0, parts, max, sum)),
-        td(3, computeCell(u.compute_mean, u.measured_gpu_hours, u.effective_gpu_hours, u.gpu_hours)),
+        td(3, computeCell(u.hardware_efficiency_pct, u.measured_gpu_hours, u.effective_gpu_hours, u.gpu_hours)),
         td(4, meterCell(u.gpu_memory_mean, { text: pct(u.gpu_memory_mean) })),
         td(5, meterCell(u.cpu_util_mean, { text: pct(u.cpu_util_mean), sub: t(`${hrs(u.cpu_core_hours)} 核·h`, `${hrs(u.cpu_core_hours)} core-h`) })),
         td(6, meterCell(u.ram_util_mean, { text: pct(u.ram_util_mean), sub: `${hrs(u.mem_gib_hours)} GiB·h` })),
@@ -1166,6 +1173,8 @@ window.PaiUI = (() => {
   function rankSummary(data) {
     const fs = data.features || [];
     const root = fs.find((f) => f.is_root);
+    const cluster = data.cluster || {};
+    const current = data.current_pool || {};
     const known = fs.some((f) => f.gpu_hours != null);
     const add = (k) => fs.reduce((a, f) => a + (f[k] || 0), 0);
     const total = known ? add("gpu_hours") : null, idle = add("oversold_gpu_hours");
@@ -1177,18 +1186,20 @@ window.PaiUI = (() => {
     const meter = (v) => v == null ? null : el("span", { class: "meter" }, [el("i", { style: `width:${Math.max(0, Math.min(100, v))}%` })]);
     const cover = root ? root.quota_coverage_pct : null;
     return el("div", { class: "pai-rank-stats" }, [
-      stat(t("GPU·小时合计", "Total GPU-hours"), hrs(total), [total == null ? small(t("该窗口无任务历史", "No task history in this window"))
-        : small(t(`配额内 ${hrs(total - idle)} · 闲时 ${hrs(idle)}`, `${hrs(total - idle)} in quota · ${hrs(idle)} idle-time`))],
+      stat(t("占用 GPU·小时合计", "Total occupied GPU-hours"), hrs(total), [total == null ? small(t("该窗口无任务历史", "No task history in this window"))
+        : small(t(`常规 ${hrs(total - idle)} · 其中借用 ${hrs(idle)}`, `${hrs(total - idle)} regular · ${hrs(idle)} borrowed`))],
         total ? usageBar([{ v: total - idle, color: "var(--accent)" }, { v: idle, idle: true }], total) : null, "total"),
-      stat(t("资源池配额占用率", "Pool quota occupancy"), root ? pct1(root.occupancy_pct) : "—", [
-        root && root.capacity_gpu_hours != null ? small(`${hrs(root.used_gpu_hours)} / ${hrs(root.capacity_gpu_hours)} GPU·h`) : null,
-        cover != null ? small(t(`配额历史覆盖 ${share(cover)}`, `${share(cover)} of window observed`), cover < 95 ? "warn" : null) : null], meter(root?.occupancy_pct)),
-      stat(t("有效 GPU·小时", "Effective GPU-hours"), measured ? hrs(effective) : "—", [measured
-        ? small(t(`按 GPU·小时加权的计算均值 ${pct(effective / measured * 100)}`, `GPU-hour weighted compute ${pct(effective / measured * 100)}`))
-        : small(t("暂无计算指标", "No compute metrics yet"))]),
-      stat(t("当前资源池", "Pool now"), root && root.current_capacity_gpu != null ? `${gpus(root.current_used_gpu)} / ${gpus(root.current_capacity_gpu)}` : "—", [
-        data.quota_fresh ? small(t(`占用 ${pct1(root?.current_occupancy_pct)} · 最新快照`, `${pct1(root?.current_occupancy_pct)} used · latest snapshot`))
-          : small(t("快照陈旧或采集失败", "Snapshot stale or failed"), "warn")], meter(root?.current_occupancy_pct), data.quota_fresh ? null : "stale"),
+      stat(t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)"), pct1(cluster.task_utilization_estimate_pct), [
+        small(t(`时间覆盖 ${share(cluster.task_estimate_coverage_pct)} · ${hrs(cluster.task_estimate_hours)} 小时`,
+          `${share(cluster.task_estimate_coverage_pct)} coverage · ${hrs(cluster.task_estimate_hours)} h`)),
+        small(t("监控工作空间任务折算，含借用", "Workspace estimate, includes borrowing")),
+        cover != null ? small(t(`配额历史覆盖 ${share(cover)}`, `${share(cover)} quota history coverage`), cover < 95 ? "warn" : null) : null], meter(cluster.task_utilization_estimate_pct)),
+      stat(t("占用期间计算效率", "Compute while occupied"), measured ? pct1(effective / measured * 100) : "—", [
+        small(t(`指标覆盖 ${total ? share(measured / total * 100) : "—"} 的占用 GPU 时间`, `${total ? share(measured / total * 100) : "—"} of occupied GPU time measured`)),
+        small(t(`有效计算 ${measured ? hrs(effective) : "—"} GPU·小时`, `${measured ? hrs(effective) : "—"} effective GPU-hours`))]),
+      stat(t("当前池占用（任务）", "Occupied pool GPUs"), current.capacity_gpu != null ? `${gpus(current.occupied_gpu)} / ${gpus(current.capacity_gpu)}` : "—", [
+        current.fresh ? small(t(`其中借用 ${gpus(current.borrowed_gpu)} · 不增加容量`, `${gpus(current.borrowed_gpu)} borrowed · no added capacity`))
+          : small(t("快照陈旧或采集失败", "Snapshot stale or failed"), "warn")], meter(current.occupancy_pct), current.fresh ? null : "stale"),
       stat(t("活跃 feature", "Active features"), known ? String(fs.filter((f) => !f.is_root && f.gpu_hours > 0).length) : "—", [
         known ? small(`${plural(users, "位用户", "user")} · ${plural(add("workloads"), "个任务", "job")}`) : null]),
     ]);
@@ -1207,15 +1218,17 @@ window.PaiUI = (() => {
   function rankMethod(dimension, data) {
     const items = dimension === "feature" ? [
       t("按任务提交时的 Quota 归属 feature；根配额直接提交的任务单列，不推断算法组。父子配额容量不可相加。", "Workloads follow their submission Quota. Direct root submissions stay separate; parent and child capacities must not be added."),
-      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长（每轮约 2 分钟，长间隔最多计两倍降级周期，失败快照不累加）。闲时资源单列，不计入配额。", "GPU-hours = scheduled GPUs × observed running time (≈2-min rounds, long gaps capped, failed snapshots add nothing). Idle-time capacity is separate from the quota."),
-      t("配额占用率 = 已观测配额用量 GPU·小时 ÷ 同期配额容量 GPU·小时，不含闲时资源；配额变更按观测时长加权。根配额的用量含全部子配额，而它的任务小时只含直接提交。", "Quota occupancy = observed used GPU-hours ÷ capacity GPU-hours over the same intervals, excluding idle-time; changes are time-weighted. Root usage includes children, root task hours only direct submissions."),
+      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长（每轮约 2 分钟，长间隔最多计两倍降级周期，失败快照不累加）。借用作为总占用的子集，计入团队和个人 GPU 时间；提交 Quota 的原有计数可能不包含它。", "Occupied GPU-hours = scheduled GPUs × observed running time (≈2-min rounds, long gaps capped, failed snapshots add nothing). Borrowing is part of occupied GPU time, not extra pool capacity; submission-quota counters may exclude it."),
+      t("配额占用率 = 已观测配额用量 GPU·小时 ÷ 同期配额容量 GPU·小时，API 记账可能不含池内借用；配额变更按观测时长加权。根配额的用量含全部子配额，而它的任务小时只含直接提交。", "Quota occupancy = observed used GPU-hours ÷ capacity GPU-hours over the same intervals, API counters may exclude pool borrowing; changes are time-weighted. Root usage includes children, root task hours only direct submissions."),
       t("配额历史从启用该统计起积累，任务 GPU·小时沿用已有历史，两者覆盖区间可能不同。", "Quota history starts when this report was enabled; task-hour history can be longer."),
-      t("计算均值为任务计算利用率均值，缺测不计零；有效 GPU·小时按单卡计算利用率加权。“当前用量 / 配额”是最新快照。", "Compute is the mean workload utilization, missing metrics are unknown; effective GPU-hours are compute-weighted. “Now” is the latest snapshot."),
+      t("计算效率 = 有效计算 GPU 时间 ÷ 有指标的占用 GPU 时间；每卡分钟样本最多代表 60 秒，缺测不外推为整小时。“当前用量 / 配额”是最新快照。", "Compute efficiency = effective GPU time / measured occupied GPU time; each per-card minute sample represents at most 60 seconds, never a whole missing hour. “Now” is the latest snapshot."),
     ] : [
       t("归属为任务提交者（RAM Owner），不代表共享容器内的逐进程使用人。", "Attribution is the submitter (RAM owner), not processes inside shared containers."),
-      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长；彩色分段按任务所属 feature，斜纹为闲时资源（配额外）。", "GPU-hours = scheduled GPUs × observed running time; colored segments follow the workload's feature, hatched is idle-time capacity."),
+      t("GPU·小时 = 调度卡数 × 采集器观测到的运行时长；彩色分段按任务所属 feature，斜纹为闲时借用（自有资源）。", "Occupied GPU-hours = scheduled GPUs × observed running time; colored segments follow the workload's feature, hatched is borrowing within the owned pool."),
       t("有效 GPU·小时按单卡计算利用率加权；CPU、内存为申请量 × 时长，利用率为占 Pod limit 的百分比。缺测不计零。", "Effective GPU-hours are compute-weighted; CPU and RAM are requested amounts × time, utilization is relative to the Pod limit. Missing metrics are unknown."),
     ];
+    items.push(t("集群估算 = 监控工作空间任务的计算 GPU 时间 ÷ 同期物理池容量 GPU 时间。包含自有池借用，只使用任务和单卡指标完整、数量不超过物理容量的观测段；与总窗口的时间覆盖分别展示。出借方未公开，无法定位的物理卡不能判为空闲。计算利用率不是 FLOPS 或训练吞吐效率。",
+      "Pool estimate = monitored workspace effective GPU time / physical pool capacity GPU time over the same valid intervals. Borrowing is included once. Only complete, capacity-consistent observations contribute; time coverage is separate. Hidden donors prevent declaring unmapped cards idle. GPU utilization is not FLOPS or training throughput efficiency."));
     items.push(t(`每周起点：${weekRule(data)}。历史按 UTC 小时汇总，保留 32 天；周界未对齐 UTC 整点时，边界小时按重叠时长估算。CSV 包含时区、周界、分母和覆盖率。`,
       `Weeks start ${weekRule(data)}. History uses UTC-hour buckets, kept for 32 days; partial boundary hours are estimated by overlap. CSV includes timezone, week rule, denominators and coverage.`));
     return el("details", { class: "pai-rank-method", open: rankState.methodOpen ? "" : null,
@@ -1232,8 +1245,8 @@ window.PaiUI = (() => {
       const seen = new Map();
       (data.users || []).forEach((u) => (u.quotas || []).forEach((q) => { if (q.gpu_hours > 0 && !seen.has(q.quota_id)) seen.set(q.quota_id, q.quota_name); }));
       [...seen].sort((a, b) => String(a[1]).localeCompare(String(b[1]))).forEach(([id, name]) => items.push(el("span", { class: "feature" }, [el("i", { style: `--c:${colorOf(id)}` }), name])));
-    } else items.push(el("span", {}, [el("i", {}), t("配额内", "In quota")]));
-    items.push(el("span", { title: OVERSOLD_TIP() }, [el("i", { class: "idle" }), t("闲时资源（配额外）", "Idle-time (outside quota)")]));
+    } else items.push(el("span", {}, [el("i", {}), t("常规占用", "Regular usage")]));
+    items.push(el("span", { title: OVERSOLD_TIP() }, [el("i", { class: "idle" }), t("闲时借用（自有资源）", "Borrowed (owned pool)")]));
     items.push(el("span", { class: "sort" }, [t("按 GPU·小时降序", "Sorted by GPU-hours")]));
     return el("div", { class: "pai-rank-legend" }, items);
   }
@@ -1354,13 +1367,13 @@ Views.home = { async render(root) {
       pai.body.replaceChildren(
         el("div", { class: "home-stats" }, [
           stat(t("已分配 / 物理卡", "Allocated / physical"), `${m.summary.mapped_gpus ?? "—"} / ${s.physical}`),
-          stat(t("集群占用", "Cluster utilization"), pct(m.summary.cluster_compute_mean), PaiUI.clusterMeanHint(m.summary)),
+          stat(t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)"), pct(m.summary.pool_compute_estimate), PaiUI.clusterMeanHint(m.summary)),
           stat(t("计算均值（任务）", "Compute mean (tasks)"), pct(m.summary.task_compute_mean), PaiUI.taskMeanHint(m.summary)),
           stat(t("运行任务", "Running"), String(s.running)),
         ]),
         stripOf(m.cardsFlat.map((c) => c.state === "free" ? "free" : c.compute ? c.compute.value : null)),
         note([t(`每格一张物理卡（${s.physical}）。`, `One square per physical GPU (${s.physical}). `),
-          s.oversoldGpu ? t(`闲时任务申请 ${s.oversoldGpu} 卡，物理位置未确认，不计入图中卡数。`, `Idle-time tasks request ${s.oversoldGpu} GPUs. Their physical location is unconfirmed; this count is not added to the grid. `) : "",
+          s.oversoldGpu ? t(`闲时任务占用 ${s.oversoldGpu} 卡，物理位置未公开；属于图中自有池容量，不额外增加卡数。`, `Idle-time tasks occupy ${s.oversoldGpu} GPUs. Their donor is undisclosed; these GPUs belong to the owned pool and add no capacity. `) : "",
           s.unmapped.length ? t(`${s.unmapped.length} 个配额内任务未关联到节点。`, `${s.unmapped.length} in-quota workloads lack node mapping.`) : ""].join("")),
       );
     }).catch(() => { if (root.isConnected) { PageRecovery.show(); pai.status.replaceChildren(chip("error")); pai.body.replaceChildren(note(t("PAI 快照读取失败", "Failed to read PAI snapshot"))); } }),
@@ -1484,11 +1497,12 @@ Views.pai = { async render(root, params) {
         el("div", { class: "pai-detail-title" }, [el("h2", {}, [u.Username]), P.conflictFlag(u)]),
         P.miniMetrics([[t("运行任务", "Running"), P.gpus(u.running_workloads)], [t("申请 GPU", "Requested GPU"), P.gpus(u.submitted_gpu)],
           [t("配额统计用量", "Quota-counted usage"), P.gpus(u.used_gpu)], [t("已映射物理卡", "Mapped GPUs"), String(u.mapped)],
-          [t("闲时资源 GPU", "Idle-time GPUs"), P.gpus(u.oversoldGpu)],
+          [t("当前占用 GPU", "Occupied GPUs"), P.gpus(u.quotaUse.reduce((sum, q) => sum + q.gpus, 0))],
+          [t("其中：池内借用 GPU", "Of which: borrowed GPUs"), P.gpus(u.oversoldGpu)],
           [t("计算均值", "Compute"), P.pct(u.compute)], [t("显存均值", "Memory"), P.pct(u.memory)], [t(`计算<${P.LOW}% 卡`, `GPUs <${P.LOW}%`), String(u.low)]]),
         u.oversoldGpu ? el("div", { class: "pai-note oversold" }, [t(
-          `其中 ${P.gpus(u.oversoldGpu)} 卡跑在闲时资源上，不计入配额统计用量，所以配额统计用量可能小于申请量；这不代表实际只用了这么多卡。`,
-          `${P.gpus(u.oversoldGpu)} GPUs run on idle-time resources and are not counted in quota usage. `), P.doc("idle")]) : null,
+          `其中 ${P.gpus(u.oversoldGpu)} 卡为自有池内借用，已计入当前占用，不增加池容量或资源费用。配额记账可能不含借用；出借方不可见，原 Quota 需要时任务暂停、释放资源并重新等待。`,
+          `${P.gpus(u.oversoldGpu)} borrowed GPUs are included in occupied GPUs, with no added pool capacity or resource charge. Quota counters may exclude them. The donor is undisclosed; workloads pause, release GPUs and requeue when reclaimed. `), P.doc("idle")]) : null,
         u.conflict ? el("div", { class: "pai-note warn" }, [t("Quota 用量为 0，但该用户仍有申请 GPU 的运行任务。来源口径不一致，页面不把该用户视为未使用。",
           "Quota usage is 0 while this user has running GPU workloads. The sources disagree; the user is not treated as idle.")]) : null,
       ]));
@@ -1512,8 +1526,8 @@ Views.pai = { async render(root, params) {
           ["Owner", P.link(w.UserName, href("user", w.UserId))], [t("配额", "Quota"), w.quota],
           [t("申请 / 调度 GPU", "Requested / scheduled"), `${P.gpus(requested)} / ${P.gpus(scheduled)}`],
           [t("资源来源", "Capacity"), w.oversold
-            ? el("span", { class: "pai-inline" }, [P.oversoldChip(t("闲时资源（配额外）", "Idle-time (outside quota)")),
-              el("span", { class: "pai-muted" }, [t("不计入配额用量；原资源方需要时会被终止", "Not counted in quota usage; terminated when reclaimed")]), P.doc("idle")])
+            ? el("span", { class: "pai-inline" }, [P.oversoldChip(t("闲时借用（自有资源）", "Borrowed (owned pool)")),
+              el("span", { class: "pai-muted" }, [t("不新增容量/费用；原 Quota 需要时暂停、释放资源并重新等待", "No additional capacity/charges; paused and requeued when reclaimed")]), P.doc("idle")])
             : el("span", {}, [w.queued ? t("排队中，尚未分配", "Queued, not yet allocated") : t("配额内", "Inside the quota")])],
           [t("优先级", "Priority"), w.priority != null ? el("span", { class: "pai-inline" }, [String(w.priority), P.doc("preempt", t("抢占规则", "Preemption"))]) : "—"],
           w.WorkloadType === "dlc" ? [t("提交策略", "Idle-resource policy"), w.job
@@ -1521,7 +1535,7 @@ Views.pai = { async render(root, params) {
             : el("span", { class: "pai-muted" }, [t("任务详情尚未取得", "Job detail not fetched yet")])] : null,
           w.WorkloadType === "dlc" && w.job ? [t("自动容错", "Fault tolerance"), el("span", { class: "pai-inline" }, [
             w.job.aimaster == null ? t("AIMaster 状态未知", "AIMaster unknown") : w.job.aimaster ? t("已开启 AIMaster", "AIMaster on") : t("未开启 AIMaster", "AIMaster off"),
-            w.oversold && w.job.aimaster === false ? el("small", { class: "pai-low" }, [t("闲时资源被回收后平台不会自动重跑（业务脚本可能自带恢复）", "No platform auto-rerun after reclaim (scripts may recover)")]) : null])] : null,
+            w.oversold && w.job.aimaster === false ? el("small", { class: "pai-low" }, [t("借用资源被收回时暂停并重新等待；业务恢复进度取决于作业配置", "Borrowing pauses and requeues after reclaim; workload recovery depends on its configuration")]) : null])] : null,
           w.specs.length ? [t("Pod 规格", "Pod spec"), w.specs.map(P.specText).join("；")] : null,
           [t("CPU / 内存申请", "Requested CPU / RAM"), [w.requested_cpu != null ? t(`${P.gpus(w.requested_cpu)} 核`, `${P.gpus(w.requested_cpu)} cores`) : "—",
             w.requested_mem_gib != null ? `${P.gpus(Math.round(w.requested_mem_gib))} GiB` : "—"].join(" / ")],

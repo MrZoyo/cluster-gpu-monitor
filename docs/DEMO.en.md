@@ -119,3 +119,7 @@ The synthetic PAI demo also defaults to Monday 00:00 Asia/Shanghai. Export flags
   --pai-ranking-week-start sunday --pai-ranking-reset-time 06:30
 ```
 The static demo clock remains frozen at build time; boundaries and displayed dates share these settings.
+
+The PAI ranking demo includes borrowing within the owned pool, estimated pool utilization,
+team/user occupied GPU time and compute efficiency during occupied time. All values are synthetic;
+borrowing is a subset of occupation and does not increase physical capacity. Metric and time coverage accompany the results.
