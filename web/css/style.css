@@ -1375,7 +1375,7 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-user-chip.child b { color: var(--muted); }
 .pai-user-cell { display: flex; flex-direction: column; gap: 2px; }
 .pai-user-cell small { color: var(--faint); font-size: 11px; }
-/* 闲时资源（接口字段 OverSold）：配额外容量，统一用虚线紫色标记，与配额内的实线区分 */
+/* 闲时借用（接口字段 OverSold）：自有池内借用，虚线紫色标记总占用中的借用子集 */
 .pai-chip.oversold { color: var(--mem); border: 1px dashed color-mix(in srgb, var(--mem) 60%, transparent); background: color-mix(in srgb, var(--mem) 10%, transparent); cursor: help; }
 .pai-user-chip.oversold { border-style: dashed; border-color: color-mix(in srgb, var(--mem) 60%, transparent); color: var(--mem); }
 .pai-user-chip.oversold b { color: var(--mem); }
