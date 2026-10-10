@@ -184,6 +184,11 @@ const server = http.createServer((req, res) => {
       await normal.evaluate(async locale => { I18n.locale = locale; await GM.render(); }, locale);
       check(`ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       check(`feature rows render ${width} ${locale}`, (await normal.locator('.pai-rank-table').innerText()).includes('Example feature'));
+      check(`brand visible and unobscured ${width} ${locale}`, await normal.locator('#title').evaluate(n => {
+        const range = document.createRange(); range.selectNodeContents(n); const r = range.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return n.textContent === 'GPU Monitor' && r.width > 90 && r.x >= 0 && r.right <= innerWidth && (hit === n || n.contains(hit));
+      }));
       await shot(normal, `ranking-feature-${locale}-${width}`);
     }
     await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
@@ -241,6 +246,11 @@ const server = http.createServer((req, res) => {
     check('show all reveals remaining users', await normal.locator('.pai-rank-table tbody tr').count() === 35);
     await normal.evaluate(() => GM.render());
     check('expanded user list survives refresh', await normal.locator('.pai-rank-table tbody tr').count() === 35);
+    fixtures['/api/pai/ranking'] = { ...savedRanking, features: savedRanking.features.map(f => ({ ...f, quota_name: 'Long-feature-name-for-robotics-training-and-evaluation-123456789' })) };
+    await normal.getByRole('button', { name: 'Feature', exact: true }).click();
+    await normal.evaluate(async () => { I18n.locale = 'en'; await GM.render(); });
+    check('long feature names fit mobile viewport', await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await shot(normal, 'ranking-long-feature-en-390');
     fixtures['/api/pai/ranking'] = savedRanking;
     await normal.close(); enabled = false;
 

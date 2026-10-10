@@ -1655,7 +1655,7 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   .pai-rank-table td.c-usage { grid-column: 1 / -1; padding: 0; }
   .pai-rank-table td.c-jobs { position: absolute; top: 16px; right: 12px; font-size: 12px; }
   .pai-rank-table td.c-jobs::before { content: attr(data-label) " "; color: var(--muted); font: 500 11px var(--sans); }
-  .pai-rank-table td.c-metric::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pai-rank-table td.c-metric::before { content: attr(data-label); display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
   .pai-rank-meter b { font-size: 14px; }
   /* 窄屏不截断：名称最多两行，feature 标签换行 */
   .pai-rank-name { flex-wrap: wrap; gap: 5px 8px; }
