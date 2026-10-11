@@ -43,6 +43,13 @@ Each round verifies the STS account before other reads. An account mismatch stop
 Required reads cover quotas, nodes, pods, workloads, user usage, DLC job details and CloudMonitor
 metrics. Verify them under the dedicated identity before deployment. Successful read checks do
 not prove that the identity lacks other permissions; this module does not probe write operations.
+Feature attribution also requires `paiworkspace:ListMembers` and `paiworkspace:ListConfigs` on the
+`aiworkspace` 2021-02-04 API (`CommonQuotaConfig` category only). Both reads share the round's call,
+time and pagination limits, run after task/metric collection and cache at the topology cadence.
+Only user IDs and candidate Quota IDs are retained. Failed reads retain the old snapshot for diagnostics
+but do not use it for attribution; original usage history continues independently.
+See [ListMembers](https://help.aliyun.com/zh/pai/developer-reference/api-aiworkspace-2021-02-04-listmembers)
+and [ListConfigs](https://help.aliyun.com/zh/pai/developer-reference/api-aiworkspace-2021-02-04-listconfigs).
 
 ## Configuration
 
@@ -127,10 +134,19 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 
 The default window runs from Monday 00:00 Beijing time (Asia/Shanghai) to now; last week is the
 previous full configured reporting week. The timezone, weekday and rollover time are configurable. Rolling windows remain available. PAI window and dimension choices are
-independent of bare-metal pages and survive automatic refresh. Features group workloads by the
-`QuotaId` used at submission, so one user can appear under several features. Direct root-quota
-submissions stay in their own row; the page never guesses an algorithm group from usernames. Weekly
-reports per group therefore require submitters to choose the matching quota.
+independent of bare-metal pages and survive automatic refresh. Child submissions belong to their submission Quota. Root submissions additionally belong to the unique
+child Quota matched through workload `UserId`, workspace member `Roles`, and
+`CommonQuotaConfig.allowedRoles`. Usernames, generic `PAI.*` roles, and root-quota roles do not identify
+features. Missing or ambiguous matches, failed/incomplete reads, and stale snapshots stay unattributed.
+
+The root has a separate, unranked row. Its task hours remain **direct submissions**, with attributed and
+unattributed GPU-hours exposed separately; platform quota counters may include children. Feature hours
+include direct submissions plus attributed root usage. These views overlap: global `totals` count usage
+once. Borrowed hours, compute metrics, CPU/RAM time and job counts follow the same attribution.
+
+**Historical windows use current roles**, since historical memberships were not recorded. A role change
+can change past feature distributions without rewriting task history, submission Quotas or user totals.
+`feature_attribution` exposes the basis, timestamp and freshness; `users[].quotas` retains submission Quotas.
 
 Configure the installed version in private `config/pai.toml`:
 
@@ -160,8 +176,8 @@ missing observations; job counts include jobs present in the overlapping bucket.
 flags this in the API and CSV. An ongoing hour is not discounted a second time. Exact hourly-aligned
 boundaries, including the default, retain the existing accounting.
 
-- **Task GPU hours** include regular and borrowed workloads; borrowing is a subset of the occupied total. A workload
-  counts only toward its submission quota and is never added again to a parent quota.
+- **Task GPU hours** include regular and borrowed workloads; borrowing is a subset of the occupied total. Root workloads
+  may also count toward their uniquely matched feature; global totals count each workload once.
 - **Current quota / usage / occupancy** come from the latest quota snapshot and always describe now, even
   when last week is selected. A stale snapshot is flagged. Allocated GPUs and ancestor-quota allocations appear in the
   usage tooltip; they are not the feature's task usage.
@@ -177,9 +193,15 @@ boundaries, including the default, retain the existing accounting.
   coverage appears in the summary; a quota whose coverage differs clearly from the pool is marked in its row.
   With partial coverage, occupancy describes only observed intervals, and task history may be longer.
   Quota history is kept for 32 days with the same hourly boundaries as task rankings.
-- The page opens with a window summary: occupied GPU hours, estimated pool GPU utilization, compute efficiency while occupied,
-  current pool task occupancy and active features. “Near full” (window occupancy ≥ 90%) and “Low compute” (occupied-time compute efficiency
-  < 10%) are cues only and do not change the order. Calculation notes are collapsed below the table.
+- The page opens with a window summary: occupied GPU hours (deduplicated across all tasks), estimated pool GPU utilization, compute efficiency while occupied,
+  current pool task occupancy and active features (active users in the user view). “Near full” (window occupancy ≥ 90%) and “Low compute” (occupied-time compute efficiency
+  < 10%) are cues only and do not change the order. Calculation notes are collapsed below the table; the attribution basis,
+  the note that history is recalculated with current roles, and the role snapshot time stay visible above the ranking.
+- In feature usage bars, solid is direct submissions and outlined is attribution from the root quota, with both GPU-hour values
+  listed below. The root quota shares the table as a separate unranked group and shows its unattributed part, with reasons, in gray.
+  Borrowing is the purple strip below the bar, on the same scale and a subset of the total. Within a row the displayed split adds up
+  to the total; the CSV keeps exact values. When member roles are stale or unavailable, attribution values show “—”, the heading is
+  marked “Attribution degraded”, and the order is labeled “Provisional order: direct GPU-hours only”.
 - **CSV export** includes the window, generation time, task-history start, truncation flag and every returned
   row. Feature exports add capacity GPU hours, used GPU hours, observed hours, coverage and compute metrics
   for checking weekly reports. Unknown values are empty; exporting never sends reports or messages.
@@ -198,7 +220,7 @@ On 2026-10-10 this project aligned the owned-pool interpretation with provider c
 - The lending quota and node ownership are undisclosed. The owning quota always has priority; when reclaimed,
   the borrowing workload pauses, releases resources and requeues. Do not imply an extra compute pool or guaranteed permanent termination.
 - Borrowed GPU time belongs to the **borrowing workload's submitting feature/user**, not an inferred donor team.
-  Features follow submission Quota, users follow RAM owner/submitter; direct root submissions stay separate.
+  Features follow child submissions or current member-role attribution of root tasks; users follow RAM owner/submitter. The root stays separate and unranked.
 - Existing Quota `gpu_used` / `occupancy_pct` remain **quota accounting counters**, which can exclude borrowing.
   These counters are not physical pool occupancy or GPU compute utilization.
 
@@ -252,7 +274,7 @@ monitoring. Configure a separate PAI collector service and CLI for your deployme
 | `/api/pai/overview` | Complete current snapshot |
 | `/api/pai/nodes` / `/api/pai/workloads` / `/api/pai/users` | Node, workload or user subsets |
 | `/api/pai/metrics/series?workload_id=...` | One hour by default, configurable to 1–6 hours; at most 20,000 source points with `truncated` on overflow |
-| `/api/pai/ranking?window=week` | Current week by default, `last_week` for the previous week; existing rolling windows remain valid. Returns `features` and `users`, at most 200 rows each |
+| `/api/pai/ranking?window=week` | Current week by default, `last_week` for the previous week; existing rolling windows remain valid. Returns `features` and `users` (at most 200 each), separate `root_quota`, deduplicated `totals`, and `feature_attribution` |
 
 Overview `summary` adds `task_compute_mean` / `task_measured_gpus` and `cluster_compute_mean` /
 `cluster_known_gpus` / `cluster_unallocated_gpus`. The legacy `compute_mean` remains the fresh mapped

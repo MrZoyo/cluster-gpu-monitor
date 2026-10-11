@@ -1534,6 +1534,8 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 /* PAI 排行：头部（标题 + 统计区间 + 切换），汇总指标，带内联用量条的排行榜，折叠的统计口径 */
 .pai-rank-head { align-items: flex-start; margin-bottom: 14px; }
 .pai-rank-heading { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.pai-rank-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.pai-rank-degraded { padding: 2px 9px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--held) 50%, transparent); background: var(--held-soft); color: var(--held); font-size: 11px; font-weight: 650; white-space: nowrap; cursor: help; }
 .pai-rank-range { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding-left: 13px; color: var(--muted); font-size: 12px; }
 .pai-rank-range .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--table-ink); }
 .pai-rank-controls { gap: 8px; }
@@ -1573,8 +1575,8 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 
 /* 排行榜：首列名次，第三列用量条占最宽；数值等宽右对齐 */
 .pai-rank-scroll { overflow-x: auto; }
-.pai-rank-table { min-width: 860px; }
-.pai-rank-table th { background: transparent; position: static; padding: 9px 10px; border-bottom-color: var(--line-strong); }
+.pai-rank-table { min-width: 780px; }
+.pai-rank-table th { background: transparent; position: static; padding: 9px 10px; border-bottom-color: var(--line-strong); white-space: normal; vertical-align: bottom; line-height: 1.35; }
 .pai-rank-table td { padding: 12px 10px; vertical-align: middle; }
 .pai-rank-table tbody tr:last-child td { border-bottom: 0; }
 .pai-rank-table th[title] { cursor: help; text-decoration: underline dotted color-mix(in srgb, var(--muted) 55%, transparent); text-underline-offset: 3px; }
@@ -1606,6 +1608,17 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-rank-bar i { display: block; flex: none; height: 100%; background: var(--c, var(--accent)); }
 .pai-rank-bar i + i { border-left: 2px solid var(--panel); }
 .pai-rank-bar i.idle, .pai-rank-legend i.idle { background: repeating-linear-gradient(135deg, var(--mem) 0 3px, color-mix(in srgb, var(--mem) 30%, transparent) 3px 6px); }
+/* Feature 来源：直接提交实色；根配额归属描边浅色（与根配额行“已归入 Feature”同样式）；未归属中性灰；借用为条下紫色细条 */
+.pai-rank-bar i.via, .pai-rank-legend i.via, .pai-rank-src .via i { background: color-mix(in srgb, var(--accent) 26%, transparent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.pai-rank-bar i.unattr, .pai-rank-legend i.unattr, .pai-rank-src .unattr i { background: color-mix(in srgb, var(--muted) 48%, transparent); }
+.pai-rank-sub { height: 3px; margin-top: -4px; }
+.pai-rank-sub i, .pai-rank-legend i.strip { display: block; height: 100%; border-radius: 2px; background: repeating-linear-gradient(135deg, var(--mem) 0 3px, color-mix(in srgb, var(--mem) 30%, transparent) 3px 6px); }
+.pai-rank-legend i.strip { height: 4px; }
+.pai-rank-src { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.pai-rank-src span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pai-rank-src i { flex: none; width: 10px; height: 8px; border-radius: 2px; background: var(--accent); }
+.pai-rank-src b { font: 650 12px var(--mono); font-variant-numeric: tabular-nums; color: var(--table-ink); }
+.pai-rank-why { margin-top: -3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .pai-rank-stat .pai-rank-bar { height: 6px; }
 .pai-rank-stat .pai-rank-bar i + i { border-left-color: var(--surface-low); }
 .pai-rank-meter { display: grid; gap: 5px; min-width: 0; max-width: 150px; }
@@ -1616,6 +1629,24 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-rank-meter small.warn { color: var(--held); }
 .pai-rank-meter.none b { color: var(--muted); font-weight: 600; }
 .pai-rank-meter.stale b, .pai-rank-meter.stale .meter { opacity: .55; }
+/* 根配额独立成组：虚线分隔、无名次、底色略深，明确不属于排行 */
+.pai-rank-table tbody.unranked tr.group th { padding: 22px 10px 9px; border-bottom: 1px dashed var(--line-strong); background: transparent; color: var(--muted);
+  font-size: 11.5px; font-weight: 400; line-height: 1.5; letter-spacing: 0; text-transform: none; white-space: normal; cursor: default; }
+.pai-rank-table tbody.unranked tr.group:hover th { background: transparent; }
+.pai-rank-chip { display: inline-flex; align-items: center; margin-right: 10px; padding: 2px 9px; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--table-ink); font-size: 11px; font-weight: 650; white-space: nowrap; }
+.pai-rank-table tr.root td, .pai-rank-table tbody tr.root:hover td { background: color-mix(in srgb, var(--surface-low) 70%, transparent); }
+.pai-rank-legend .sort.warn { color: var(--held); cursor: help; }
+.pai-rank-legend .basis { color: var(--muted); white-space: normal; }
+/* 归属口径常驻说明 */
+.pai-note.info { border-left-color: var(--accent); }
+.pai-rank-attr p { margin: 0; }
+.pai-rank-attr p b { color: var(--ink); font-weight: 650; }
+.pai-rank-attr-meta { display: flex; flex-wrap: wrap; gap: 3px 16px; margin-top: 6px; color: var(--muted); font-size: 11.5px; }
+.pai-rank-attr-meta span::before { content: ""; display: inline-block; width: 4px; height: 4px; margin: 0 7px 0 0; border-radius: 50%; background: var(--faint); vertical-align: middle; }
+.pai-rank-attr-meta .key { color: var(--table-ink); font-weight: 600; }
+.pai-rank-attr-meta .key::before { background: var(--accent); }
+.pai-rank-attr.warn .pai-rank-attr-meta .key::before { background: var(--held); }
+.pai-rank-attr-meta .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .pai-rank-more { display: block; width: 100%; margin-top: 10px; padding: 9px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .pai-rank-more:hover { color: var(--accent); border-color: var(--accent); }
 .pai-rank-empty { padding: 30px 16px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r-md); }
@@ -1640,6 +1671,7 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   .pai-rank-stat.total { grid-column: 1 / -1; }
   .pai-rank-stat > b { font-size: 19px; }
   .pai-rank-legend .sort, .pai-rank-legend .feature { display: none; }
+  .pai-rank-legend .sort.warn { display: inline-flex; margin-left: 0; white-space: normal; }
   /* 窄屏：每行一张卡片。名次与任务数压在标题行，用量条占满，次要指标两到三列 */
   .pai-rank-scroll { overflow: visible; }
   .pai-rank-table { min-width: 0; }
@@ -1666,12 +1698,30 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
   .pai-rank-tags span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .pai-rank-meter { max-width: none; }
   .pai-rank-table .pai-rank-bar i + i { border-left-color: var(--surface-low); }
+  /* 根配额：分组标题在卡片上方，卡片虚线边框、透明底，与排名卡片区分 */
+  .pai-rank-table tbody.unranked { margin-top: 18px; }
+  .pai-rank-table tr.group { display: block; margin: 0 0 8px; padding: 0; background: none; border: 0; }
+  .pai-rank-table tbody.unranked tr.group th { display: block; padding: 0; border: 0; }
+  .pai-rank-chip { display: flex; width: fit-content; margin: 0 0 5px; }
+  .pai-rank-table tr.root { border-style: dashed; background: transparent; }
+  .pai-rank-table tr.root td.c-rank { display: none; }
+  .pai-rank-table tr.root td.c-name { padding-left: 0; }
+  .pai-rank-table tr.root td, .pai-rank-table tbody tr.root:hover td { background: transparent; }
+  .pai-rank-table tr.root .pai-rank-bar i + i { border-left-color: var(--panel); }
+  .pai-rank-sub { height: 4px; }
 }
 @media (max-width: 520px) {
   /* 控件两行：维度 + 导出；周期独占一行 */
   .pai-rank-export { order: 2; }
   .pai-rank-controls .pai-seg.period { order: 3; display: flex; width: 100%; }
   .pai-rank-controls .pai-seg.period > * { flex: 1 1 0; justify-content: center; min-width: 0; }
+  .pai-rank-controls .pai-seg button, .pai-rank-roll { min-height: 36px; }
+  .pai-rank-export { min-height: 40px; }
+  /* Feature 卡片：三项指标 + 任务数排成 2×2，标签单行、说明少折行 */
+  .pai-rank-table.feature tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pai-rank-table.feature td.c-name { padding-right: 0; }
+  .pai-rank-table.feature td.c-jobs { position: static; text-align: left; font-size: 14px; font-weight: 700; }
+  .pai-rank-table.feature td.c-jobs::before { content: attr(data-label); display: block; margin-bottom: 6px; font-size: 11px; }
 }
 
 /* Audit coverage remains visible beside occupied-time efficiency on mobile. */

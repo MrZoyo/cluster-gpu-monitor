@@ -401,6 +401,8 @@ def test_usage_requires_fresh_running_snapshot(store, cfg, monkeypatch, failed, 
         def quota(self, qid): return {"quota_id": qid}
         def nodes(self, qid): return [], 0
         def users(self): return [], 0
+        def members(self): return [], 0
+        def quota_roles(self): return [], 0
         def metrics(self, *args): return []
         def workloads(self):
             if failed: raise CollectionError("timeout")
@@ -473,8 +475,9 @@ def test_feature_ranking_attribution_oversold_zero_quota_and_deleted_quota(store
     assert fs["q"]["quota_gpu_hours"] == fs["q"]["oversold_gpu_hours"] == 240 / 3600
     assert fs["q"]["workloads"] == 2 and fs["q"]["occupancy_pct"] == 50
     assert fs["q"]["compute_mean"] is None and fs["q"]["measured_gpu_hours"] == 0
-    assert fs[cfg.quota_id]["gpu_hours"] == 240 / 3600  # no double-counted child tasks
-    assert fs[cfg.quota_id]["is_root"]
+    assert cfg.quota_id not in fs
+    assert data["root_quota"]["gpu_hours"] == 240 / 3600  # direct submissions only
+    assert data["root_quota"]["is_root"] and data["root_quota"]["rank"] is None
     assert fs["zero"]["gpu_hours"] == 0 and fs["zero"]["occupancy_pct"] is None
     assert fs["deleted"]["current_capacity_gpu"] is None
     assert fs["deleted"]["occupancy_pct"] is None
@@ -718,3 +721,155 @@ def test_current_pool_counts_borrowed_once_and_keeps_quota_counters_separate(sto
     assert d["features"][0]["current_used_gpu"] == 4
     store.failure("workloads", "test", now=3600)
     assert pai.pai_ranking(Response(), "week")["current_pool"]["fresh"] is False
+
+
+def test_feature_memberships_use_ids_and_explicit_custom_roles():
+    from gpumon.pai.attribution import feature_memberships
+    members = [{"UserId": "u", "Roles": ["PAI.WorkspaceAdmin", "role-a", "role-root"]},
+               {"UserId": "v", "Roles": ["role-a", "role-b"]},
+               {"UserId": "w", "Roles": ["PAI.WorkspaceAdmin", "role-root"]}]
+    entries = [{"Type": "Quota", "Key": q, "Value": roles} for q, roles in
+               [("root", "role-root"), ("a", "role-a,PAI.WorkspaceAdmin"), ("b", "role-b"), ("outside", "role-a")]]
+    configs = [{"ConfigKey": "allowedRoles", "ConfigValue": json.dumps(entries)}]
+    quotas = [{"quota_id": q} for q in ("root", "a", "b", "unrestricted")]
+    assert feature_memberships(members, configs, quotas, "root") == [
+        {"user_id": "u", "quota_ids": ["a"]}, {"user_id": "v", "quota_ids": ["a", "b"]},
+        {"user_id": "w", "quota_ids": []}]
+    assert feature_memberships(members, [{**configs[0], "IsDeleted": True}], quotas, "root")[0]["quota_ids"] == []
+    configs.append({"ConfigKey": "allowedRoles", "ConfigValue": json.dumps([{"Type": "Quota", "Key": "a", "Value": "role-other"}])})
+    with pytest.raises(CollectionError, match="conflicting_role_config"):
+        feature_memberships(members, configs, quotas, "root")
+
+
+@pytest.mark.parametrize("value", ['{}', '[{"Type":"Unknown"}]', '[{"Type":"Quota","Key":"a","Value":[]}]'])
+def test_feature_memberships_reject_unsupported_configs(value):
+    from gpumon.pai.attribution import feature_memberships
+    with pytest.raises(CollectionError, match="invalid_response"):
+        feature_memberships([], [{"ConfigKey": "allowedRoles", "ConfigValue": value}], [], "root")
+
+
+def test_workspace_role_transport_is_bounded_readonly(cfg):
+    client = PaiClient(cfg)
+    calls = []
+    def call(args):
+        calls.append(args)
+        return {"Members": [], "Configs": [], "TotalCount": 0}
+    client._call = call
+    assert client.members() == ([], 0)
+    assert client.quota_roles() == ([], 0)
+    for args in calls:
+        assert args[:2] == ["api", "aiworkspace"]
+        assert args[args.index("--endpoint") + 1] == "aiworkspace.cn-hangzhou.aliyuncs.com"
+        assert args[args.index("--method") + 1] == "GET"
+        assert args[args.index("--version") + 1] == "2021-02-04"
+    assert "CategoryName=CommonQuotaConfig" in calls[1]
+    with pytest.raises(ValueError):
+        client._api("CreateMember", "/")
+
+
+@pytest.mark.parametrize("state,age", [("ok", 0), ("error", 0), ("ok", 601), ("missing", 0)])
+def test_root_attribution_conserves_totals_and_metrics(store, cfg, monkeypatch, state, age):
+    from gpumon.api import pai
+    now = 36000
+    cfg.db_path = str(store.path)
+    store.save("quotas", [{"quota_id": cfg.quota_id, "quota_name": "training", "gpu_capacity": 8, "gpu_used": 6},
+                           {"quota_id": "a", "quota_name": "A", "gpu_capacity": 4, "gpu_used": 2},
+                           {"quota_id": "b", "quota_name": "B", "gpu_capacity": 4, "gpu_used": 0}], now=now)
+    if state != "missing":
+        store.save("feature_memberships", [{"user_id": "unique", "quota_ids": ["a"]},
+                    {"user_id": "multi", "quota_ids": ["a", "b"]}, {"user_id": "none", "quota_ids": []}], now=now-age)
+        if state == "error": store.failure("feature_memberships", "permission_denied", now=now)
+    jobs = [{"WorkloadId": wid, "UserId": uid, "QuotaId": q, "gpus": 2, "cpu": 4,
+             "mem_gib": 8, "dequeued_at": now-120, "oversold": borrowed}
+            for wid, uid, q, borrowed in [("direct", "unique", "a", False),
+                ("root", "unique", cfg.quota_id, True), ("multi", "multi", cfg.quota_id, False),
+                ("none", "none", cfg.quota_id, False), ("other", "unique", "b", False)]]
+    store.record_usage(jobs, now, 360)
+    with store.connect() as c:
+        c.execute("UPDATE usage_hour SET compute_sum=20,compute_n=1 WHERE workload_id='direct'")
+        c.execute("UPDATE usage_hour SET compute_sum=160,compute_n=2 WHERE workload_id='root'")
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(pai.time, "time", lambda: now)
+    d = pai.pai_ranking(Response(), "24h")
+    f = {r["quota_id"]: r for r in d["features"]}
+    root, total = d["root_quota"], d["totals"]
+    fresh = state == "ok" and age == 0
+    assert d["feature_attribution"]["fresh"] is fresh
+    assert d["feature_attribution"]["historical_role_membership"] is False
+    assert cfg.quota_id not in f and root["rank"] is None
+    assert [r["rank"] for r in d["features"]] == [1, 2]
+    assert total["gpu_hours"] == pytest.approx(1200/3600)
+    assert root["gpu_hours"] == pytest.approx(720/3600)
+    assert f["a"]["gpu_hours"] == pytest.approx((480 if fresh else 240)/3600)
+    assert f["b"]["gpu_hours"] == pytest.approx(240/3600)  # actual child submission wins
+    assert f["a"]["direct_gpu_hours"] == pytest.approx(240/3600)
+    assert f["a"]["root_attributed_gpu_hours"] == pytest.approx((240 if fresh else 0)/3600)
+    assert root["unattributed_gpu_hours"] == pytest.approx((480 if fresh else 720)/3600)
+    assert sum(r["gpu_hours"] for r in f.values()) + root["unattributed_gpu_hours"] == pytest.approx(total["gpu_hours"])
+    assert sum(u["gpu_hours"] for u in d["users"]) == pytest.approx(total["gpu_hours"])
+    assert f["a"]["compute_mean"] == (60 if fresh else 20)
+    assert f["a"]["hardware_efficiency_pct"] == pytest.approx(60 if fresh else 20)
+    assert f["a"]["borrowed_gpu_hours"] == pytest.approx((240 if fresh else 0)/3600)
+    assert total["borrowed_gpu_hours"] == pytest.approx(240/3600)
+    assert f["a"]["current_used_gpu"] == 2  # attribution never changes platform counters
+    if fresh:
+        assert d["feature_attribution"]["unresolved_root_gpu_hours"] == {"multiple_features": 240/3600, "no_feature_role": 240/3600}
+        # Historical windows intentionally follow the *current* mapping, without rewriting usage.
+        store.save("feature_memberships", [{"user_id": "unique", "quota_ids": ["b"]}], now=now)
+        changed = pai.pai_ranking(Response(), "24h")
+        ff = {r["quota_id"]: r for r in changed["features"]}
+        assert ff["a"]["gpu_hours"] == pytest.approx(240/3600)
+        assert ff["b"]["gpu_hours"] == pytest.approx(480/3600)
+        assert changed["totals"] == total
+
+
+def test_membership_failure_retains_snapshot_but_usage_collection_continues(store, cfg, monkeypatch):
+    import threading
+    from gpumon.pai import collector
+    from gpumon.pai.attribution import membership_status
+    now = 1000
+    old = [{"user_id": "u", "quota_ids": ["child"]}]
+    store.save("feature_memberships", old, now=0)
+    monkeypatch.setattr(collector.time, "time", lambda: now)
+    class Client:
+        calls = 0
+        lock = threading.Lock()
+        def identity(self): return {"AccountId": cfg.account_id}
+        def quota(self, q): return {"quota_id": q}
+        def nodes(self, q): return [], 0
+        def users(self): return [], 0
+        def members(self): return [{"UserId": "u", "Roles": ["role-new"]}], 1
+        def quota_roles(self): raise CollectionError("permission_denied")
+        def metrics(self, *args): return []
+        def workloads(self):
+            return [{"WorkloadId": "job", "WorkloadType": "dsw", "WorkspaceId": cfg.workspace_id,
+                     "UserId": "u", "QuotaId": cfg.quota_id, "WorkloadStatus": "Running", "IsScheduled": True,
+                     "Resource": {"GPU": "2"}, "ScheduledResource": {"GPU": "2"},
+                     "GmtDequeuedTime": "1970-01-01T00:14:40Z"}], 1
+    result = collector.run_once(cfg, store, Client())
+    assert result["errors"]["feature_memberships"] == "permission_denied"
+    source = store.sources()["feature_memberships"]
+    assert source["payload"] == old and source["fetched_at"] == 0
+    mapping, status = membership_status(store.sources(), cfg, now)
+    assert mapping == {} and status["state"] == "error"
+    assert store.ranking(now, 3600)["rows"][0]["gpu_s"] == 240
+
+
+@pytest.mark.parametrize("age,error,expected", [(40, False, "ok"), (601, False, "stale"), (40, True, "error")])
+def test_membership_health_matches_attribution_in_status_api(store, cfg, monkeypatch, age, error, expected):
+    from gpumon.api import pai
+    now = 1000
+    cfg.db_path = str(store.path)
+    seed(store)
+    store.save("feature_memberships", [{"user_id": "person", "quota_ids": ["child"]}], now=now-age)
+    if error:
+        store.failure("feature_memberships", "permission_denied", now=now)
+    store.save("round", {"ok": True, "active_sources": list(store.sources())}, now=now)
+    monkeypatch.setattr(pai, "load_pai_settings", lambda: cfg)
+    monkeypatch.setattr(pai.time, "time", lambda: now)
+    status = pai.pai_status(Response())
+    source = next(s for s in status["sources"] if s["name"] == "feature_memberships")
+    attribution = pai.pai_ranking(Response(), "24h")["feature_attribution"]
+    assert source["state"] == attribution["state"] == expected
+    assert attribution["fresh"] is (expected == "ok")
+    assert status["state"] == ("ok" if expected == "ok" else "partial")

@@ -120,7 +120,6 @@ def pai_ranking(response: Response, window: str = Query("week")):
     try:
         store = PaiStore(cfg.db_path, read_only=True)
         data = store.ranking(until, until - since, since=since, observed_until=now)
-        feature_data = store.ranking(until, until - since, since=since, group_by="feature", observed_until=now)
         cluster_history = store.cluster_ranking(since, until, observed_until=now)
         quota_history = store.quota_ranking(since, until, observed_until=now)
         sources = store.sources()
@@ -169,13 +168,17 @@ def pai_ranking(response: Response, window: str = Query("week")):
                  cpu_util_mean=avg("cpu_util"), ram_util_mean=avg("ram_util"))
         result.append(u)
     result.sort(key=lambda u: (-u["gpu_hours"], -u["cpu_core_hours"], u["username"] or ""))
-    # Workloads are attributed only to their submission quota. Never roll child usage
-    # into a parent again; source quota usage can itself include descendants.
+    # Retain submission quotas in user breakdowns and the separate root row. Feature
+    # attribution is an overlapping reporting view; totals come from raw usage once.
+    from ..pai.attribution import membership_status
+    memberships, attribution = membership_status(sources, cfg, now)
     features = {}
     fresh = quota_source.get("state") == "ok" and now - (quota_source.get("fetched_at") or 0) <= cfg.stale_after_s
     def feature(qid):
         return features.setdefault(qid, {"quota_id": qid, "quota_name": quota_names.get(qid) or qid or "未归属",
-            "is_root": qid == cfg.quota_id, "gpu_hours": 0, "oversold_gpu_hours": 0,
+            "is_root": qid == cfg.quota_id, "rank": None,
+            "direct_gpu_hours": 0, "root_attributed_gpu_hours": 0,
+            "gpu_hours": 0, "oversold_gpu_hours": 0,
             "quota_gpu_hours": 0, "effective_gpu_hours": 0, "measured_gpu_hours": 0,
             "cpu_core_hours": 0, "mem_gib_hours": 0, "workloads": 0,
             "compute_mean": None, "gpu_memory_mean": None, "cpu_util_mean": None, "ram_util_mean": None,
@@ -193,17 +196,47 @@ def pai_ranking(response: Response, window: str = Query("week")):
         f["current_borrowed_gpu"] = f["current_ancestor_allocated_gpu"]  # Legacy alias; not oversold donor data.
         cap, used = q.get("gpu_capacity"), q.get("gpu_used")
         f["current_occupancy_pct"] = used / cap * 100 if cap and used is not None else None
-    for r in feature_data["rows"]:
-        f = feature(r["quota_id"])
+    root = feature(cfg.quota_id)
+    root["unattributed_gpu_hours"] = 0
+    totals = {k: 0 for k in ("gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours",
+                             "cpu_core_hours", "mem_gib_hours", "workloads")}
+    unresolved = {}
+    sums = {}
+    def add_usage(f, r):
         for dest, source in (("gpu_hours", "gpu_s"), ("oversold_gpu_hours", "oversold_gpu_s"),
                              ("effective_gpu_hours", "effective_gpu_s"), ("measured_gpu_hours", "measured_gpu_s"),
                              ("cpu_core_hours", "cpu_s"), ("mem_gib_hours", "mem_gib_s")):
-            f[dest] = hours(r[source])
+            f[dest] += hours(r[source])
+        f["workloads"] += r["workloads"]
+    for r in data["rows"]:
+        add_usage(totals, r)
+        direct = feature(r["quota_id"])
+        direct["direct_gpu_hours"] += hours(r["gpu_s"])
+        targets = [direct]
+        if r["quota_id"] == cfg.quota_id:
+            candidates = memberships.get(r["user_id"], [])
+            if len(candidates) == 1:
+                target = feature(candidates[0])
+                target["root_attributed_gpu_hours"] += hours(r["gpu_s"])
+                root["root_attributed_gpu_hours"] += hours(r["gpu_s"])
+                targets.append(target)
+            else:
+                reason = "membership_unavailable" if not attribution["fresh"] else "multiple_features" if len(candidates) > 1 else "no_feature_role"
+                unresolved[reason] = unresolved.get(reason, 0) + hours(r["gpu_s"])
+                root["unattributed_gpu_hours"] += hours(r["gpu_s"])
+        for f in targets:
+            add_usage(f, r)
+            acc = sums.setdefault(f["quota_id"], {})
+            for col in ("compute", "gmem", "cpu_util", "ram_util"):
+                for suffix in ("_sum", "_n"):
+                    key = col + suffix
+                    acc[key] = acc.get(key, 0) + (r[key] or 0)
+    for f in features.values():
         f["quota_gpu_hours"] = f["gpu_hours"] - f["oversold_gpu_hours"]
-        f["workloads"] = r["workloads"]
+        acc = sums.get(f["quota_id"], {})
         for dest, col in (("compute_mean", "compute"), ("gpu_memory_mean", "gmem"),
                           ("cpu_util_mean", "cpu_util"), ("ram_util_mean", "ram_util")):
-            f[dest] = r[col + "_sum"] / r[col + "_n"] if r[col + "_n"] else None
+            f[dest] = acc[col + "_sum"] / acc[col + "_n"] if acc.get(col + "_n") else None
     for r in quota_history:
         f = feature(r["quota_id"])
         if r["quota_id"] not in quota_names:
@@ -212,13 +245,20 @@ def pai_ranking(response: Response, window: str = Query("week")):
                  used_gpu_hours=hours(r["used_gpu_s"]), quota_first_hour=r["first_hour"],
                  occupancy_pct=r["used_gpu_s"] / r["capacity_gpu_s"] * 100 if r["capacity_gpu_s"] else None,
                  quota_coverage_pct=min(100, r["observed_s"] / (until - since) * 100) if until > since else 0)
-    ordered = sorted(features.values(), key=lambda f: (-f["gpu_hours"], -f["cpu_core_hours"], f["quota_name"]))
-    if data["first_hour"] is None or data["first_hour"] >= until:
-        for f in ordered:
+    ordered = sorted((f for f in features.values() if not f["is_root"]),
+                     key=lambda f: (-f["gpu_hours"], -f["cpu_core_hours"], f["quota_name"]))
+    known = data["first_hour"] is not None and data["first_hour"] < until
+    for rank, f in enumerate(ordered, 1):
+        f["rank"] = rank if known else None
+    if not known:
+        for f in [*ordered, root, totals]:
             for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours",
-                        "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads"):
-                f[key] = None
-    for row in [*result, *ordered]:
+                        "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads",
+                        "direct_gpu_hours", "root_attributed_gpu_hours", "unattributed_gpu_hours"):
+                if key in f:
+                    f[key] = None
+    attribution["unresolved_root_gpu_hours"] = unresolved if known else None
+    for row in [*result, *ordered, root, totals]:
         measured, occupied = row["measured_gpu_hours"], row["gpu_hours"]
         row["hardware_efficiency_pct"] = row["effective_gpu_hours"] / measured * 100 if measured else None
         row["gpu_metric_coverage_pct"] = min(100, measured / occupied * 100) if measured is not None and occupied else None
@@ -230,5 +270,7 @@ def pai_ranking(response: Response, window: str = Query("week")):
             **reporting_metadata(cfg), "first_hour": data["first_hour"],
             "boundary_estimate": bool(since % 3600 or (until < now and until % 3600)),
             "bucket_s": 3600, "users": result[:200], "features": ordered[:200],
+            "root_quota": root, "totals": totals, "feature_attribution": attribution,
+            "user_quota_basis": "submission_quota", "root_quota_usage_scope": "direct_submissions",
             "quota_fetched_at": quota_source.get("fetched_at"), "quota_fresh": fresh,
-            "truncated": len(result) > 200 or len(ordered) > 200 or data["truncated"] or feature_data["truncated"]}
+            "truncated": len(result) > 200 or len(ordered) > 200 or data["truncated"]}

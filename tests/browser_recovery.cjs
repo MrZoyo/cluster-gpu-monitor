@@ -42,7 +42,13 @@ const fixtures = {
     mem_gib_hours: 768, workloads: 2, compute_mean: 50, gpu_memory_mean: 20, cpu_util_mean: null, ram_util_mean: null,
     quotas: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 16, oversold_gpu_hours: 8 }] }],
     since: now - 7 * 86400, until: now, generated_at: now, first_hour: now - 86400, quota_fresh: true,
-    features: [{ quota_id: 'f', quota_name: 'Example feature', gpu_hours: 24, oversold_gpu_hours: 8,
+    totals: { gpu_hours: 24, oversold_gpu_hours: 8, borrowed_gpu_hours: 8, effective_gpu_hours: 12, measured_gpu_hours: 24, cpu_core_hours: 192, mem_gib_hours: 768, workloads: 2 },
+    root_quota: { quota_id: 'root', quota_name: 'Root pool', is_root: true, rank: null, gpu_hours: 0, direct_gpu_hours: 0, root_attributed_gpu_hours: 0, unattributed_gpu_hours: 0,
+      oversold_gpu_hours: 0, effective_gpu_hours: 0, measured_gpu_hours: 0, workloads: 0, current_capacity_gpu: 8, current_used_gpu: 6, current_occupancy_pct: 75,
+      capacity_gpu_hours: 192, used_gpu_hours: 144, occupancy_pct: 75, quota_coverage_pct: 14.3, observed_quota_hours: 24 },
+    feature_attribution: { basis: 'current_workspace_roles', historical_role_membership: false, fresh: true, state: 'ok', fetched_at: now, error: null, unresolved_root_gpu_hours: {} },
+    user_quota_basis: 'submission_quota', root_quota_usage_scope: 'direct_submissions',
+    features: [{ quota_id: 'f', quota_name: 'Example feature', rank: 1, gpu_hours: 24, direct_gpu_hours: 24, root_attributed_gpu_hours: 0, oversold_gpu_hours: 8,
       current_capacity_gpu: 8, current_used_gpu: 4, current_occupancy_pct: 50, current_allocated_gpu: 6,
       current_ancestor_allocated_gpu: 2, current_borrowed_gpu: 2, capacity_gpu_hours: 192, used_gpu_hours: 96, occupancy_pct: 50,
       borrowed_gpu_hours: 8, hardware_efficiency_pct: 50, gpu_metric_coverage_pct: 100, measured_gpu_hours: 24, effective_gpu_hours: 12, compute_mean: 50, quota_coverage_pct: 14.3,
@@ -180,7 +186,8 @@ const server = http.createServer((req, res) => {
     check('borrowed hours are included once', await normal.locator('.pai-rank-stat.total > b').innerText() === '24.0');
     check('physical capacity excludes borrowing additions', await normal.locator('.pai-rank-stat').nth(3).locator('b').innerText() === '6 / 8');
     check('occupied efficiency is separate from pool utilization', await normal.locator('.pai-rank-stat').nth(2).locator('b').innerText() === '50.0%');
-    check('usage bar per feature row', await normal.locator('.pai-rank-table .pai-rank-bar').count() === 1);
+    check('usage bar per feature row', await normal.locator('.pai-rank-table tbody.ranked .pai-rank-bar').count() === 1);
+    check('root quota is a separate unranked group', await normal.locator('.pai-rank-table tbody.unranked tr.root').count() === 1 && await normal.locator('.pai-rank-table tbody.unranked .pai-rank-no').count() === 0);
     check('method notes collapsed by default', await normal.locator('.pai-rank-method').evaluate(n => !n.open));
     for (const width of [1440, 390]) for (const locale of ['zh', 'en']) {
       await normal.setViewportSize({ width, height: 1000 });
@@ -228,16 +235,14 @@ const server = http.createServer((req, res) => {
       check(`user ranking fits ${width} ${locale}`, await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       await shot(normal, `ranking-user-${locale}-${width}`);
     }
-    // Summary arithmetic must not add parent quota capacity to child capacity.
+    // Summary arithmetic uses deduplicated totals and never adds parent quota capacity to child capacity.
     const savedRanking = fixtures['/api/pai/ranking'];
-    fixtures['/api/pai/ranking'] = { ...savedRanking, features: [...savedRanking.features, {
-      ...savedRanking.features[0], quota_id: 'root', quota_name: 'Root pool', is_root: true,
-      gpu_hours: 48, oversold_gpu_hours: 0, effective_gpu_hours: 24, measured_gpu_hours: 48,
-      current_capacity_gpu: 16, current_used_gpu: 4, current_occupancy_pct: 25,
-      capacity_gpu_hours: 384, used_gpu_hours: 288, occupancy_pct: 75, quota_coverage_pct: 0.02,
-    }] };
+    fixtures['/api/pai/ranking'] = { ...savedRanking, totals: { ...savedRanking.totals, gpu_hours: 72, effective_gpu_hours: 36, measured_gpu_hours: 72 },
+      root_quota: { ...savedRanking.root_quota, gpu_hours: 48, direct_gpu_hours: 48, unattributed_gpu_hours: 48, effective_gpu_hours: 24, measured_gpu_hours: 48,
+        current_capacity_gpu: 16, current_used_gpu: 4, current_occupancy_pct: 25,
+        capacity_gpu_hours: 384, used_gpu_hours: 288, occupancy_pct: 75, quota_coverage_pct: 0.02 } };
     await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
-    check('summary sums direct task hours once', await normal.locator('.pai-rank-stat.total > b').innerText() === '72.0');
+    check('summary uses deduplicated totals', await normal.locator('.pai-rank-stat.total > b').innerText() === '72.0');
     check('pool summary uses cluster history rather than root counter', await normal.locator('.pai-rank-stat').nth(1).locator('b').innerText() === '25.0%');
     check('small positive coverage is not rounded to zero', (await normal.locator('.pai-rank-stats').innerText()).includes('<0.1%'));
     await normal.locator('.pai-rank-method summary').click();
@@ -259,7 +264,7 @@ const server = http.createServer((req, res) => {
     check('long feature names fit mobile viewport', await normal.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await shot(normal, 'ranking-long-feature-en-390');
     fixtures['/api/pai/ranking'] = savedRanking;
-    const configured = { ...savedRanking, features: [...savedRanking.features, { ...savedRanking.features[0], is_root: true, quota_id: 'root', quota_name: 'Example root' }], window: 'week', timezone: 'America/New_York', week_start: 'sunday', reset_time: '06:30',
+    const configured = { ...savedRanking, root_quota: { ...savedRanking.root_quota, quota_name: 'Example root' }, window: 'week', timezone: 'America/New_York', week_start: 'sunday', reset_time: '06:30',
       since: Date.parse('2026-10-04T10:30:00Z') / 1000, until: now, boundary_estimate: true };
     await normal.route('**/api/pai/ranking?*', r => r.fulfill({ json: configured }));
     await normal.getByRole('button', { name: 'This week', exact: true }).click();

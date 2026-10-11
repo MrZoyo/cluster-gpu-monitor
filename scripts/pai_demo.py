@@ -96,22 +96,28 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                 users = []
                 for uid, owner, gpu, util, quota, idle in [
                     ("demo-bob", "Demo Bob", 8, 78, "demo-train", False),
-                    ("demo-carol", "Demo Carol", 8, 52, "demo-train", True),
+                    ("demo-carol", "Demo Carol", 8, 52, "demo-root", True),
                     ("demo-alice", "Demo Alice", 4, 18.5, "demo-dev", False)]:
                     gh = gpu * hours
                     users.append(dict(user_id=uid, username=owner, gpu_hours=gh, oversold_gpu_hours=gh if idle else 0,
                         effective_gpu_hours=gh * util / 100, measured_gpu_hours=gh, cpu_core_hours=gh * 8,
                         mem_gib_hours=gh * 32, workloads=2 if uid == "demo-alice" else 1, compute_mean=util,
                         gpu_memory_mean=62, cpu_util_mean=util * .6, ram_util_mean=44,
-                        quotas=[dict(quota_id=quota, quota_name="演示开发配额" if quota == "demo-dev" else "演示训练配额",
+                        quotas=[dict(quota_id=quota, quota_name=next(q["quota_name"] for q in snapshot["quotas"] if q["quota_id"] == quota),
                             gpu_hours=0 if idle else gh, oversold_gpu_hours=gh if idle else 0)]))
                 features = []
                 for q in snapshot["quotas"]:
                     members = [u for u in users if u["quotas"][0]["quota_id"] == q["quota_id"]]
+                    direct = sum(u["gpu_hours"] for u in members)
+                    if q["quota_id"] == "demo-train":
+                        members += [u for u in users if u["user_id"] == "demo-carol"]
                     gh = sum(u["gpu_hours"] for u in members)
                     idle = sum(u["oversold_gpu_hours"] for u in members)
                     features.append(dict(quota_id=q["quota_id"], quota_name=q["quota_name"], is_root=q["quota_id"] == "demo-root",
                         gpu_hours=gh, quota_gpu_hours=gh-idle, oversold_gpu_hours=idle,
+                        direct_gpu_hours=direct, root_attributed_gpu_hours=8*hours if q["quota_id"] in ("demo-root", "demo-train") else 0,
+                        cpu_core_hours=sum(u["cpu_core_hours"] for u in members),
+                        mem_gib_hours=sum(u["mem_gib_hours"] for u in members),
                         effective_gpu_hours=sum(u["effective_gpu_hours"] for u in members), measured_gpu_hours=gh,
                         compute_mean=sum(u["effective_gpu_hours"] for u in members)/gh*100 if gh else None,
                         current_capacity_gpu=q["gpu_capacity"], current_used_gpu=q["gpu_used"],
@@ -125,12 +131,20 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                 if not hours:
                     users = []
                     for f in features:
-                        for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours", "workloads"):
+                        for key in ("gpu_hours", "quota_gpu_hours", "oversold_gpu_hours", "effective_gpu_hours", "measured_gpu_hours", "workloads", "direct_gpu_hours", "root_attributed_gpu_hours", "cpu_core_hours", "mem_gib_hours"):
                             f[key] = None
                 for row in [*users, *features]:
                     row["borrowed_gpu_hours"] = row["oversold_gpu_hours"]
                     row["hardware_efficiency_pct"] = row["effective_gpu_hours"] / row["measured_gpu_hours"] * 100 if row["measured_gpu_hours"] else None
                     row["gpu_metric_coverage_pct"] = 100 if row["gpu_hours"] else None
+                root = next(f for f in features if f["is_root"])
+                root.update(rank=None, unattributed_gpu_hours=0 if hours else None)
+                features = [f for f in features if not f["is_root"]]
+                for rank, f in enumerate(features, 1):
+                    f["rank"] = rank if hours else None
+                totals = {k: sum(u[k] for u in users) if hours else None for k in
+                          ("gpu_hours", "oversold_gpu_hours", "borrowed_gpu_hours", "effective_gpu_hours",
+                           "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads")}
                 # Fictional pool is 32 GPUs; borrowing is included in the 20 occupied GPUs.
                 effective = sum(u["effective_gpu_hours"] for u in users)
                 cluster = dict(scope="monitored_workspace_workloads_over_physical_pool", first_hour=now-72*3600,
@@ -143,7 +157,10 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                     physical_utilization_pct=None, physical_metric_coverage_pct=37.5 if hours else None)
                 result[f"pai_ranking.{window}.json"] = dict(cluster=cluster,current_pool={"capacity_gpu":32,"occupied_gpu":20,"borrowed_gpu":8,"occupancy_pct":62.5,"fresh":True},window=window, since=since, until=until, generated_at=now,
                     **reporting_metadata(cfg), boundary_estimate=bool(since % 3600 or (until < now and until % 3600)),
-                    quota_fresh=True, features=features,
+                    quota_fresh=True, features=features, root_quota=root, totals=totals,
+                    feature_attribution={"basis":"current_workspace_roles", "historical_role_membership":False,
+                        "fresh":True, "state":"ok", "fetched_at":now, "error":None, "unresolved_root_gpu_hours":{} if hours else None},
+                    user_quota_basis="submission_quota", root_quota_usage_scope="direct_submissions",
                     first_hour=now - 72 * 3600, bucket_s=3600, users=users, truncated=False, synthetic=True)
             return result
         finally:

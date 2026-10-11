@@ -275,6 +275,15 @@ def run_once(cfg, store, client=None):
     with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
         list(executor.map(collect_host, list(running.items())[:cfg.max_workloads]))
 
+    # Optional attribution comes after operational monitoring, sharing the same call/time
+    # budget. Save one atomic, whitelisted snapshot; incomplete pagination cannot replace it.
+    from .attribution import feature_memberships
+    def memberships():
+        if "quotas" in errors:
+            raise CollectionError("incomplete_quotas")
+        return feature_memberships(client.members()[0], client.quota_roles()[0], quota_rows, cfg.quota_id)
+    fetch("feature_memberships", memberships, cache=True, empty_ok=True)
+
     # Bounded ranking history: observed scheduled resources plus hourly metric sums.
     try:
         now = time.time()

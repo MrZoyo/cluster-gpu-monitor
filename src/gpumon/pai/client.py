@@ -68,11 +68,12 @@ class PaiClient:
 
     def _api(self, action, path, params=None, product="paistudio", version="2022-01-12"):
         allowed = {"GetCallerIdentity", "ListNodes", "ListNodePods", "ListQuotaWorkloads",
-                   "ListQuotaActiveUserUsages", "DescribeMetricList"}
+                   "ListQuotaActiveUserUsages", "DescribeMetricList", "ListMembers", "ListConfigs"}
         if action not in allowed:
             raise ValueError("Only monitoring read operations are allowed")
         endpoint = ("metrics.cn-hangzhou.aliyuncs.com" if product == "cms" else
                     f"sts.{self.settings.region}.aliyuncs.com" if product == "sts" else
+                    f"aiworkspace.{self.settings.region}.aliyuncs.com" if product == "aiworkspace" else
                     f"pai.{self.settings.region}.aliyuncs.com")
         args = ["api", product, action, "--method", "GET", "--version", version,
                 "--path", path, "--endpoint", endpoint]
@@ -87,11 +88,12 @@ class PaiClient:
     def quota(self, quota_id):
         return self._call(["resource", "quota", "get", quota_id])
 
-    def pages(self, action, path, key, params=None):
+    def pages(self, action, path, key, params=None, *, workspace=False):
         rows, fingerprints = [], set()
         total = None
         for page in range(1, self.settings.max_pages + 1):
-            data = self._api(action, path, {**(params or {}), "PageSize": 100, "PageNumber": page})
+            args = (action, path, {**(params or {}), "PageSize": 100, "PageNumber": page})
+            data = self._api(*args, "aiworkspace", "2021-02-04") if workspace else self._api(*args)
             if key not in data or not isinstance(data[key], list):
                 raise CollectionError("invalid_response")
             batch = data[key]
@@ -122,6 +124,14 @@ class PaiClient:
         return self.pages("ListQuotaActiveUserUsages",
                           f"/api/v1/quotas/{self.settings.quota_id}/activeuserusages",
                           "QuotaUserUsages", {"WorkspaceId": self.settings.workspace_id})
+
+    def members(self):
+        return self.pages("ListMembers", f"/api/v1/workspaces/{self.settings.workspace_id}/members",
+                          "Members", workspace=True)
+
+    def quota_roles(self):
+        return self.pages("ListConfigs", f"/api/v1/workspaces/{self.settings.workspace_id}/configs",
+                          "Configs", {"CategoryName": "CommonQuotaConfig"}, workspace=True)
 
     def job(self, job_id):
         # Read-only DLC job detail; only whitelisted fields are kept by the collector.

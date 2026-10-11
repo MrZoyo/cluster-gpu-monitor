@@ -37,7 +37,13 @@ uv run gpumon web --host 127.0.0.1 --port 8848
 
 每轮先通过 STS 核实账号；账号不匹配时停止本轮，不继续读取其他资源。采集需要读取配额、
 节点、Pod、任务、用户用量、DLC 任务详情和 CloudMonitor 指标。上线前应在专用身份下验证
-这些读取权限。验证通过不等于证明该身份没有其他权限；本模块不执行写操作探测。
+这些读取权限。Feature 归属另需 `paiworkspace:ListMembers` 和 `paiworkspace:ListConfigs`，
+通过 `aiworkspace` 2021-02-04 接口查询；`ListConfigs` 只请求 `CommonQuotaConfig` 分类。
+两次查询按拓扑周期缓存，在任务/指标采集后运行，共享每轮超时、调用次数与分页上限，
+只保存用户 ID 和候选 Quota ID；失败保留旧快照但不用于归属，不影响原始任务用量积累。
+验证通过不等于证明该身份没有其他权限；本模块不执行写操作探测。
+接口参考：[ListMembers](https://help.aliyun.com/zh/pai/developer-reference/api-aiworkspace-2021-02-04-listmembers)、
+[ListConfigs](https://help.aliyun.com/zh/pai/developer-reference/api-aiworkspace-2021-02-04-listconfigs)。
 
 ## 配置
 
@@ -109,8 +115,19 @@ uv run gpumon web --host 127.0.0.1 --port 8848
 默认按北京时间（Asia/Shanghai）周一 00:00 至今统计；上周是前一个完整配置周。
 时区、每周第一天和换榜时刻均可配置。
 滚动窗口仍保留，PAI 的时间窗和维度选择独立于裸金属页面，并在自动刷新时保留。
-Feature 使用任务提交时的 `QuotaId` 分组，同一用户可以出现在多个 feature 的任务中。
-根配额直接提交的任务单列，不根据用户名猜测算法组；要做算法组周报，需要提交者选择对应配额。
+直接提交子 Quota 的任务归属该 Feature。直接提交根配额（如 `training`）的任务，额外通过
+任务 `UserId` → 工作空间成员 `Roles` → `CommonQuotaConfig.allowedRoles` 归入唯一匹配的
+子 Quota。不按用户名猜测；管理员等 `PAI.*` 通用角色和根 Quota 的角色不代表 Feature。
+无匹配、多 Feature、成员/配置读取失败、分页不完整或快照陈旧时，保留为根配额未归属量。
+
+根配额在独立区域展示且不参与排名：任务用量仍为根配额**直接提交量**，同时给出已归属与
+未归属 GPU·小时；配额容量/用量计数仍来自平台，可能包含子配额。Feature 用量拆分为直接提交和
+根配额归属两部分。两处存在重叠，不能相加；页面汇总使用后端 `totals`，每份任务用量只计一次。
+借用 GPU 时间、计算指标、CPU/内存时间及任务数随归属一起计入 Feature，借用仍是总占用的子集。
+
+**历史按当前角色重算**：现有数据库没有历史角色关系，所有窗口均使用最新有效的成员映射。
+角色变化后，历史窗口的 Feature 分布可能改变；原始提交 Quota、任务历史和用户总量保持不变。
+`feature_attribution` 返回依据、快照时间和新鲜度；`users[].quotas` 仍表示原始提交配额。
 
 在已升级版本的私有 `config/pai.toml` 中配置：
 
@@ -137,7 +154,7 @@ API 的 `timezone`、`week_start`、`reset_time` 及 CSV 元数据说明实际�
 任务数包含重叠小时内出现的任务。API 和 CSV 用 `boundary_estimate=true` 标记这一估算。
 正在积累的当前小时不会再次折减。默认周界对齐 UTC 整点，统计口径保持原样。
 
-- **任务 GPU·小时**包含常规和池内借用；借用是总占用的子集。任务只归属提交配额，不向父配额重复累计。
+- **任务 GPU·小时**包含常规和池内借用；借用是总占用的子集。根配额任务可额外归入唯一匹配的 Feature，全局合计只计一次，不向父配额重复累计。
 - **当前配额 / 用量 / 占用率**来自最新 Quota 快照，始终表示当前值，即使选择上周也不会变成历史值。
   快照陈旧时显示提示。资源上实际分配及祖先配额任务占用卡数可在用量提示中查看，不能当作该 feature 的任务用量。
 - **窗口配额占用率**为观测到的 Quota 用量卡秒除以同一时间段的容量卡秒，配额变更按时长加权。
@@ -149,9 +166,13 @@ API 的 `timezone`、`week_start`、`reset_time` 及 CSV 元数据说明实际�
   首次观测不回填，失败快照不延续；长间隔最多累计两倍降级周期。资源池的观测覆盖率显示在汇总中，
   个别配额与资源池明显不同时在该行单独标注。
   部分覆盖时，占用率仅代表已观测部分，任务历史可能更长。保留 32 天，小时边界精度与任务排行相同。
-- 页面先给出本窗口汇总：占用 GPU·小时合计、集群 GPU 利用率估算、占用期间计算效率、当前池内任务占用和活跃 feature。
+- 页面先给出本窗口汇总：占用 GPU·小时合计（全局去重）、集群 GPU 利用率估算、占用期间计算效率、当前池内任务占用和活跃 Feature（用户维度为活跃用户）。
   “接近满额”（窗口配额占用率 ≥ 90%）和“计算偏低”（有指标的占用期间计算效率 < 10%）只是提示，不改变排序。
-  统计口径默认折叠在排行榜下方。
+  统计口径默认折叠在排行榜下方；归属依据、“历史按当前角色重算”和角色快照时间常驻在排行上方。
+- Feature 用量条中实色为直接提交，描边浅色为从根配额归入，条下列出两项 GPU·小时；根配额与排行同表但单独成组、
+  无名次，以灰色显示未归属部分及原因。借用画在条下紫色细条，与主条同尺度，是总量的子集。
+  同一行内的拆分按显示精度对齐合计，精确值见 CSV。成员角色陈旧或读取失败时，归属数值显示“—”，
+  标题旁标注“归属降级”，排序提示改为“临时排序：仅按直接提交 GPU·小时”。
 - **导出 CSV**包含窗口、生成时间、任务历史起点、截断标记以及当前返回的全部行。
   Feature 导出包含容量 GPU·小时、用量 GPU·小时、观测小时、覆盖率和计算指标，供周报核查。
   未知值留空；CSV 不触发自动汇报或发送消息。
@@ -168,8 +189,8 @@ API 的 `timezone`、`week_start`、`reset_time` 及 CSV 元数据说明实际�
   借用不新增物理 GPU 容量，也不引入额外 GPU 资源费用；不能将借用卡数加到集群总卡数上。
 - 出借 Quota 及具体节点归属不公开，页面不猜测资源来自哪个团队。原 Quota 始终有更高优先权，
   需要资源时借用任务暂停、释放资源并重新等待。不能把这描述成有额外计算池或一定永久终止。
-- 借用消耗的 GPU 时间计入**借用任务的提交团队/个人**。Feature 仍由提交 Quota 归属，
-  用户仍由 RAM Owner/提交者归属；根配额直接提交单列。它不是对出借团队的时间归账。
+- 借用消耗的 GPU 时间计入**借用任务的提交团队/个人**。Feature 由子 Quota 直接提交或根配额任务的当前成员角色归属，
+  用户仍由 RAM Owner/提交者归属；根配额直接提交单列且不排名。它不是对出借团队的时间归账。
 - 原有 Quota API 的 `gpu_used`/`occupancy_pct` 继续作为**配额记账计数**，可能不含借用。
   这个计数不能替代集群物理占用或计算利用率。
 
@@ -220,7 +241,7 @@ CSV 带 `cluster_*` 元数据和逐行占用/借用/效率/指标覆盖字段，
 | `/api/pai/overview` | 当前完整快照 |
 | `/api/pai/nodes` / `/api/pai/workloads` / `/api/pai/users` | 节点、任务或用户子集 |
 | `/api/pai/metrics/series?workload_id=...` | 默认近 1 小时，可选 1–6 小时；最多 20,000 源点，超限标记 `truncated` |
-| `/api/pai/ranking?window=week` | 默认本周，`last_week` 为上周；兼容原有滚动窗口，返回 `features` 和 `users`，每类最多 200 行 |
+| `/api/pai/ranking?window=week` | 默认本周，`last_week` 为上周；兼容原有滚动窗口，返回 `features` 和 `users`（每类最多 200 行）、独立的 `root_quota`、去重 `totals` 和 `feature_attribution` |
 
 总览 `summary` 新增 `task_compute_mean` / `task_measured_gpus` 和 `cluster_compute_mean` /
 `cluster_known_gpus` / `cluster_unallocated_gpus`。原 `compute_mean` 继续表示已映射物理卡的新鲜指标均值；
