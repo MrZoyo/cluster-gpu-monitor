@@ -638,7 +638,11 @@ Collector immediately stops probing (no more connection failures accumulating), 
 
 **Changed settings.toml**: Restart corresponding service (`[collector]` changed restart collector, `[web]`/`[privacy]` changed restart web).
 
-**Only changed files under `web/`**: No restart needed. Static files are read fresh on each request, refresh page takes effect.
+**Only changed files under `web/`**: Validate locally, build a separate asset bundle and use
+[atomic frontend activation](frontend-releases.en.md). Do not overwrite the running release or
+restart Web or collectors. Each page pins its JS/CSS version; retained assets keep existing tabs
+working. An older backend needs a separate protocol upgrade first. Compatibility failures must
+not trigger an automatic full-release fallback. Documentation-only changes need no deployment.
 
 ### Page errors after an update
 

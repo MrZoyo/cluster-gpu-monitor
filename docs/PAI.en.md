@@ -198,7 +198,7 @@ boundaries, including the default, retain the existing accounting.
   < 10%) are cues only and do not change the order. Attribution rules, current-role history recalculation, observation times and denominators live in the collapsed reporting disclosure.
   The member-attribution update time includes the reporting timezone.
 - In feature usage bars, solid is direct submissions and outlined is attribution from the root quota, with both GPU-hour values, measurement time and denominators
-  available through each row’s keyboard- and touch-accessible “Usage details”. The root quota remains a separate unranked group; its unattributed amount stays visible and reasons are in the disclosure.
+  available by clicking the entire Feature row. The arrow beside its name supports Tab, Enter and Space. The root quota remains a separate unranked group; its unattributed amount stays visible and reasons are in the disclosure.
   Borrowing is the purple strip below the bar, on the same scale and a subset of the total. Within a row the displayed split adds up
   to the total; the CSV keeps exact values. When member roles are stale or unavailable, attribution values show “—”, the heading is
   marked “Attribution degraded”, a short visible warning links to the details, and the order is labeled “Provisional order: direct GPU-hours only”.

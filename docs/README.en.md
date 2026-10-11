@@ -19,6 +19,7 @@ Current version: [v0.6.2 release notes](RELEASE_0.6.2.md#english) — PAI alloca
 | Understand the data model | [Architecture and trade-offs](ARCHITECTURE.en.md) | SSH collection, SQLite, rollups, liveness, GPU hours, and security boundaries |
 | Generate fictional data or a static site | [Demo guide](DEMO.en.md) | Local demos, GitHub Pages export, and destructive-operation guards |
 | Deploy with Python + systemd | [Native deployment guide](DEPLOYMENT.en.md) | Release layout, systemd, Caddy, backups, migration, and troubleshooting |
+| Update frontend without restarting Web | [Frontend releases](frontend-releases.en.md) | Prerequisites, pinned assets, atomic activation and rollback |
 | Deploy with containers | [Docker Compose guide](DOCKER.en.md) | Non-root image, trust boundaries, SSH mounts, backups, and upgrades |
 | Query recent GPU utilization from scripts or agents | [Summary API](API.en.md) | Fields, rate limits, caching, and optional anonymous access |
 

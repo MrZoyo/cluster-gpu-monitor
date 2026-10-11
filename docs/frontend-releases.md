@@ -1,55 +1,53 @@
-# Frontend releases without restarting Web
+# 不重启 Web 的前端发布
 
-The Web process serves an immutable frontend selected by `GPUMON_ROOT/frontend/current`.
-Each HTML response pins its scripts, stylesheets and icons to `/_frontend/<version>/...`.
-Activation replaces a symlink atomically. Existing tabs retain access to their old assets.
-API handlers, database connections and collector processes do not change.
+简体中文 | [English](frontend-releases.en.md)
 
-This requires the new serving code to be running first. Upgrading an older backend is a
-separate full release; the asset publisher refuses unsupported backends and never restarts
-Web as a fallback. Changes to Python code, dependency files or deployment templates require
-a full release too. Static exports and GitHub Pages still use the original HTML assets.
+纯前端更新使用独立资源发布流程：Web 从 `GPUMON_ROOT/frontend/current` 选择不可变资源版本，
+每份 HTML 的脚本和样式固定到 `/_frontend/<版本>/...`。发布原子替换链接，已打开的页面仍能
+读取旧资源，不重启 Web 或采集器，也不修改数据库、虚拟环境、服务配置及后端代码链接。
 
-## Build and activate
+前提是正在运行的 Web 已支持 `/api/frontend-release` 协议。旧后端须先单独升级；
+后端源码、依赖锁文件或部署模板变化也须走后端发布。静态导出和 GitHub Pages 继续使用原始资源。
 
-Use immutable source checkouts and retain the generated bundle manifest with the source Git
-commit. The manifest records SHA-256 hashes for all assets and a runtime fingerprint of
-`src`, `deploy`, `pyproject.toml` and `uv.lock`. A bundle is limited to 32 MiB / 2048 files;
-symlinks are rejected. Hashes detect incomplete or changed payloads; transport and access
-control remain the operator's responsibility.
+## 标准流程
 
-```sh
+1. 本地完成前端检查、相关浏览器回归，提交源码并记录 Git SHA。
+2. 读取当前前端版本和后端兼容指纹，保留回滚版本；仅文档变化无需部署。
+3. 构建并校验独立资源包，确认与运行中的后端兼容，再原子激活。
+4. 检查页面、带版本号的资源、关键接口及 Web PID；失败使用原资源版本回滚。
+
+不要原地覆盖运行目录。兼容性检查失败时停止发布，不能自动改走重启或全量部署路径。
+版本记录应区分源码提交、运行后端提交、前端内容版本和回滚版本。
+
+## 构建与激活
+
+从不可变源码目录构建。清单包含所有资源的 SHA-256，以及 `src`、`deploy`、`pyproject.toml`
+和 `uv.lock` 的兼容指纹。包限制为 32 MiB / 2048 个文件，禁止软链接。
+哈希用于检查内容完整性；传输及发布账户权限仍由部署层控制。
+
+```bash
 python3 src/gpumon/frontend_release.py build --source /path/to/candidate --bundle /path/to/new-bundle
 
-# Get the currently running frontend version, then pass it as --expected.
+# 读取 version 字段；它是前端内容版本，不是 Git SHA。
 curl --fail --max-time 5 http://127.0.0.1:8848/api/frontend-release
 python3 /path/to/running-source/src/gpumon/frontend_release.py activate \
   --source /path/to/running-source --bundle /path/to/new-bundle \
-  --store /path/to/state/frontend --expected <current-frontend-version> \
+  --store /path/to/state/frontend --expected <当前前端完整版本> \
   --url http://127.0.0.1:8848
 ```
 
-Run activation as the deployment account with write access to the frontend store. Web needs
-read access only. The store must be exactly `<GPUMON_ROOT>/frontend`. Activation checks the
-running backend and expected version, validates the complete payload, probes the staged
-HTML through the running Web, switches the pointer, and verifies the entry point. A failed
-post-switch check restores the old pointer. No database, virtual environment, service unit
-or `current` code-release pointer is modified.
+以具有资源库写权限的部署账户激活，Web 仅需读权限。store 必须是 `<GPUMON_ROOT>/frontend`。
+激活前校验协议、后端指纹、预期版本和完整资源，并经正在运行的 Web 验证待发布页面。
+切换后验证失败会恢复旧指针。
 
-## Rollback and concurrency
+## 回滚与并发
 
-Activate the bundle referenced by `frontend/previous`, passing the current frontend version
-as `--expected`. This uses the same validation and no-restart path. The initial bundled
-frontend is retained before the first switch. Do not delete retained bundles while old tabs
-may still request them; automatic garbage collection is deliberately absent.
+把 `--bundle` 指向 `frontend/previous`，并将当前前端版本作为 `--expected`，即可按相同流程回滚。
+首次切换前会保留随代码发布的原始前端。不自动清理旧资源，以免仍打开的标签页遇到 404。
 
-All deployment/rollback paths must hold the same nonblocking `frontend/.lock` advisory lock
-while changing a release. If a transport connection is lost, read `/api/frontend-release`
-before retrying: the pointer may already have changed. A full backend upgrade ignores a
-frontend pointer with a different runtime fingerprint and serves its own bundled frontend.
-Compatibility of tabs spanning a **backend** upgrade is outside the asset-only guarantee.
+所有发布、回滚入口必须使用同一 `frontend/.lock` 非阻塞锁。连接中断时先读取版本再重试，
+不能假定切换没有发生。后端升级后若兼容指纹变化，Web 会使用新后端自带前端；
+跨后端升级的旧标签页兼容性不属于纯前端发布的保证范围。
 
-The local integration suite follows HTML-pinned JS/CSS URLs while performing three upgrades
-and three rollbacks, checks the same server PID and health responses, and exercises rejected
-and failed activations. It is local evidence, not a guarantee against unrelated production
-network, proxy or backend failures.
+本地集成测试覆盖三次升级、三次回滚期间按 HTML 读取版本化 JS/CSS、PID 与健康状态，以及
+不完整资源、后端不兼容和切换失败。测试不代表对网络、代理或后端独立故障的可用性保证。
