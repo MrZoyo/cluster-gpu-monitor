@@ -1200,16 +1200,33 @@ window.PaiUI = (() => {
         if (r.gpu_hours != null) extra.push(sourceLine([["direct", t("直接提交", "Direct"), directText],
           ["via", t(`从 ${rootName} 归入`, `From ${rootName}`), attrOk ? viaText : "—", attrOk ? null : paused]]));
       }
-      return el("tr", { class: [r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim() || null }, [
+      const detail = rowDetails(r, "feature", extra);
+      detail.querySelector("summary").hidden = true;
+      const detailId = `feature-detail-${encodeURIComponent(r.quota_id)}`;
+      detail.id = detailId;
+      const toggle = el("button", { type: "button", class: "pai-feature-toggle",
+        "aria-label": `${r.quota_name} · ${t("展开详情", "Toggle details")}`,
+        "aria-controls": detailId, "aria-expanded": String(detail.open),
+        onclick: () => {
+          detail.open = !detail.open;
+          toggle.setAttribute("aria-expanded", String(detail.open));
+          const key = `feature:${r.quota_id}`;
+          detail.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key);
+        } }, [el("span", { "aria-hidden": "true" }, ["▸"])]);
+      return el("tr", { class: ["pai-feature-row", r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim(),
+        onclick: e => {
+          if (e.target.closest("button, a, input, select, textarea, summary, .pai-rank-detail-body") || window.getSelection()?.toString()) return;
+          toggle.click();
+        } }, [
         td(0, r.is_root ? null : rankBadge(r.rank, r.gpu_hours > 0 && attrOk)),
-        td(1, el("div", { class: "pai-rank-name" }, [el("div", {}, [
+        td(1, el("div", { class: "pai-rank-name" }, [toggle, el("div", {}, [
           el("b", { title: r.quota_name }, [r.quota_name]),
           r.is_root ? el("small", {}, [t("根配额 · 仅直接提交", "Root quota · direct submissions")])
             : !inSnapshot ? el("small", {}, [t("历史配额，已不在当前列表", "Historical quota, no longer listed")]) : null]),
           ...rankFlags(r, true)])),
         td(2, usageCell(r.gpu_hours, idle, parts, max, sum, { strip: idle, extra: [
           r.is_root ? el("small", { class: "pai-rank-unattributed" }, [t(`未归属 ${hrs(r.unattributed_gpu_hours)} GPU·h`, `${hrs(r.unattributed_gpu_hours)} GPU-h unattributed`)]) : null,
-          rowDetails(r, "feature", extra),
+          detail,
         ].filter(Boolean) })),
         td(3, meterCell(r.occupancy_pct, { title: occTitle, sub: occSub, subTone: ownCoverage && r.quota_coverage_pct < 50 ? "warn" : null })),
         td(4, computeCell(r.hardware_efficiency_pct, r.measured_gpu_hours, r.effective_gpu_hours, r.gpu_hours)),

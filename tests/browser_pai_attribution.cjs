@@ -47,10 +47,28 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       assert.equal(await page.locator('.pai-rank-row-details[open]').count(),0);
       assert.equal(await ranked.locator('.pai-rank-src').first().isVisible(),false);
       assert.equal(await unranked.locator('.pai-rank-unattributed').isVisible(),true);
+      const firstRow = ranked.locator('tr').first();
+      const toggle = firstRow.locator('.pai-feature-toggle');
+      assert.equal(await firstRow.getByText(locale === 'zh' ? '用量详情' : 'Usage details', {exact:true}).isVisible(), false);
+      await toggle.focus(); await page.keyboard.press('Enter');
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+      await firstRow.locator('.pai-rank-detail-body').click();
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+      await page.keyboard.press('Tab');
+      await toggle.focus(); await page.keyboard.press('Space');
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+      await firstRow.locator('.c-usage').click();
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+      await toggle.click();
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+      // Selecting a value must not expand the row.
+      await firstRow.locator('.c-name b').evaluate(n => {const r=document.createRange();r.selectNodeContents(n);getSelection().removeAllRanges();getSelection().addRange(r);n.click();});
+      assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+      await page.evaluate(()=>getSelection().removeAllRanges());
       // Visible splits close: direct + attributed = feature total; attributed + unattributed = root total.
       for (const row of [...await ranked.locator('tr').all(),unranked.locator('tr.root')]) {
         const detail=row.locator('.pai-rank-row-details');
-        await detail.locator('summary').click();
+        await row.locator('.c-jobs').click();
         assert.equal(await detail.evaluate(n=>n.open),true);
         assert.equal(await row.locator('.pai-rank-src').isVisible(),true);
         const n=s=>Number(s.replaceAll(',',''));
@@ -77,7 +95,7 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
         await page.screenshot({path:path.join(process.env.SHOT_DIR,`details-${locale}-${width}-open.png`),fullPage:true});
       }
       await page.locator('.pai-rank-method > summary').click();
-      while (await page.locator('.pai-rank-row-details[open]').count()) await page.locator('.pai-rank-row-details[open]').first().locator('summary').click();
+      while (await page.locator('.pai-rank-row-details[open]').count()) await page.locator('.pai-feature-toggle[aria-expanded="true"]').first().click();
       if(process.env.SHOT_DIR && [390,1440].includes(width)) await page.screenshot({path:path.join(process.env.SHOT_DIR,`details-${locale}-${width}-closed.png`),fullPage:true});
       // 72 observed hours * 20 GPUs = 1440, not 2016 (which would add root twice).
       const total=await page.locator('.pai-rank-stat.total b').textContent();

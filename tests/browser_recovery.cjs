@@ -7,6 +7,9 @@ const path = require('node:path');
 const http = require('node:http');
 const { chromium } = require('playwright');
 const web = path.resolve(__dirname, '../web');
+// Optionally exercise the real ASGI static server while keeping every API synthetic.
+const frontendOrigin = process.env.FRONTEND_ORIGIN ? new URL(process.env.FRONTEND_ORIGIN) : null;
+if (frontendOrigin) assert.ok(frontendOrigin.protocol === 'http:' && frontendOrigin.hostname === '127.0.0.1');
 const now = Math.floor(Date.now() / 1000);
 const metric = (key) => ({ series_id: key, pod: 'pod-example', gpu: '0', metric: key,
   value: 20, ts: now - 60, fresh: true, recent_mean: 20, recent_n: 8 });
@@ -73,6 +76,14 @@ const server = http.createServer((req, res) => {
     res.writeHead(value === undefined ? 404 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(value === undefined ? { detail: 'Not Found' } : value));
   }
+  if (frontendOrigin) {
+    const upstream = http.get(new URL(req.url, frontendOrigin), response => {
+      res.writeHead(response.statusCode, response.headers); response.pipe(res);
+    });
+    upstream.setTimeout(5000, () => upstream.destroy());
+    upstream.on('error', () => { res.writeHead(502); res.end(); });
+    return;
+  }
   const file = path.resolve(web, '.' + (pathname === '/' ? '/index.html' : pathname));
   if (!file.startsWith(web + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     res.writeHead(404); return res.end();
@@ -112,6 +123,10 @@ const server = http.createServer((req, res) => {
     const normal = await pageFor(); const errors = [];
     normal.on('pageerror', e => errors.push(e.message));
     await normal.goto(base); await normal.getByRole('heading', { name: '算力监控总览' }).waitFor();
+    if (frontendOrigin) check('all executable assets pinned to one frontend version', await normal.evaluate(() => {
+      const paths = [...document.querySelectorAll('script[src],link[rel="stylesheet"]')].map(n => new URL(n.src || n.href).pathname);
+      return paths.every(p => /^\/_frontend\/[a-f0-9]{64}\//.test(p)) && new Set(paths.map(p => p.split('/')[2])).size === 1;
+    }));
     check('PAI disabled: no navigation or text', await normal.locator('#moduleNav').isHidden() && !(await normal.locator('body').innerText()).includes('PAI'));
     await normal.evaluate(() => GM.go('/pai/workloads'));
     await normal.waitForFunction(() => location.hash === '#/');

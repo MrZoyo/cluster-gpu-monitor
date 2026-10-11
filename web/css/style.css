@@ -1749,3 +1749,14 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 760px) {
   .pai-rank-table.user .c-compute .pai-rank-meter small { display: block; }
 }
+
+/* The full feature row is a pointer target; the button supplies keyboard semantics. */
+.pai-feature-row { cursor: pointer; }
+.pai-feature-row:hover > td { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.pai-feature-toggle { flex: 0 0 28px; width: 28px; min-height: 36px; padding: 0; border: 0; background: transparent; color: var(--faint); cursor: pointer; }
+.pai-feature-toggle span { display: inline-block; transition: transform .15s ease; }
+.pai-feature-toggle[aria-expanded="true"] span { transform: rotate(90deg); }
+.pai-feature-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.pai-feature-row .pai-rank-row-details > summary[hidden] { display: none; }
+.pai-feature-row .pai-rank-row-details:not([open]) { margin: 0; }
+.pai-feature-row .pai-rank-detail-body { cursor: text; }

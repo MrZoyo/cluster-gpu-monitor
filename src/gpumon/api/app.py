@@ -5,22 +5,13 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from .. import __version__
-from ..config import CODE_ROOT
+from ..config import CODE_ROOT, ROOT
+from .frontend import FrontendFiles
 from .routes import router
 from .public_summary import router as public_router, SummaryService
 from .pai import pai_enabled, router as pai_router
-
-
-class RevalidatingStaticFiles(StaticFiles):
-    """可变前端资源允许缓存，但浏览器每次使用前必须向服务器确认版本。"""
-
-    async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
-        return response
 
 
 def create_app(*, enable_docs: bool = False) -> FastAPI:
@@ -44,8 +35,10 @@ def create_app(*, enable_docs: bool = False) -> FastAPI:
     # web/ 目录作为静态站点；html=True 让 / 返回 index.html。必须在 API 路由之后挂载。
     web_dir = CODE_ROOT / "web"
     if web_dir.exists():
+        frontend = FrontendFiles(CODE_ROOT, ROOT / "frontend")
+        application.add_api_route("/api/frontend-release", frontend.status, methods=["GET"])
         application.mount(
-            "/", RevalidatingStaticFiles(directory=str(web_dir), html=True), name="static"
+            "/", frontend, name="static"
         )
     return application
 
