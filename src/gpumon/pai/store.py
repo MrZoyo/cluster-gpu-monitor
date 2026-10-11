@@ -174,14 +174,16 @@ class PaiStore:
     def recent_means(self, now, window_s=600):
         """Per-series mean and point count over the last window (matches bare-metal 10-min util_recent)."""
         with self.connect() as c:
-            rows = c.execute("""SELECT series_id, AVG(value) mean, COUNT(*) n FROM metric
+            # GROUP BY can otherwise make SQLite scan the entire retained series index.
+            # Bound reads by time before grouping, including when the page cache is cold.
+            rows = c.execute("""SELECT series_id, AVG(value) mean, COUNT(*) n FROM metric INDEXED BY metric_expiry
                 WHERE ts >= ? GROUP BY series_id LIMIT 10000""", (now - window_s,)).fetchall()
         return {r["series_id"]: (r["mean"], r["n"]) for r in rows}
 
     def latest_metrics(self, now):
         with self.connect() as c:
             rows = c.execute("""SELECT m.* FROM metric m JOIN
-                (SELECT series_id, MAX(ts) ts FROM metric WHERE ts>=? GROUP BY series_id) x
+                (SELECT series_id, MAX(ts) ts FROM metric INDEXED BY metric_expiry WHERE ts>=? GROUP BY series_id) x
                 ON m.series_id=x.series_id AND m.ts=x.ts LIMIT 10000""", (now - 3600,)).fetchall()
         return [dict(r) for r in rows]
 

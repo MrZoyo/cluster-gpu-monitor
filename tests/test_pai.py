@@ -873,3 +873,34 @@ def test_membership_health_matches_attribution_in_status_api(store, cfg, monkeyp
     assert source["state"] == attribution["state"] == expected
     assert attribution["fresh"] is (expected == "ok")
     assert status["state"] == ("ok" if expected == "ok" else "partial")
+
+
+@pytest.mark.parametrize("method", ["latest_metrics", "recent_means"])
+def test_snapshot_metric_queries_ignore_large_expired_history(store, monkeypatch, method):
+    from contextlib import contextmanager
+    now = 100000
+    with store.connect() as c:
+        c.executemany("INSERT INTO metric VALUES (?,?,?,?,?,?,?,?)", [
+            (f"series-{i}", ts, 99, "old", "pod", str(i), "compute", ts)
+            for i in range(100) for ts in range(300)])
+        c.executemany("INSERT INTO metric VALUES (?,?,?,?,?,?,?,?)", [
+            (f"live-{i}", now-offset, value, "live", "pod", str(i), "compute", now)
+            for i in range(10) for offset,value in [(60,20),(120,40)]])
+    original = store.connect
+    instructions = [0]
+    @contextmanager
+    def bounded():
+        with original() as c:
+            def budget():
+                instructions[0] += 100
+                return int(instructions[0] > 20000)
+            c.set_progress_handler(budget,100)
+            yield c
+    monkeypatch.setattr(store,"connect",bounded)
+    result = getattr(store,method)(now)
+    assert len(result) == 10
+    if method == "latest_metrics":
+        assert all(r["ts"] == now-60 and r["value"] == 20 for r in result)
+    else:
+        assert all(v == (30,2) for v in result.values())
+    assert instructions[0] < 20000  # Retained rows must not consume the live-query budget.
