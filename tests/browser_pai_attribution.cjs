@@ -30,7 +30,7 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       document.addEventListener('click',e=>{if(e.target.closest('a[download]'))e.preventDefault();});
     }, fixtures);
     for (const name of ['components.js','pai.js']) await page.addScriptTag({path:path.join(root,'web/js',name)});
-    for (const locale of ['zh','en']) for (const width of [390,1440]) {
+    for (const locale of ['zh','en']) for (const width of [320,390,760,1024,1180,1440]) {
       await page.setViewportSize({width,height:1000});
       await page.evaluate(async locale=>{window.locale=locale;window.fixture=structuredClone(window.originalFixture);await GM.render();},locale);
       const table=page.locator('.pai-rank-table.feature');
@@ -41,8 +41,18 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       assert.equal(await unranked.locator('tr.root').count(),1);
       assert.equal(await unranked.locator('.pai-rank-no').count(),0);
       assert.match(await unranked.locator('tr.group').textContent(),locale==='zh'?/不参与排名/:/unranked/);
+      assert.equal(await page.locator('.pai-rank-method').evaluate(n=>n.open),false);
+      assert.equal(await page.locator('.pai-rank-attr').isVisible(),false);
+      assert.equal(await page.locator('.pai-rank-warning').count(),0);
+      assert.equal(await page.locator('.pai-rank-row-details[open]').count(),0);
+      assert.equal(await ranked.locator('.pai-rank-src').first().isVisible(),false);
+      assert.equal(await unranked.locator('.pai-rank-unattributed').isVisible(),true);
       // Visible splits close: direct + attributed = feature total; attributed + unattributed = root total.
       for (const row of [...await ranked.locator('tr').all(),unranked.locator('tr.root')]) {
+        const detail=row.locator('.pai-rank-row-details');
+        await detail.locator('summary').click();
+        assert.equal(await detail.evaluate(n=>n.open),true);
+        assert.equal(await row.locator('.pai-rank-src').isVisible(),true);
         const n=s=>Number(s.replaceAll(',',''));
         const total=n(await row.locator('.pai-rank-usage-top b').textContent());
         const parts=(await row.locator('.pai-rank-src b').allTextContents()).map(n);
@@ -54,6 +64,21 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       const attr=page.locator('.pai-rank-attr');
       assert.equal(await attr.evaluate(n=>n.classList.contains('info')),true);
       assert.match(await attr.textContent(),locale==='zh'?/历史窗口同样按当前角色重算/:/recalculated with current roles/);
+      await page.locator('.pai-rank-method > summary').focus();
+      await page.keyboard.press('Enter');
+      assert.equal(await attr.isVisible(),true);
+      assert.match(await attr.innerText(),locale==='zh'?/成员归属更新时间.*北京时间/:/Member attribution updated.*Asia\/Shanghai/);
+      await page.evaluate(()=>GM.render());
+      assert.equal(await page.locator('.pai-rank-method').evaluate(n=>n.open),true);
+      assert.equal(await page.locator('.pai-rank-row-details[open]').count(),3);
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      if(process.env.SHOT_DIR && [390,1440].includes(width)){
+        require('node:fs').mkdirSync(process.env.SHOT_DIR,{recursive:true});
+        await page.screenshot({path:path.join(process.env.SHOT_DIR,`details-${locale}-${width}-open.png`),fullPage:true});
+      }
+      await page.locator('.pai-rank-method > summary').click();
+      while (await page.locator('.pai-rank-row-details[open]').count()) await page.locator('.pai-rank-row-details[open]').first().locator('summary').click();
+      if(process.env.SHOT_DIR && [390,1440].includes(width)) await page.screenshot({path:path.join(process.env.SHOT_DIR,`details-${locale}-${width}-closed.png`),fullPage:true});
       // 72 observed hours * 20 GPUs = 1440, not 2016 (which would add root twice).
       const total=await page.locator('.pai-rank-stat.total b').textContent();
       assert.equal(Number(total.replaceAll(',','')),windowTotal(fixtures));
@@ -72,6 +97,10 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       console.log(`PASS ${locale} ${width}px: root unranked, feature rank, totals, attribution and CSV`);
     }
     await page.evaluate(async()=>{window.locale='zh';window.fixture=structuredClone(window.originalFixture);fixture.feature_attribution.fresh=false;fixture.feature_attribution.state='error';await GM.render();});
+    assert.equal(await page.locator('.pai-rank-warning').isVisible(),true);
+    assert.equal(await page.locator('.pai-rank-attr.warn').isVisible(),false);
+    await page.getByRole('button',{name:'查看详情',exact:true}).click();
+    assert.equal(await page.locator('.pai-rank-attr.warn').isVisible(),true);
     assert.match(await page.locator('.pai-rank-attr.warn').textContent(),/成员角色读取失败.*暂不归入 Feature.*历史窗口同样按当前角色重算/);
     assert.equal(await page.locator('.pai-rank-attr.info').count(),0);
     assert.equal(await page.locator('.pai-rank-degraded').count(),1);
@@ -79,6 +108,12 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
     assert.equal(await page.locator('.pai-rank-no.top').count(),0);
     // Attribution not run: show unknown, never a computed zero.
     assert.deepEqual(await page.locator('.pai-rank-table.feature .pai-rank-src .via b').allTextContents(),['—','—','—']);
+    await page.locator('.pai-rank-method > summary').click();
+    for (const state of ['stale','unknown']) {
+      await page.evaluate(async state=>{fixture.feature_attribution.state=state;await GM.render();},state);
+      assert.equal(await page.locator('.pai-rank-warning').isVisible(),true);
+      assert.equal(await page.locator('.pai-rank-method').evaluate(n=>n.open),false);
+    }
     await page.getByRole('button',{name:'用户',exact:true}).click();
     assert.equal(await page.locator('.pai-rank-table.feature').count(),0);
     assert.equal(await page.locator('.pai-rank-table.user').count(),1);

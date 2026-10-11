@@ -195,13 +195,14 @@ boundaries, including the default, retain the existing accounting.
   Quota history is kept for 32 days with the same hourly boundaries as task rankings.
 - The page opens with a window summary: occupied GPU hours (deduplicated across all tasks), estimated pool GPU utilization, compute efficiency while occupied,
   current pool task occupancy and active features (active users in the user view). “Near full” (window occupancy ≥ 90%) and “Low compute” (occupied-time compute efficiency
-  < 10%) are cues only and do not change the order. Calculation notes are collapsed below the table; the attribution basis,
-  the note that history is recalculated with current roles, and the role snapshot time stay visible above the ranking.
-- In feature usage bars, solid is direct submissions and outlined is attribution from the root quota, with both GPU-hour values
-  listed below. The root quota shares the table as a separate unranked group and shows its unattributed part, with reasons, in gray.
+  < 10%) are cues only and do not change the order. Attribution rules, current-role history recalculation, observation times and denominators live in the collapsed reporting disclosure.
+  The member-attribution update time includes the reporting timezone.
+- In feature usage bars, solid is direct submissions and outlined is attribution from the root quota, with both GPU-hour values, measurement time and denominators
+  available through each row’s keyboard- and touch-accessible “Usage details”. The root quota remains a separate unranked group; its unattributed amount stays visible and reasons are in the disclosure.
   Borrowing is the purple strip below the bar, on the same scale and a subset of the total. Within a row the displayed split adds up
   to the total; the CSV keeps exact values. When member roles are stale or unavailable, attribution values show “—”, the heading is
-  marked “Attribution degraded”, and the order is labeled “Provisional order: direct GPU-hours only”.
+  marked “Attribution degraded”, a short visible warning links to the details, and the order is labeled “Provisional order: direct GPU-hours only”.
+  Normal-state explanations no longer occupy the space above the ranking. Summary cards retain core values and coverage. Open disclosures survive dimension changes and refreshes.
 - **CSV export** includes the window, generation time, task-history start, truncation flag and every returned
   row. Feature exports add capacity GPU hours, used GPU hours, observed hours, coverage and compute metrics
   for checking weekly reports. Unknown values are empty; exporting never sends reports or messages.
