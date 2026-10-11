@@ -3,20 +3,20 @@
 简体中文 | [English](README.en.md)
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.2">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="当前发布版：Cluster GPU Monitor v0.6.2">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.3">
+    <img src="docs/assets/badges/release.svg" alt="当前发布版：Cluster GPU Monitor v0.6.3">
   </a>
 </p>
 
 <p align="center">
   <a href="https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/MrZoyo/cluster-gpu-monitor/test.yml?branch=main&amp;style=for-the-badge&amp;label=TESTS&amp;logo=githubactions&amp;logoColor=white" alt="测试状态">
+    <img src="docs/assets/badges/ci.svg" alt="GitHub Actions 测试入口">
   </a>
   <a href="https://www.python.org/">
-    <img src="https://img.shields.io/badge/PYTHON-3.12%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.12 或更高版本">
+    <img src="docs/assets/badges/python.svg" alt="Python 3.12 或更高版本">
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/LICENSE-MIT-2EA44F?style=for-the-badge&amp;logo=opensourceinitiative&amp;logoColor=white" alt="MIT 许可证">
+    <img src="docs/assets/badges/license.svg" alt="MIT 许可证">
   </a>
 </p>
 
@@ -32,8 +32,8 @@
 [原生部署](docs/DEPLOYMENT.md) ·
 [Docker Compose](docs/DOCKER.md)
 
-v0.6.2 将借用卡纳入已分配总数，并区分原配额空闲展示与实测利用率。
-见[发布说明](docs/RELEASE_0.6.2.md)与 [PAI 指南](docs/PAI.md)。
+v0.6.3 支持根配额任务归属 Feature、整行展开详情，以及不重启 Web 的前端发布。
+见[发布说明](docs/RELEASE_0.6.3.md)与 [PAI 指南](docs/PAI.md)。
 
 ## 为什么用它
 
@@ -177,7 +177,7 @@ HTTPS 反向代理之后；仓库同时提供原生 systemd/Caddy 部署和 Dock
 | --- | --- | --- |
 | 选择文档 | [文档目录](docs/README.md) | [Documentation index](docs/README.en.md) |
 | 使用 PAI 监控 | [PAI 指南](docs/PAI.md) | [PAI guide](docs/PAI.en.md) |
-| 了解本版变更 | [v0.6.2 发布说明](docs/RELEASE_0.6.2.md) | [Release notes](docs/RELEASE_0.6.2.md#english) |
+| 了解本版变更 | [v0.6.3 发布说明](docs/RELEASE_0.6.3.md) | [Release notes](docs/RELEASE_0.6.3.md#english) |
 | 配置机器与运行参数 | [配置参考](docs/CONFIGURATION.md) | [Configuration reference](docs/CONFIGURATION.en.md) |
 | 理解采集、存储与指标 | [架构与设计取舍](docs/ARCHITECTURE.md) | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) |
 | 生成或发布演示数据 | [Demo 指南](docs/DEMO.md) | [Demo guide](docs/DEMO.en.md) |

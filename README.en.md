@@ -3,20 +3,20 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.2">
-    <img src="https://img.shields.io/badge/CURRENT_RELEASE-v0.6.2-009688?style=for-the-badge&amp;logo=github&amp;logoColor=white" alt="Current release: Cluster GPU Monitor v0.6.2">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.3">
+    <img src="docs/assets/badges/release.svg" alt="Current release: Cluster GPU Monitor v0.6.3">
   </a>
 </p>
 
 <p align="center">
   <a href="https://github.com/MrZoyo/cluster-gpu-monitor/actions/workflows/test.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/MrZoyo/cluster-gpu-monitor/test.yml?branch=main&amp;style=for-the-badge&amp;label=TESTS&amp;logo=githubactions&amp;logoColor=white" alt="Test status">
+    <img src="docs/assets/badges/ci.svg" alt="GitHub Actions workflows">
   </a>
   <a href="https://www.python.org/">
-    <img src="https://img.shields.io/badge/PYTHON-3.12%2B-3776AB?style=for-the-badge&amp;logo=python&amp;logoColor=white" alt="Python 3.12 or newer">
+    <img src="docs/assets/badges/python.svg" alt="Python 3.12 or newer">
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/LICENSE-MIT-2EA44F?style=for-the-badge&amp;logo=opensourceinitiative&amp;logoColor=white" alt="MIT License">
+    <img src="docs/assets/badges/license.svg" alt="MIT License">
   </a>
 </p>
 
@@ -33,8 +33,8 @@ The two resource types keep separate accounting; installations without PAI retai
 [Native deployment](docs/DEPLOYMENT.en.md) ·
 [Docker Compose](docs/DOCKER.en.md)
 
-v0.6.2 includes borrowed GPUs in allocation totals and separates quota-idle display values from measured utilization.
-See the [release notes](docs/RELEASE_0.6.2.md#english) and [PAI guide](docs/PAI.en.md).
+v0.6.3 adds root-quota feature attribution, whole-row details, and frontend publication without restarting Web.
+See the [release notes](docs/RELEASE_0.6.3.md#english) and [PAI guide](docs/PAI.en.md).
 
 ## Why use it
 
@@ -194,7 +194,7 @@ and rollback.
 | --- | --- | --- |
 | Choose a guide | [Documentation index](docs/README.en.md) | [文档目录](docs/README.md) |
 | Use PAI monitoring | [PAI guide](docs/PAI.en.md) | [PAI 指南](docs/PAI.md) |
-| Read about this release | [Release notes](docs/RELEASE_0.6.2.md#english) | [v0.6.2 发布说明](docs/RELEASE_0.6.2.md) |
+| Read about this release | [Release notes](docs/RELEASE_0.6.3.md#english) | [v0.6.3 发布说明](docs/RELEASE_0.6.3.md) |
 | Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
 | Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
 | Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |

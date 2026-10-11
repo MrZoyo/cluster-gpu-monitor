@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.2 release notes](RELEASE_0.6.2.md#english) — PAI allocation totals include borrowing, with quota-idle display fixes.
+Current version: [v0.6.3 release notes](RELEASE_0.6.3.md#english) — root-quota attribution, whole-row details, and frontend releases without Web restarts.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |
