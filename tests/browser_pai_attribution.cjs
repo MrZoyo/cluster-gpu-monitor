@@ -114,6 +114,24 @@ const fixtures = JSON.parse(execFileSync(process.env.PYTHON || path.join(root, '
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
       console.log(`PASS ${locale} ${width}px: root unranked, feature rank, totals, attribution and CSV`);
     }
+    await page.evaluate(async()=>{
+      window.locale='zh';window.fixture=structuredClone(window.originalFixture);
+      fixture.quota_coverage_basis='window_excluding_known_absence';
+      const feature=fixture.features[0];
+      feature.expected_quota_hours=feature.observed_quota_hours;
+      feature.absent_quota_hours=42.72;feature.quota_coverage_pct=100;
+      await GM.render();
+    });
+    const coveredRow=page.locator('.pai-rank-table.feature tbody.ranked tr').first();
+    await coveredRow.locator('.pai-feature-toggle').click();
+    assert.match(await coveredRow.textContent(),/应观测时长.*已排除不存在时长/);
+    assert.match(await coveredRow.textContent(),/42.7/);
+    assert.doesNotMatch(await coveredRow.locator('.c-metric').first().textContent(),/仅覆盖/);
+    await page.getByRole('button',{name:'导出 CSV',exact:true}).click();
+    const coverageCsv=await page.evaluate(()=>window.csvPromise);
+    for(const field of ['expected_quota_hours','absent_quota_hours','quota_coverage_basis','window_excluding_known_absence']) assert(coverageCsv.includes(field));
+    console.log('PASS excluded absence: disclosure, coverage hint and CSV');
+    await coveredRow.locator('.pai-feature-toggle').click();
     await page.evaluate(async()=>{window.locale='zh';window.fixture=structuredClone(window.originalFixture);fixture.feature_attribution.fresh=false;fixture.feature_attribution.state='error';await GM.render();});
     assert.equal(await page.locator('.pai-rank-warning').isVisible(),true);
     assert.equal(await page.locator('.pai-rank-attr.warn').isVisible(),false);

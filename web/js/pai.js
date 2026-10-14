@@ -1029,14 +1029,14 @@ window.PaiUI = (() => {
     const feature = dimension === "feature";
     const rows = feature ? [...(data.features || []), ...(data.root_quota ? [data.root_quota] : [])] : data.users || [];
     const fields = feature ? ["quota_id", "quota_name", "is_root", "rank", "direct_gpu_hours", "root_attributed_gpu_hours", "unattributed_gpu_hours", "gpu_hours", "quota_gpu_hours", "borrowed_gpu_hours",
-      "capacity_gpu_hours", "used_gpu_hours", "occupancy_pct", "observed_quota_hours", "quota_coverage_pct",
+      "capacity_gpu_hours", "used_gpu_hours", "occupancy_pct", "observed_quota_hours", "expected_quota_hours", "absent_quota_hours", "quota_coverage_pct",
       "effective_gpu_hours", "measured_gpu_hours", "hardware_efficiency_pct", "gpu_metric_coverage_pct", "compute_mean", "gpu_memory_mean", "cpu_core_hours", "mem_gib_hours", "workloads",
       "current_capacity_gpu", "current_used_gpu", "current_occupancy_pct", "current_allocated_gpu", "current_ancestor_allocated_gpu", "quota_fresh"]
       : ["user_id", "username", "gpu_hours", "borrowed_gpu_hours", "effective_gpu_hours", "measured_gpu_hours",
         "hardware_efficiency_pct", "gpu_metric_coverage_pct", "compute_mean", "gpu_memory_mean", "cpu_core_hours", "cpu_util_mean", "mem_gib_hours", "ram_util_mean", "workloads"];
     const cell = (v) => '"' + String(v == null ? "" : v).replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
-    const metadata = ["window", "timezone", "week_start", "reset_time", "since_local", "until_local", "generated_local", "history_first_hour_local", "truncated", "boundary_estimate"];
-    const prefix = [data.window, data.timezone, data.week_start, data.reset_time, ...[data.since, data.until, data.generated_at, data.first_hour].map(ts => reportClock(ts, data.timezone)), data.truncated, data.boundary_estimate];
+    const metadata = ["window", "timezone", "week_start", "reset_time", "since_local", "until_local", "generated_local", "history_first_hour_local", "truncated", "boundary_estimate", "quota_coverage_basis"];
+    const prefix = [data.window, data.timezone, data.week_start, data.reset_time, ...[data.since, data.until, data.generated_at, data.first_hour].map(ts => reportClock(ts, data.timezone)), data.truncated, data.boundary_estimate, data.quota_coverage_basis];
     const clusterFields = ["task_utilization_estimate_pct", "task_occupancy_pct", "task_estimate_coverage_pct", "task_estimate_hours", "task_capacity_gpu_hours", "task_occupied_gpu_hours", "task_effective_gpu_hours", "physical_utilization_pct", "physical_metric_coverage_pct", "scope"];
     metadata.push(...clusterFields.map(k => "cluster_" + k));
     prefix.push(...clusterFields.map(k => data.cluster?.[k]));
@@ -1124,6 +1124,8 @@ window.PaiUI = (() => {
       [t("配额观测时长 / 覆盖率", "Quota observation hours / coverage"), `${rankNumber(row.observed_quota_hours)} h / ${share(row.quota_coverage_pct)}`]);
     else info.push([t("CPU 核·小时", "CPU core-hours"), rankNumber(row.cpu_core_hours)],
       [t("内存 GiB·小时", "RAM GiB-hours"), rankNumber(row.mem_gib_hours)]);
+    if (dimension === "feature" && row.expected_quota_hours != null) info.push(
+      [t("应观测时长 / 已排除不存在时长", "Expected hours / excluded absence"), `${rankNumber(row.expected_quota_hours)} h / ${rankNumber(row.absent_quota_hours)} h`]);
     return el("details", { class: "pai-rank-row-details", open: rankState.rowDetails.has(key) ? "" : null,
       ontoggle: e => { if (e.target.isConnected) e.target.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key); } }, [
       el("summary", { "aria-label": `${name || ""} · ${t("用量详情", "Usage details")}`,
@@ -1169,9 +1171,13 @@ window.PaiUI = (() => {
       // 各行覆盖率通常与资源池相同，只在明显不同的行单独提示。
       const ownCoverage = r.quota_coverage_pct != null && r.quota_coverage_pct < 99 &&
         (!root || Math.abs(r.quota_coverage_pct - (root.quota_coverage_pct || 0)) > 1);
+      const coverageDetail = r.expected_quota_hours == null ? "" : t(
+        `；应观测 ${rankNumber(r.expected_quota_hours)} 小时，已排除配额不存在的 ${rankNumber(r.absent_quota_hours)} 小时；采集失败仍计缺测`,
+        `; ${rankNumber(r.expected_quota_hours)} expected hours, excluding ${rankNumber(r.absent_quota_hours)} hours of known absence; collection failures remain missing`);
       const occTitle = t(`已观测用量 ${rankNumber(r.used_gpu_hours)} / 容量 ${rankNumber(r.capacity_gpu_hours)} GPU·小时；观测 ${rankNumber(r.observed_quota_hours)} 小时，覆盖 ${share(r.quota_coverage_pct)}`,
-        `Observed used ${rankNumber(r.used_gpu_hours)} / capacity ${rankNumber(r.capacity_gpu_hours)} GPU-hours; ${rankNumber(r.observed_quota_hours)} hours observed, ${share(r.quota_coverage_pct)} coverage`);
+        `Observed used ${rankNumber(r.used_gpu_hours)} / capacity ${rankNumber(r.capacity_gpu_hours)} GPU-hours; ${rankNumber(r.observed_quota_hours)} hours observed, ${share(r.quota_coverage_pct)} coverage`) + coverageDetail;
       const occSub = r.is_root ? t("资源池整体，含子配额", "Whole pool, incl. children")
+        : r.expected_quota_hours === 0 ? t("该窗口内配额不存在", "Quota absent throughout this window")
         : ownCoverage ? (r.quota_coverage_pct > 0 ? t(`仅覆盖 ${share(r.quota_coverage_pct)}`, `Only ${share(r.quota_coverage_pct)} covered`) : t("该窗口无配额历史", "No quota history in this window"))
         : null;
       const now = !inSnapshot ? meterCell(null, { sub: t("不在当前配额列表", "Not in current quotas") })

@@ -108,6 +108,17 @@ class PaiStore:
                 CREATE TABLE IF NOT EXISTS quota_cursor (
                     quota_id TEXT PRIMARY KEY, quota_name TEXT, observed_at REAL NOT NULL,
                     capacity REAL NOT NULL, used REAL NOT NULL);
+                -- Empty quota_id is the duration of complete topology observations.
+                -- Other rows record presence, independent of capacity/usage validity.
+                CREATE TABLE IF NOT EXISTS quota_presence_hour (
+                    hour INTEGER NOT NULL, quota_id TEXT NOT NULL, present_s REAL NOT NULL,
+                    PRIMARY KEY(hour, quota_id));
+                CREATE TABLE IF NOT EXISTS quota_presence_cursor (
+                    id INTEGER PRIMARY KEY CHECK(id=1), observed_at REAL NOT NULL, payload TEXT NOT NULL);
+                -- Explicitly evidenced historical absence; never backfill usage/capacity.
+                CREATE TABLE IF NOT EXISTS quota_absence_override (
+                    hour INTEGER NOT NULL, quota_id TEXT NOT NULL, absent_s REAL NOT NULL,
+                    reason TEXT NOT NULL, PRIMARY KEY(hour, quota_id));
                 CREATE TABLE IF NOT EXISTS usage_paused (
                     workload_id TEXT PRIMARY KEY, observed_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS usage_cursor (
@@ -249,7 +260,7 @@ class PaiStore:
                     c.execute(f"UPDATE usage_hour SET {col}_sum=?, {col}_n=? WHERE hour=? AND workload_id=?",
                               (r["s"], r["n"], r["hour"], r["workload_id"]))
 
-    def record_quota_usage(self, quotas, now, max_gap):
+    def record_quota_usage(self, quotas, now, max_gap, *, snapshot_complete=False):
         """Integrate the previous observed quota values; never backfill before first sight.
 
         Missing/failed sources clear cursors. Long gaps count only the first max_gap
@@ -262,6 +273,7 @@ class PaiStore:
                    math.isfinite(v) and v >= 0 for v in (cap, used)):
                 valid[q["quota_id"]] = q
         with self.connect() as c:
+            self._record_quota_presence(c, quotas, now, max_gap, snapshot_complete)
             previous = {r["quota_id"]: dict(r) for r in c.execute("SELECT * FROM quota_cursor")}
             for qid, q in valid.items():
                 old = previous.get(qid)
@@ -286,6 +298,53 @@ class PaiStore:
             for qid in previous.keys() - valid.keys():
                 c.execute("DELETE FROM quota_cursor WHERE quota_id=?", (qid,))
             c.execute("DELETE FROM quota_hour WHERE hour < ?", (now - USAGE_RETENTION_S,))
+
+    @staticmethod
+    def _record_quota_presence(c, quotas, now, max_gap, complete):
+        """Only a complete successful snapshot establishes that an ID is absent."""
+        old = c.execute("SELECT observed_at,payload FROM quota_presence_cursor WHERE id=1").fetchone()
+        if old and now <= old["observed_at"]:
+            return
+        if not complete:
+            c.execute("DELETE FROM quota_presence_cursor WHERE id=1")
+        else:
+            ids = sorted({q["quota_id"] for q in quotas})
+            if any(not isinstance(qid, str) or not qid for qid in ids) or len(ids) > 32:
+                raise ValueError("invalid quota presence snapshot")
+            if old:
+                t = old["observed_at"]
+                stop = min(now, t + max_gap)
+                previous_ids = ["", *json.loads(old["payload"])]
+                while t < stop:
+                    hour = int(t // 3600 * 3600)
+                    end = min(stop, hour + 3600)
+                    c.executemany("""INSERT INTO quota_presence_hour VALUES (?,?,?)
+                        ON CONFLICT(hour,quota_id) DO UPDATE SET present_s=present_s+excluded.present_s""",
+                        [(hour, qid, end - t) for qid in previous_ids])
+                    t = end
+            c.execute("INSERT OR REPLACE INTO quota_presence_cursor VALUES (1,?,?)", (now, json.dumps(ids)))
+        for table in ("quota_presence_hour", "quota_absence_override"):
+            c.execute(f"DELETE FROM {table} WHERE hour < ?", (now - USAGE_RETENTION_S,))
+
+    def quota_coverage(self, since, until, *, observed_until=None):
+        """Exclude known absence, retaining failures and unobserved history as unknown.
+
+        A newly discovered quota was absent in earlier complete snapshots even if
+        its ID was not yet known. Old databases retain the conservative full window.
+        """
+        observed_until = until if observed_until is None else observed_until
+        result = {"known_s": 0, "present_s": {}, "historical_absent_s": {}}
+        with self.connect() as c:
+            for table, column, target in (("quota_presence_hour", "present_s", "present_s"),
+                                           ("quota_absence_override", "absent_s", "historical_absent_s")):
+                if not c.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone():
+                    continue
+                cte, params = _window_cte(table, since, until, observed_until)
+                rows = c.execute(cte + f"""SELECT quota_id, SUM({column} * weight) seconds
+                    FROM weighted WHERE weight > 0 GROUP BY quota_id LIMIT 1000""", params).fetchall()
+                result[target] = {r["quota_id"]: r["seconds"] for r in rows}
+            result["known_s"] = result["present_s"].pop("", 0)
+        return result
 
     def record_cluster_usage(self, summary, now, max_gap):
         """Time-integrate bounded observations; no retrospective capacity or donor inference."""

@@ -904,3 +904,105 @@ def test_snapshot_metric_queries_ignore_large_expired_history(store, monkeypatch
     else:
         assert all(v == (30,2) for v in result.values())
     assert instructions[0] < 20000  # Retained rows must not consume the live-query budget.
+
+
+def test_quota_presence_excludes_only_successful_absence_and_bounds_outages(store):
+    def q(qid, cap=8):
+        return {'quota_id': qid, 'quota_name': qid, 'gpu_capacity': cap, 'gpu_used': 0}
+    # Complete snapshots establish presence even if the numeric counters are unknown.
+    store.record_quota_usage([q('root'), q('f', None)], 0, 120, snapshot_complete=True)
+    store.record_quota_usage([q('root')], 120, 120, snapshot_complete=True)
+    store.record_quota_usage([q('root')], 240, 120, snapshot_complete=True)
+    coverage = store.quota_coverage(0, 240)
+    assert coverage['known_s'] == 240
+    assert coverage['present_s']['f'] == 120
+    assert coverage['present_s']['root'] == 240
+    assert not any(r['quota_id'] == 'f' for r in store.quota_ranking(0, 240))
+    # Error clears continuity, rather than treating an empty fallback as absence.
+    store.record_quota_usage([], 360, 120, snapshot_complete=False)
+    store.record_quota_usage([q('root')], 480, 120, snapshot_complete=True)
+    assert store.quota_coverage(0, 480)['known_s'] == 240
+    store.record_quota_usage([q('root')], 1200, 120, snapshot_complete=True)
+    assert store.quota_coverage(0, 1200)['known_s'] == 360
+    store.record_quota_usage([q('root')], 1200, 120, snapshot_complete=True)
+    assert store.quota_coverage(0, 1200)['known_s'] == 360
+    # Retention applies to presence and manual exclusions, too.
+    with store.connect() as c:
+        c.execute("INSERT INTO quota_absence_override VALUES (0,'f',120,'confirmed deletion')")
+    store.record_quota_usage([], 33 * 86400, 120, snapshot_complete=False)
+    assert store.quota_coverage(0, 1200) == {'known_s': 0, 'present_s': {}, 'historical_absent_s': {}}
+
+
+def test_quota_coverage_existing_missing_new_absent_and_legacy(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    now = 86400
+    cfg.db_path = str(store.path)
+    monkeypatch.setattr(pai, 'load_pai_settings', lambda: cfg)
+    monkeypatch.setattr(pai.time, 'time', lambda: now)
+    store.save('quotas', [{'quota_id': q, 'quota_name': q} for q in ('active', 'new', 'absent')], now=now)
+    # Over the whole window, topology was complete for 23h; one hour is unknown.
+    with store.connect() as c:
+        for hour in range(0, 23 * 3600, 3600):
+            c.execute('INSERT INTO quota_presence_hour VALUES (?,?,?)', (hour, '', 3600))
+            c.execute('INSERT INTO quota_presence_hour VALUES (?,?,?)', (hour, 'active', 3600))
+        # New quota existed for the final observed hour only; previous 22h were absent.
+        c.execute("INSERT INTO quota_presence_hour VALUES (79200,'new',3600)")
+        c.execute("INSERT INTO quota_hour VALUES (79200,'new','new',3600,28800,14400)")
+        c.execute("INSERT INTO quota_hour VALUES (0,'active','active',3600,28800,14400)")
+    data = pai.pai_ranking(Response(), '24h')
+    fs = {f['quota_id']: f for f in data['features']}
+    assert fs['new']['observed_quota_hours'] == 1
+    assert fs['new']['absent_quota_hours'] == 22
+    assert fs['new']['expected_quota_hours'] == 2
+    assert fs['new']['quota_coverage_pct'] == 50
+    assert fs['active']['expected_quota_hours'] == 24
+    assert fs['active']['quota_coverage_pct'] == pytest.approx(100 / 24)
+    assert fs['absent']['expected_quota_hours'] == 1
+    assert fs['absent']['quota_coverage_pct'] == 0  # Unknown hour remains missing.
+    with store.connect() as c:
+        c.execute("INSERT INTO quota_presence_hour VALUES (82800,'',3600)")
+    fs = {f['quota_id']: f for f in pai.pai_ranking(Response(), '24h')['features']}
+    assert fs['absent']['quota_coverage_pct'] is None
+    assert fs['new']['quota_coverage_pct'] == 100
+    # Additive migrations: an older DB remains readable without presence tables.
+    with store.connect() as c:
+        c.execute('DROP TABLE quota_presence_hour')
+        c.execute('DROP TABLE quota_absence_override')
+    fs = {f['quota_id']: f for f in pai.pai_ranking(Response(), '24h')['features']}
+    assert fs['new']['expected_quota_hours'] == 24
+    assert fs['new']['quota_coverage_pct'] == pytest.approx(100 / 24)
+
+
+def test_historical_absence_changes_denominator_only_and_respects_boundaries(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    now = 86400
+    cfg.db_path = str(store.path)
+    monkeypatch.setattr(pai, 'load_pai_settings', lambda: cfg)
+    monkeypatch.setattr(pai.time, 'time', lambda: now)
+    with store.connect() as c:
+        c.execute("INSERT INTO quota_hour VALUES (0,'merged','Merged',3600,28800,14400)")
+        c.execute("INSERT INTO quota_absence_override VALUES (3600,'merged',3600,'user confirmed deletion')")
+    data = pai.pai_ranking(Response(), '24h')
+    f = data['features'][0]
+    assert f['observed_quota_hours'] == 1
+    assert f['expected_quota_hours'] == 23 and f['absent_quota_hours'] == 1
+    assert f['quota_coverage_pct'] == pytest.approx(100 / 23)
+    assert f['capacity_gpu_hours'] == 8 and f['used_gpu_hours'] == 4 and f['occupancy_pct'] == 50
+    assert store.quota_coverage(5400, 7200)['historical_absent_s']['merged'] == 1800
+
+
+def test_multi_role_users_direct_submissions_are_not_ambiguous(store, cfg, monkeypatch):
+    from gpumon.api import pai
+    now = 36000
+    cfg.db_path = str(store.path)
+    monkeypatch.setattr(pai, 'load_pai_settings', lambda: cfg)
+    monkeypatch.setattr(pai.time, 'time', lambda: now)
+    store.save('quotas', [{'quota_id': q, 'quota_name': q} for q in (cfg.quota_id, 'a', 'b')], now=now)
+    store.save('feature_memberships', [{'user_id': 'multi', 'quota_ids': ['a', 'b']}], now=now)
+    store.record_usage([{'WorkloadId': q, 'UserId': 'multi', 'QuotaId': q, 'gpus': 1, 'dequeued_at': now-120}
+                        for q in (cfg.quota_id, 'a', 'b')], now, 360)
+    d = pai.pai_ranking(Response(), '24h')
+    assert d['feature_attribution']['unresolved_root_gpu_hours'] == {'multiple_features': 120/3600}
+    assert all(f['direct_gpu_hours'] == 120/3600 and f['root_attributed_gpu_hours'] == 0 for f in d['features'])
+    assert d['totals']['gpu_hours'] == pytest.approx(360/3600)
+    assert len(d['users']) == 1 and len(d['users'][0]['quotas']) == 3

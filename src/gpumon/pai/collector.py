@@ -293,7 +293,8 @@ def run_once(cfg, store, client=None):
                              "cpu": w.get("requested_cpu"), "mem_gib": w.get("requested_mem_gib")}
                             for w in observed], now, 2 * cfg.degraded_interval_s,
                            workload_snapshot=False if "workloads" in errors else workloads)
-        store.record_quota_usage([] if "quotas" in errors else quota_rows, now, 2 * cfg.degraded_interval_s)
+        store.record_quota_usage([] if "quotas" in errors else quota_rows, now, 2 * cfg.degraded_interval_s,
+                                 snapshot_complete="quotas" not in errors)
         store.refresh_utilization(now)
     except sqlite3.Error:
         errors["usage"] = "store_error"

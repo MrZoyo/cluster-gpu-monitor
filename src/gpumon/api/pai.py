@@ -122,6 +122,7 @@ def pai_ranking(response: Response, window: str = Query("week")):
         data = store.ranking(until, until - since, since=since, observed_until=now)
         cluster_history = store.cluster_ranking(since, until, observed_until=now)
         quota_history = store.quota_ranking(since, until, observed_until=now)
+        quota_coverage = store.quota_coverage(since, until, observed_until=now)
         sources = store.sources()
         quota_source = sources.get("quotas", {})
         quota_rows = quota_source.get("payload") or []
@@ -244,7 +245,16 @@ def pai_ranking(response: Response, window: str = Query("week")):
         f.update(observed_quota_hours=hours(r["observed_s"]), capacity_gpu_hours=hours(r["capacity_gpu_s"]),
                  used_gpu_hours=hours(r["used_gpu_s"]), quota_first_hour=r["first_hour"],
                  occupancy_pct=r["used_gpu_s"] / r["capacity_gpu_s"] * 100 if r["capacity_gpu_s"] else None,
-                 quota_coverage_pct=min(100, r["observed_s"] / (until - since) * 100) if until > since else 0)
+                 quota_coverage_pct=0)
+    for f in features.values():
+        qid = f["quota_id"]
+        absent_s = max(0, quota_coverage["known_s"] - quota_coverage["present_s"].get(qid, 0))
+        absent_s += quota_coverage["historical_absent_s"].get(qid, 0)
+        # Unknown intervals remain in the denominator. Known absence changes
+        # neither observed quota time nor capacity/use integrals.
+        expected_s = max(0, until - since - absent_s)
+        f.update(expected_quota_hours=hours(expected_s), absent_quota_hours=hours(absent_s),
+                 quota_coverage_pct=min(100, f["observed_quota_hours"] * 3600 / expected_s * 100) if expected_s else None)
     ordered = sorted((f for f in features.values() if not f["is_root"]),
                      key=lambda f: (-f["gpu_hours"], -f["cpu_core_hours"], f["quota_name"]))
     known = data["first_hour"] is not None and data["first_hour"] < until
@@ -272,5 +282,6 @@ def pai_ranking(response: Response, window: str = Query("week")):
             "bucket_s": 3600, "users": result[:200], "features": ordered[:200],
             "root_quota": root, "totals": totals, "feature_attribution": attribution,
             "user_quota_basis": "submission_quota", "root_quota_usage_scope": "direct_submissions",
+            "quota_coverage_basis": "window_excluding_known_absence",
             "quota_fetched_at": quota_source.get("fetched_at"), "quota_fresh": fresh,
             "truncated": len(result) > 200 or len(ordered) > 200 or data["truncated"]}
