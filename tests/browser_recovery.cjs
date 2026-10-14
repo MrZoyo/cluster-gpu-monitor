@@ -218,7 +218,9 @@ const server = http.createServer((req, res) => {
     }
     await normal.evaluate(async () => { I18n.locale = 'zh'; await GM.render(); });
     await normal.getByRole('button', { name: '上周', exact: true }).click();
-    await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
+    // Background refresh intentionally leaves the old export button available.
+    // Wait for the requested window to commit, not for content to disappear/reappear.
+    await normal.waitForFunction(() => document.querySelector('[data-win="last_week"]')?.getAttribute('aria-pressed') === 'true');
     check('last week request', rankRequests.at(-1).endsWith('window=last_week'));
     const downloadPromise = normal.waitForEvent('download');
     await normal.getByRole('button', { name: '导出 CSV' }).click();
@@ -234,7 +236,7 @@ const server = http.createServer((req, res) => {
     check('user bar borrowing is a subset', Math.abs(await normal.locator('.pai-rank-table .pai-rank-bar i').evaluateAll(ns => ns.reduce((a, n) => a + parseFloat(n.style.width), 0)) - 100) < 0.01);
     check('user ranking preserved', (await normal.locator('.pai-rank-table').innerText()).includes('Example user'));
     await normal.getByLabel('滚动时间窗').selectOption('24h');
-    await normal.getByRole('button', { name: '导出 CSV' }).waitFor();
+    await normal.waitForFunction(() => document.querySelector('.pai-rank-roll')?.classList.contains('active'));
     check('legacy window preserved', rankRequests.at(-1).endsWith('window=24h'));
     await normal.evaluate(() => GM.render());
     check('dimension survives refresh', await normal.getByRole('button', { name: '用户', exact: true }).getAttribute('aria-pressed') === 'true');
@@ -283,7 +285,7 @@ const server = http.createServer((req, res) => {
       since: Date.parse('2026-10-04T10:30:00Z') / 1000, until: now, boundary_estimate: true };
     await normal.route('**/api/pai/ranking?*', r => r.fulfill({ json: configured }));
     await normal.getByRole('button', { name: 'This week', exact: true }).click();
-    await normal.getByRole('button', { name: 'Export CSV' }).waitFor();
+    await normal.waitForFunction(() => document.querySelector('[data-win="week"]')?.getAttribute('aria-pressed') === 'true');
     check('configured screenshot period matches API window', await normal.getByRole('button', { name: 'This week', exact: true }).getAttribute('aria-pressed') === 'true');
     check('configured timezone formats the reporting window', (await normal.locator('.pai-rank-range').innerText()).includes('2026-10-04 06:30'));
     check('configured week rule replaces hardcoded Monday', (await normal.locator('.pai-rank-method').textContent()).includes('America/New_York Sunday 06:30'));

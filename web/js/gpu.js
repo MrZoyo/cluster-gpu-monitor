@@ -26,7 +26,7 @@ window.Views.gpu = (function () {
     const found = findGpu(ov, params.id);
     if (!found) { root.innerHTML = `<p class='note'>${I18n.t('gpu_not_found')}</p>`; return; }
     const { g, h, c } = found;
-    GM.crumb(`${I18n.t('overview')} › ${c.name} › ${h.display_name} › GPU #${g.index}`);
+    GM.crumb(`${I18n.t('overview')} › ${c.name} › ${h.display_name} › GPU #${g.index}`, root);
     root.innerHTML = "";
     root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/host/${h.key}`) }, [I18n.t('back_to', { name: h.display_name })]));
     if (UI.hostHealth(h) !== "online") root.appendChild(

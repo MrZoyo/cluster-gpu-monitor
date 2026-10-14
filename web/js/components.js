@@ -143,7 +143,10 @@ window.UI = (function () {
     if (attrs) for (const k in attrs) {
       if (k === "class") e.className = attrs[k];
       else if (k === "style") e.style.cssText = attrs[k];
-      else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
+      else if (k.startsWith("on") && attrs[k]) {
+        (e._uiEvents ||= {})[k.slice(2)] = attrs[k];
+        e.addEventListener(k.slice(2), attrs[k]);
+      }
       else if (attrs[k] != null) e.setAttribute(k, attrs[k]);
     }
     (children || []).forEach((c) => {
@@ -239,6 +242,7 @@ window.UI = (function () {
     // 满载 100 是利用率唯一的 3 位数，18px 下会撞上左上角 #index 与右上角状态点 → 收窄一档。
     const nowCls = "now" + (String(nowText).length >= 3 ? " now-wide" : "");
     const node = el("div", {
+      "data-refresh-key": g.gpu_id == null ? String(g.index) : String(g.gpu_id),
       class: cls,
       style: bg ? `--util-color:${bg};--util-pct:${pct}%` : "",
       title: (opts.host ? hostStatusDetail(opts.host) + "\n" : "") +
@@ -307,7 +311,7 @@ window.UI = (function () {
   function lineChart(dom, series, opts) {
     opts = opts || {};
     const theme = chartTheme();
-    const chart = echarts.init(dom);
+    const chart = window.LiveDOM ? LiveDOM.chart(dom) : echarts.init(dom);
     chart.setOption({
       backgroundColor: "transparent",
       tooltip: { trigger: "axis", axisPointer: { type: "line" }, backgroundColor: theme.tooltipBg, borderColor: theme.tooltipBorder, textStyle: { color: cssVar("--ink", "#f7f7f7") } },
@@ -329,7 +333,7 @@ window.UI = (function () {
   function barChart(dom, labels, values, opts) {
     opts = opts || {};
     const theme = chartTheme();
-    const chart = echarts.init(dom);
+    const chart = window.LiveDOM ? LiveDOM.chart(dom) : echarts.init(dom);
     chart.setOption({
       backgroundColor: "transparent",
       tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: theme.tooltipBg, borderColor: theme.tooltipBorder, textStyle: { color: cssVar("--ink", "#f7f7f7") } },
@@ -391,5 +395,6 @@ window.UI = (function () {
     return el("span", { class: "badge-row" }, kids);
   }
 
-  return { hostHealth, hostStatus, hostStatusDetail, utilColor, fmtPct, fmtGB, clusterVar, escapeHtml, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
+  const live = node => window.LiveDOM ? LiveDOM.live(node) : node;
+  return { live, hostHealth, hostStatus, hostStatusDetail, utilColor, fmtPct, fmtGB, clusterVar, escapeHtml, Palette, el, gpuCard, gpuPlaceholder, utilCell, lineChart, barChart, ago, badgeRow };
 })();

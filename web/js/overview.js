@@ -254,7 +254,7 @@ window.Views.overview = (function () {
     const cards = (h.gpus && h.gpus.length)
       ? h.gpus.map((g) => gpuCard(g, { host: h, offline, onClick: (x) => GM.go(`/gpu/${x.gpu_id}`) }))
       : Array.from({ length: h.gpu_count || 0 }, (_, i) => gpuPlaceholder(i, h.display_name));
-    const row = el("div", { class: `host-row host-${UI.hostHealth(h)} ${h.status === "planned" ? "planned-host" : ""}` }, [
+    const row = el("div", { "data-refresh-key": h.key, class: `host-row host-${UI.hostHealth(h)} ${h.status === "planned" ? "planned-host" : ""}` }, [
       el("div", { class: "host-name", onclick: () => GM.go(`/host/${h.key}`) }, [
         el("div", { class: "hn" }, [h.display_name]),
         el("div", { class: "hs" }, [`${statusLabel} · ${I18n.t('cards_seen', {seen: h.gpus_seen ?? 0, expected: h.gpu_count})}`]),
@@ -298,7 +298,7 @@ window.Views.overview = (function () {
 
   async function render(root) {
     const w = GM.state.window;
-    GM.crumb(I18n.t('overview'));
+    GM.crumb(I18n.t('overview'), root);
     const [ov, multi] = await Promise.all([API.overview(w), API.avgMulti("host", "util_gpu")]);
     if (!root.isConnected) return;
     const groups = groupClusters(ov);

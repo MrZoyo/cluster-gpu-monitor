@@ -13,7 +13,7 @@ window.Views.host = (function () {
       if (h) { host = h; cluster = c; break; }
     }
     if (!host) { root.innerHTML = `<p class='note'>${I18n.t('host_not_found')}</p>`; return; }
-    GM.crumb(`${I18n.t('overview')} › ${cluster.name} › ${host.display_name}`);
+    GM.crumb(`${I18n.t('overview')} › ${cluster.name} › ${host.display_name}`, root);
     root.innerHTML = "";
     root.appendChild(el("span", { class: "back", onclick: () => GM.go(`/cluster/${cluster.key}`) }, [I18n.t('back_to', { name: cluster.name })]));
 

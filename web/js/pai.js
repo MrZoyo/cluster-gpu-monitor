@@ -537,7 +537,7 @@ window.PaiUI = (() => {
   function nodeTile(n) {
     const who = n.owners.length ? n.owners.join(" · ") : n.free === n.cards.length
       ? (n.possibly_borrowed ? t("可能被借用", "Possibly borrowed") : t("原配额空闲", "Quota idle")) : "—";
-    return el("a", { class: "pai-node-tile" + (n.NodeStatus !== "Ready" || n.unhealthy ? " cordoned" : ""), href: href("node", n.NodeName),
+    return el("a", { "data-refresh-key": n.NodeName, class: "pai-node-tile" + (n.NodeStatus !== "Ready" || n.unhealthy ? " cordoned" : ""), href: href("node", n.NodeName),
       title: n.NodeName + (n.quotaNames.length ? "\n" + t("所属配额：", "Quota: ") + n.quotaNames.join(", ") : "")
         + n.healTasks.map((w) => "\n" + healText(n, w)).join("") }, [
       el("div", { class: "pai-node-tile-head" }, [el("span", { class: "pai-node-name" }, [n.short]), ...nodeChips(n)]),
@@ -567,7 +567,7 @@ window.PaiUI = (() => {
   function nodeRow(n, m) {
     const byId = Object.fromEntries(m.workloads.map((w) => [w.WorkloadId, w]));
     const jobs = n.workloadIds.map((id) => byId[id]).filter(Boolean);
-    return el("div", { class: "pai-node-row" }, [
+    return el("div", { class: "pai-node-row", "data-refresh-key": n.NodeName }, [
       el("a", { class: "pai-node-id", href: href("node", n.NodeName), title: n.NodeName }, [
         el("b", {}, [n.short]),
         el("small", {}, [`${n.GPUType || "GPU"} · ${gpus(n.GPU)} GPU` + (n.quotaNames.length ? " · " + n.quotaNames.join(", ") : "")]),
@@ -588,8 +588,8 @@ window.PaiUI = (() => {
     const draw = () => {
       const rows = m.nodes.filter((n) => ui.nodes === "all" || (ui.nodes === "busy" ? n.assigned : n.free))
         .sort((a, b) => b.assigned - a.assigned || a.NodeName.localeCompare(b.NodeName));
-      list.replaceChildren(...(rows.length ? rows.map((n) => nodeRow(n, m)) : [note(t("没有符合条件的节点", "No matching nodes"))]));
-      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.k === ui.nodes));
+      UI.live(list).replaceChildren(...(rows.length ? rows.map((n) => nodeRow(n, m)) : [note(t("没有符合条件的节点", "No matching nodes"))]));
+      UI.live(seg).querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.k === ui.nodes));
     };
     const seg = el("div", { class: "pai-seg" }, filters.map(([k, label, n]) => el("button", {
       "data-k": k, onclick: () => { ui.nodes = k; draw(); } }, [label, el("span", { class: "count" }, [String(n)])])));
@@ -704,7 +704,7 @@ window.PaiUI = (() => {
     const body = rows.map((w) => {
       const scheduled = num(w.scheduled_gpu), requested = num(w.requested_gpu);
       const tip = w.measured ? t(`最新计算值 ${w.measured} 卡；近 10 分钟均值 <${LOW}% 的 ${w.low} 卡`, `${w.measured} GPUs with recent compute; ${w.low} with 10-min mean under ${LOW}%`) : "";
-      return el("tr", { class: w.unschedulable ? "pai-row-bad" : w.queued ? "pai-row-queued" : null }, [
+      return el("tr", { "data-refresh-key": w.WorkloadId, class: w.unschedulable ? "pai-row-bad" : w.queued ? "pai-row-queued" : null }, [
         el("td", { "data-label": label("name") }, [el("div", { class: "pai-wl" }, [
           link(w.WorkloadName, href("workload", w.WorkloadId), "pai-wl-name"),
           el("div", { class: "pai-wl-sub" }, [typeChip(w.WorkloadType), el("span", {}, [w.quota]), w.oversold ? oversoldChip() : null]),
@@ -748,9 +748,9 @@ window.PaiUI = (() => {
       const sortNote = ui.sort === "low" ? el("div", { class: "pai-sort-note" }, [
         t(`按“近 10 分钟计算 <${LOW}%”的卡数排序`, `Sorted by GPUs with 10-min compute under ${LOW}%`),
         el("button", { type: "button", class: "pai-link-btn", onclick: () => { ui.sort = "gpu"; ui.desc = true; draw(); } }, [t("恢复默认排序", "Reset sort")])]) : null;
-      host.replaceChildren(...[sortNote, workloadsTable(list, { redraw: draw }),
+      UI.live(host).replaceChildren(...[sortNote, workloadsTable(list, { redraw: draw }),
         opts.limit && total > list.length ? el("a", { class: "pai-more", href: href("workloads") }, [t(`查看全部 ${total} 个任务 →`, `All ${total} workloads →`)]) : null].filter(Boolean));
-      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.k === ui.type));
+      UI.live(seg).querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.k === ui.type));
     }
     draw();
     const unmapped = m.sx.unmapped.length, hidden = m.sx.hidden.length;
@@ -800,7 +800,7 @@ window.PaiUI = (() => {
         [t("配额统计用量", "Quota-counted usage"), (u) => gpus(u.used_gpu), true], [t("已映射物理卡", "Mapped GPUs"), (u) => String(u.mapped), true],
         [t("计算均值", "Compute"), (u) => bar(u.compute, { stale: u.stale })], [t("显存均值", "Memory"), (u) => bar(u.memory, { memory: true, stale: u.stale })],
         [t(`计算<${LOW}%`, `<${LOW}%`), lowCell], [t("核对", "Check"), conflictFlag]]);
-    const body = rows.map((u) => el("tr", {}, cols.map(([label, cell, numeric]) => el("td", { "data-label": label, class: numeric ? "num" : "" }, [cell(u)]))));
+    const body = rows.map((u) => el("tr", { "data-refresh-key": u.UserId }, cols.map(([label, cell, numeric]) => el("td", { "data-label": label, class: numeric ? "num" : "" }, [cell(u)]))));
     return el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table" + (compact ? " compact" : "") }, [
       el("thead", {}, [el("tr", {}, cols.map(([label, , numeric]) => el("th", { class: numeric ? "num" : "" }, [label])))]),
       el("tbody", {}, body.length ? body : [el("tr", {}, [el("td", { colspan: cols.length, class: "pai-empty" }, [t("当前无记录", "No records")])])]),
@@ -844,7 +844,7 @@ window.PaiUI = (() => {
           ? t("常规运行任务卡数（优先调度量，缺失时用申请量）与配额接口的“本配额分配”不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (scheduled, requested as fallback) differ from the quota's own allocation; check the PAI console.")
           : t("常规运行任务卡数（优先调度量，缺失时用申请量）（含子配额用量）与配额用量不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (plus subquota usage) differ from quota usage; check the PAI console.") },
           [t(`任务申请 ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "分配" : "用量"} ${gpus(q.reported)}`, `Requested ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "allocated" : "used"} ${gpus(q.reported)}`)]));
-        return el("div", { class: "pai-quota" + (root ? " root" : "") }, [
+        return el("div", { "data-refresh-key": q.quota_id, class: "pai-quota" + (root ? " root" : "") }, [
           el("div", { class: "pai-quota-main" }, [
             el("span", { class: "pai-quota-name", title: q.quota_name }, [root ? "" : "└ ", q.quota_name || q.quota_id, root ? el("small", {}, [t(" 根", " root")]) : null]),
             el("span", { class: "pai-quota-bar" }, segs),
@@ -905,7 +905,9 @@ window.PaiUI = (() => {
       ])]),
     ]);
     if (ui.sourcesOpen) details.open = true;
-    details.addEventListener("toggle", () => { ui.sourcesOpen = details.open; });
+    const remember = e => { if (!window.LiveDOM?.draft(e.currentTarget)) ui.sourcesOpen = e.currentTarget.open; };
+    details._uiEvents = { toggle: remember };
+    details.addEventListener("toggle", remember);
     return details;
   }
 
@@ -917,7 +919,7 @@ window.PaiUI = (() => {
   function seriesChart(dom, groups) {
     const text = cssVar("--chart-text", "#93a0b4"), ink = cssVar("--ink", "#eef2f8");
     const colors = UI.Palette.seriesColors(groups.filter((g) => !g.mean).length);
-    const chart = echarts.init(dom);
+    const chart = window.LiveDOM ? LiveDOM.chart(dom) : echarts.init(dom);
     chart.setOption({
       backgroundColor: "transparent", color: colors, animation: false,
       // richText 模式：Pod/GPU 维度来自云端，避免作为 HTML 渲染。
@@ -954,7 +956,7 @@ window.PaiUI = (() => {
     let data;
     try { data = await API.paiSeries(w.WorkloadId); } catch (e) {
       if (!host.isConnected) return;
-      PageRecovery.show();
+      if (!GM.refreshFailed?.(host)) PageRecovery.show();
       Object.values(boxes).forEach((b) => b.lastChild.replaceChildren(note(t("曲线读取失败", "Failed to load series"))));
       return;
     }
@@ -1127,7 +1129,7 @@ window.PaiUI = (() => {
     if (dimension === "feature" && row.expected_quota_hours != null) info.push(
       [t("应观测时长 / 已排除不存在时长", "Expected hours / excluded absence"), `${rankNumber(row.expected_quota_hours)} h / ${rankNumber(row.absent_quota_hours)} h`]);
     return el("details", { class: "pai-rank-row-details", open: rankState.rowDetails.has(key) ? "" : null,
-      ontoggle: e => { if (e.target.isConnected) e.target.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key); } }, [
+      ontoggle: e => { if (e.target.isConnected && !window.LiveDOM?.draft(e.target)) e.target.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key); } }, [
       el("summary", { "aria-label": `${name || ""} · ${t("用量详情", "Usage details")}`,
         onclick: e => { e.currentTarget.parentElement.open ? rankState.rowDetails.delete(key) : rankState.rowDetails.add(key); } }, [t("用量详情", "Usage details")]),
       el("div", { class: "pai-rank-detail-body" }, [...children, metaList(info)]),
@@ -1214,15 +1216,16 @@ window.PaiUI = (() => {
         "aria-label": `${r.quota_name} · ${t("展开详情", "Toggle details")}`,
         "aria-controls": detailId, "aria-expanded": String(detail.open),
         onclick: () => {
-          detail.open = !detail.open;
-          toggle.setAttribute("aria-expanded", String(detail.open));
+          const current = UI.live(detail);
+          current.open = !current.open;
+          UI.live(toggle).setAttribute("aria-expanded", String(current.open));
           const key = `feature:${r.quota_id}`;
-          detail.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key);
+          current.open ? rankState.rowDetails.add(key) : rankState.rowDetails.delete(key);
         } }, [el("span", { "aria-hidden": "true" }, ["▸"])]);
-      return el("tr", { class: ["pai-feature-row", r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim(),
+      return el("tr", { "data-refresh-key": r.quota_id, class: ["pai-feature-row", r.is_root ? "root" : "", r.gpu_hours ? "" : "zero"].join(" ").trim(),
         onclick: e => {
           if (e.target.closest("button, a, input, select, textarea, summary, .pai-rank-detail-body") || window.getSelection()?.toString()) return;
-          toggle.click();
+          UI.live(toggle).click();
         } }, [
         td(0, r.is_root ? null : rankBadge(r.rank, r.gpu_hours > 0 && attrOk)),
         td(1, el("div", { class: "pai-rank-name" }, [toggle, el("div", {}, [
@@ -1266,7 +1269,7 @@ window.PaiUI = (() => {
       const tags = (u.quotas || []).filter((q) => q.gpu_hours > 0 || q.oversold_gpu_hours > 0).sort((a, b) => b.gpu_hours - a.gpu_hours);
       const parts = tags.map((q) => ({ v: q.gpu_hours, color: colorOf(q.quota_id), title: `${q.quota_name} · ${hrs(q.gpu_hours)} GPU·h` }));
       parts.push({ v: u.oversold_gpu_hours, idle: true, title: t(`闲时资源 ${hrs(u.oversold_gpu_hours)} GPU·h`, `Idle-time ${hrs(u.oversold_gpu_hours)} GPU-h`) });
-      return el("tr", { class: u.gpu_hours ? null : "zero" }, [
+      return el("tr", { "data-refresh-key": u.user_id, class: u.gpu_hours ? null : "zero" }, [
         td(0, rankBadge(i + 1, u.gpu_hours > 0)),
         td(1, el("div", { class: "pai-rank-name" }, [el("div", {}, [
           link(u.username, href("user", u.user_id)),
@@ -1384,7 +1387,7 @@ window.PaiUI = (() => {
     items.push(t(`每周起点：${weekRule(data)}。历史按 UTC 小时汇总，保留 32 天；周界未对齐 UTC 整点时，边界小时按重叠时长估算。CSV 包含时区、周界、分母和覆盖率。`,
       `Weeks start ${weekRule(data)}. History uses UTC-hour buckets, kept for 32 days; partial boundary hours are estimated by overlap. CSV includes timezone, week rule, denominators and coverage.`));
     return el("details", { class: "pai-rank-method", open: rankState.methodOpen ? "" : null,
-      ontoggle: (e) => { if (e.target.isConnected) rankState.methodOpen = e.target.open; } }, [
+      ontoggle: (e) => { if (e.target.isConnected && !window.LiveDOM?.draft(e.target)) rankState.methodOpen = e.target.open; } }, [
       el("summary", { onclick: e => { rankState.methodOpen = !e.currentTarget.parentElement.open; } }, [t("统计说明与数据详情", "How it is computed · data details")]),
       dimension === "feature" && data.root_quota ? attributionNote(data) : null,
       el("div", { class: "pai-rank-report-data" }, [metaList([
@@ -1421,7 +1424,7 @@ window.PaiUI = (() => {
   }
 
   function rankContent(data, failed, redraw) {
-    const dim = rankState.dimension, w = rankState.window;
+    const dim = rankState.dimension, w = data?.window || rankState.window;
     const rolling = !["week", "last_week"].includes(w);
     const segButton = (key, label, pressed, onclick, attr) => el("button", { type: "button", class: pressed ? "active" : null,
       "aria-pressed": String(pressed), [attr]: key, onclick }, [label]);
@@ -1476,12 +1479,12 @@ window.PaiUI = (() => {
   async function rankingPanel(host) {
     const box = el("section", { class: "panel pai-panel pai-rank" });
     let data = null, failed = false;
-    const draw = () => box.replaceChildren(...rankContent(data, failed, draw));
+    const draw = () => UI.live(box).replaceChildren(...rankContent(data, failed, draw));
     draw();
     host.appendChild(box);
     try { data = await API.paiRanking(rankState.window); } catch (e) {
       if (!host.isConnected) return;
-      PageRecovery.show();
+      if (!GM.refreshFailed?.(host)) PageRecovery.show();
       failed = true; draw();
       return;
     }
@@ -1505,7 +1508,7 @@ window.PaiUI = (() => {
 // ── 首页：两个平台入口，各自显示来源新鲜度，不合并统计 ─────────────
 Views.home = { async render(root) {
   const { el, t, note, chip, pct, ago } = PaiUI;
-  GM.crumb(t("首页", "Home"));
+  GM.crumb(t("首页", "Home"), root);
   const stat = (k, v, hint) => el("div", { class: "mini-metric", title: hint || null }, [el("span", {}, [k]), el("b", {}, [v])]);
   const shell = (cls, eyebrow, title, desc, path, go) => {
     const body = el("div", { class: "home-body" }, [note(t("读取中…", "Loading…"))]);
@@ -1530,12 +1533,12 @@ Views.home = { async render(root) {
   await Promise.allSettled([
     API.paiOverview().then((raw) => {
       if (!root.isConnected) return;
-      if (!raw.nodes) { pai.status.replaceChildren(chip(raw.state)); pai.body.replaceChildren(note(t("暂无快照", "No snapshot yet"))); return; }
+      if (!raw.nodes) { GM.refreshFailed?.(root); pai.status.replaceChildren(chip(raw.state)); pai.body.replaceChildren(note(t("暂无快照", "No snapshot yet"))); return; }
       const m = PaiUI.prepare(raw), s = m.sx;
       pai.status.replaceChildren(...[chip(m.state), el("small", {}, [ago(m.updatedAt)]),
         s.queued.length ? el("span", { class: "pai-chip " + (s.unschedulable.length ? "bad" : "warn") },
           [t(`排队 ${s.queued.length}`, `${s.queued.length} queued`) + (s.unschedulable.length ? t(`（${s.unschedulable.length} 可能排不上）`, ` (${s.unschedulable.length} at risk)`) : "")]) : null].filter(Boolean));
-      GM.setSourceHealth("pai", m.state, m.updatedAt);
+      GM.setSourceHealth("pai", m.state, m.updatedAt, root);
       pai.body.replaceChildren(
         el("div", { class: "home-stats" }, [
           stat(t("已分配 / 物理卡", "Allocated / physical"), `${m.summary.mapped_gpus ?? "—"} / ${s.physical}`),
@@ -1548,7 +1551,7 @@ Views.home = { async render(root) {
           s.oversoldGpu ? t(`闲时任务占用 ${s.oversoldGpu} 卡，物理位置未公开；属于图中自有池容量，不额外增加卡数。`, `Idle-time tasks occupy ${s.oversoldGpu} GPUs. Their donor is undisclosed; these GPUs belong to the owned pool and add no capacity. `) : "",
           s.unmapped.length ? t(`${s.unmapped.length} 个配额内任务未关联到节点。`, `${s.unmapped.length} in-quota workloads lack node mapping.`) : ""].join("")),
       );
-    }).catch(() => { if (root.isConnected) { PageRecovery.show(); pai.status.replaceChildren(chip("error")); pai.body.replaceChildren(note(t("PAI 快照读取失败", "Failed to read PAI snapshot"))); } }),
+    }).catch(() => { if (root.isConnected) { if (!GM.refreshFailed?.(root)) PageRecovery.show(); pai.status.replaceChildren(chip("error")); pai.body.replaceChildren(note(t("PAI 快照读取失败", "Failed to read PAI snapshot"))); } }),
     API.overview(GM.state.window).then((ov) => {
       if (!root.isConnected) return;
       const s = ov.summary || {};
@@ -1567,7 +1570,7 @@ Views.home = { async render(root) {
         stripOf(all.flatMap((h) => (h.gpus || []).map((g) => (h.online ? g.util_recent ?? null : null)))),
         GM.state.baremetalNotice ? el("div", { class: "pai-note" }, [GM.state.baremetalNotice]) : note(t("每格一张 GPU，颜色为近 10 分钟利用率。", "One square per GPU, colored by 10-minute utilization.")),
       );
-    }).catch(() => { if (root.isConnected) { PageRecovery.show(); bare.status.replaceChildren(chip("error")); bare.body.replaceChildren(note(t("裸金属数据读取失败", "Failed to read bare-metal data"))); } }),
+    }).catch(() => { if (root.isConnected) { if (!GM.refreshFailed?.(root)) PageRecovery.show(); bare.status.replaceChildren(chip("error")); bare.body.replaceChildren(note(t("裸金属数据读取失败", "Failed to read bare-metal data"))); } }),
   ]);
 }};
 
@@ -1576,18 +1579,19 @@ Views.pai = { async render(root, params) {
   const P = PaiUI;
   const { el, t, note, chip, href } = P;
   const tabName = { overview: t("总览", "Overview"), nodes: t("节点", "Nodes"), workloads: t("任务", "Workloads"), users: t("用户", "Users"), ranking: t("排行", "Ranking") };
-  GM.crumb(tabName[params.tab] || "PAI");
+  GM.crumb(tabName[params.tab] || "PAI", root);
   const raw = await API.paiOverview();
   if (!root.isConnected) return;
   root.classList.add("pai-scope");
   if (!raw.nodes) {
-    GM.setSourceHealth("pai", raw.state, null);
+    GM.refreshFailed?.(root);
+    GM.setSourceHealth("pai", raw.state, null, root);
     root.appendChild(el("section", { class: "panel pai-empty-state" }, [el("h3", {}, ["PAI"]), chip(raw.state),
       note(raw.state === "waiting" ? t("采集器尚未完成首轮采集。", "The collector has not finished its first round.") : t("PAI 模块未启用。", "The PAI module is disabled."))]));
     return;
   }
   const m = P.prepare(raw);
-  GM.setSourceHealth("pai", m.state, m.updatedAt);
+  GM.setSourceHealth("pai", m.state, m.updatedAt, root);
   const tab = params.tab || "overview";
   const activeTab = { node: "nodes", workload: "workloads", user: "users" }[tab] || tab;
   // 排行页与裸金属排行一致：左上角“返回总览”。
@@ -1619,7 +1623,7 @@ Views.pai = { async render(root, params) {
     const n = m.nodes.find((x) => x.NodeName === params.id);
     if (!n) root.appendChild(P.panel(t("节点未找到", "Node not found"), [P.back(t("节点列表", "Nodes"), href("nodes"))]));
     else {
-      GM.crumb(t("节点 › ", "Nodes › ") + n.short);
+      GM.crumb(t("节点 › ", "Nodes › ") + n.short, root);
       const byId = Object.fromEntries(m.workloads.map((w) => [w.WorkloadId, w]));
       const rows = n.cards.flatMap((c) => (c.assignments.length ? c.assignments : [null]).map((a) => [c, a]));
       root.appendChild(P.back(t("节点列表", "Nodes"), href("nodes")));
@@ -1664,7 +1668,7 @@ Views.pai = { async render(root, params) {
     root.appendChild(P.back(t("用户列表", "Users"), href("users")));
     if (!u) root.appendChild(P.panel(t("用户未找到", "User not found"), [note(t("该用户不在当前快照中。", "This user is not in the current snapshot."))]));
     else {
-      GM.crumb(t("用户 › ", "Users › ") + u.Username);
+      GM.crumb(t("用户 › ", "Users › ") + u.Username, root);
       root.appendChild(el("section", { class: "panel pai-panel" }, [
         el("div", { class: "pai-detail-title" }, [el("h2", {}, [u.Username]), P.conflictFlag(u)]),
         P.miniMetrics([[t("运行任务", "Running"), P.gpus(u.running_workloads)], [t("申请 GPU", "Requested GPU"), P.gpus(u.submitted_gpu)],
@@ -1685,7 +1689,7 @@ Views.pai = { async render(root, params) {
     root.appendChild(P.back(t("任务列表", "Workloads"), href("workloads")));
     if (!w) root.appendChild(P.panel(t("任务未找到", "Workload not found"), [note(t("任务不存在或已离开活跃列表。", "Missing or no longer active."))]));
     else {
-      GM.crumb(t("任务 › ", "Workloads › ") + w.WorkloadName);
+      GM.crumb(t("任务 › ", "Workloads › ") + w.WorkloadName, root);
       const pods = [...new Set(w.gpus.map((g) => g.pod))];
       const dimCard = (g) => ({ index: g.gpu, assignments: [], state: g.compute ? "measured" : "assigned",
         compute: g.compute && { value: g.compute.value, sampled_at: g.compute.ts, fresh: g.compute.fresh, recent: g.compute.recent_mean, recent_n: g.compute.recent_n },

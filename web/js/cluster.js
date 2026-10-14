@@ -19,7 +19,7 @@ window.Views.cluster = (function () {
     const c = ov.clusters[idx];
     if (!c) { root.innerHTML = `<p class='note'>${I18n.t('cluster_not_found')}</p>`; return; }
     const accent = clusterColorFor(ov, c).color;
-    GM.crumb(`${I18n.t('overview')} › ${c.name}`);
+    GM.crumb(`${I18n.t('overview')} › ${c.name}`, root);
     root.innerHTML = "";
     root.appendChild(el("span", { class: "back", onclick: () => GM.go(GM.overviewPath()) }, [I18n.t('back_to_overview')]));
 

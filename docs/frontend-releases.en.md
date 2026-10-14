@@ -64,3 +64,16 @@ The local integration suite follows HTML-pinned JS/CSS URLs while performing thr
 and three rollbacks, checks the same server PID and health responses, and exercises rejected
 and failed activations. It is local evidence, not a guarantee against unrelated production
 network, proxy or backend failures.
+
+## Background data refresh and version notices
+
+Automatic data refresh keeps the current view usable while requests are pending. Completed responses
+update existing rows, values and chart series while retaining scroll, filters, disclosures and chart
+instances. A failed request keeps the last successful view and shows a stale-data notice until a retry
+succeeds. Responses from a route that has been left cannot overwrite the new page.
+
+The browser identifies its loaded version from pinned `/_frontend/<version>/` URLs and checks the
+existing `/api/frontend-release` endpoint at most once per minute. A changed version prompts the user
+to reload; it never reloads automatically. Failed version checks do not interrupt data updates.
+The existing script/style and unhandled-error recovery notice remains available. Static demos without
+version-pinned assets do not perform version checks.

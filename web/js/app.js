@@ -4,11 +4,14 @@ window.GM = (function () {
   let renderGeneration = 0;
   let charts = [];        // 当前视图的 ECharts 实例，切换视图前统一 dispose
   let refreshTimer = null;
+  let draftHost = null;
+  let interaction = 0;
 
   function go(path) { location.hash = "#" + path; }
   // 裸金属总览的地址：未启用 PAI 时就是根路径，界面与原版完全一致；启用后根路径是双入口首页。
   function overviewPath() { return state.paiEnabled ? "/baremetal" : "/"; }
-  function crumb(text) {
+  function crumb(text, root) {
+    if (window.LiveDOM?.draft(root)) { root._crumb = text; return; }
     const node = document.getElementById("crumb");
     node.textContent = text;
     node.title = text;
@@ -60,7 +63,7 @@ window.GM = (function () {
       document.addEventListener("click", close);
     }, 0);
   }
-  function onResize(chart) { charts.push(chart); }
+  function onResize(chart) { if (!chart._draft) charts.push(chart); }
   function disposeCharts() { charts.forEach((c) => { try { c.dispose(); } catch (e) {} }); charts = []; }
 
   function updateDemoBanner() {
@@ -102,36 +105,75 @@ window.GM = (function () {
     return { view: "overview", params: {} };
   }
 
-  // soft=true 用于定时刷新：保持页面高度与滚动位置，避免每两分钟跳回顶部。
+  function refreshFailed(root) {
+    const draft = window.LiveDOM?.draft(root);
+    if (!draft) return false;
+    draft._failed = true;
+    return true;
+  }
+  function stale(show) {
+    let banner = document.getElementById('refresh-stale');
+    if (!show) { banner?.remove(); return; }
+    if (!banner) {
+      banner = UI.el('div', { id: 'refresh-stale', class: 'refresh-stale', role: 'status' });
+      document.body.appendChild(banner);
+    }
+    banner.textContent = I18n.getLocale() === 'zh'
+      ? '后台刷新失败，当前保留上次数据，可能已陈旧；正在等待下一次重试。'
+      : 'Background refresh failed. Showing previous data, which may be stale; retrying on the next refresh.';
+  }
+
+  // Fetch into an isolated connected draft, then update the existing live nodes.
   async function render(opts) {
     const soft = !!(opts && opts.soft === true);
     const generation = ++renderGeneration;
     if (refreshTimer) clearTimeout(refreshTimer);
+    draftHost?.remove(); draftHost = null;
     const route = parseRoute();
     if (route.redirect) { history.replaceState(null, "", "#" + route.redirect); }
     const view = document.getElementById("view");
-    const scrollY = window.scrollY;
-    view.style.minHeight = soft ? view.offsetHeight + "px" : "";
     const root = UI.el("div", {}, []);
-    view.replaceChildren(root);
-    buildModuleNav(route.view, route.params);
-    disposeCharts();
+    const background = soft && !!view.firstElementChild && !!window.LiveDOM;
+    const startedInteraction = interaction;
+    let holder;
+    if (background) {
+      holder = document.createElement('div'); holder.hidden = true; holder.inert = true;
+      root.setAttribute('data-refresh-draft', '');
+      holder.attachShadow({ mode: 'open' }).appendChild(root);
+      document.body.appendChild(holder); draftHost = holder;
+    } else {
+      view.replaceChildren(root);
+      buildModuleNav(route.view, route.params);
+      disposeCharts(); stale(false);
+    }
     try {
       await Views[route.view].render(root, route.params);
+      if (generation !== renderGeneration) return;
+      if (root._failed) throw new Error('Background data unavailable');
+      if (background && startedInteraction === interaction) {
+        LiveDOM.commit(view.firstElementChild, root);
+        charts = charts.filter(c => !c.isDisposed());
+        if (root._crumb != null) crumb(root._crumb);
+        if (root._sourceHealth) Object.assign(state.sourceHealth ||= {}, root._sourceHealth);
+        stale(false);
+      }
     } catch (e) {
       if (generation !== renderGeneration) return;
-      root.innerHTML = "";
-      root.appendChild(UI.el("div", { class: "panel" }, [
-        UI.el("h3", {}, [I18n.t('load_failed')]),
-        UI.el("div", { class: "note" }, [PageRecovery.message()]),
-      ]));
-      PageRecovery.show();
-      console.error(e);
+      if (background) stale(true);
+      else {
+        root.replaceChildren(UI.el("div", { class: "panel" }, [
+          UI.el("h3", {}, [I18n.t('load_failed')]), UI.el("div", { class: "note" }, [PageRecovery.message()]),
+        ]));
+        PageRecovery.show(); console.error(e);
+      }
+    } finally {
+      holder?.remove();
+      if (draftHost === holder) draftHost = null;
     }
     if (generation !== renderGeneration) return;
-    if (soft) { view.style.minHeight = ""; window.scrollTo(0, scrollY); }
     scheduleRefresh(route.view);
     pollHealth();
+    PageRecovery.checkVersion?.();
   }
 
   function scheduleRefresh(view) {
@@ -177,7 +219,10 @@ window.GM = (function () {
   }
 
   // 首页 / PAI 页的顶栏状态灯由视图在读取快照后写入，不额外轮询云端或快照接口。
-  function setSourceHealth(source, sourceState, ts) {
+  function setSourceHealth(source, sourceState, ts, root) {
+    if (window.LiveDOM?.draft(root)) {
+      (root._sourceHealth ||= {})[source] = { state: sourceState, ts }; return;
+    }
     state.sourceHealth = state.sourceHealth || {};
     state.sourceHealth[source] = { state: sourceState, ts };
     pollHealth();
@@ -219,6 +264,7 @@ window.GM = (function () {
   }
 
   async function pollHealth() {
+    PageRecovery.checkVersion?.();
     const dot = document.getElementById("hdot");
     const txt = document.getElementById("htext");
     const generation = renderGeneration;
@@ -284,6 +330,9 @@ window.GM = (function () {
     buildThemeSwitch();
     buildWinSwitch();
     updateDemoBanner();
+    for (const event of ['input', 'change', 'click']) document.getElementById('view').addEventListener(event, e => {
+      if (event !== 'click' || e.target.closest('.pai-seg, .sortable, .pai-rank-more, .pai-link-btn')) interaction++;
+    }, true);
     // 设置 navRank 文字
     document.getElementById("navRankText").textContent = I18n.t('user_ranking');
     window.addEventListener("hashchange", render);
@@ -306,7 +355,7 @@ window.GM = (function () {
     setInterval(pollHealth, 15000);
   }
 
-  return { state, go, overviewPath, crumb, render, setSourceHealth, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, updateDemoBanner, init };
+  return { state, go, overviewPath, crumb, render, refreshFailed, setSourceHealth, onResize, buildLangSwitch, buildThemeSwitch, buildWinSwitch, updateDemoBanner, init };
 })();
 
 document.addEventListener("DOMContentLoaded", () => { GM.init().catch(PageRecovery.show); });

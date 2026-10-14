@@ -209,7 +209,12 @@ boundaries, including the default, retain the existing accounting.
   for checking weekly reports. Unknown values are empty; exporting never sends reports or messages.
 
 Pages refresh every 120 seconds while retaining scroll, filters and expanded sections; typing in the
-search field postpones refresh. Source details include fetch times, sample times and failure categories.
+search field postpones refresh. Requests run in the background while the current view stays usable.
+Successful responses update existing rows, values and chart series; chart instances and legend choices
+survive. Failed requests retain the last successful view and display a stale-data notice until recovery.
+Frontend version checks remain separate: a newer bundle prompts a reload without reloading automatically;
+the existing script/style failure recovery message is also retained.
+Source details include fetch times, sample times and failure categories.
 Collection failure does not imply a failed cloud node, and no visible allocation does not guarantee
 schedulable capacity. Health guidance never restarts DSW, stops DLC or changes cloud resources.
 

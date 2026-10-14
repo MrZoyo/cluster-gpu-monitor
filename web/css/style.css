@@ -1760,3 +1760,13 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-feature-row .pai-rank-row-details > summary[hidden] { display: none; }
 .pai-feature-row .pai-rank-row-details:not([open]) { margin: 0; }
 .pai-feature-row .pai-rank-detail-body { cursor: text; }
+
+/* Data refresh failures do not replace or reflow the view. */
+.refresh-stale {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box;
+  padding: 10px 16px; border: 1px solid #9b7629; border-radius: 8px;
+  background: var(--panel, #171c26); color: var(--ink, #f7f7f7); font-size: 13px;
+  box-shadow: 0 4px 20px #0003;
+}
+#frontend-update button { margin-left: 12px; cursor: pointer; }

@@ -58,7 +58,7 @@ window.Views.ranking = (function () {
 
   async function render(root) {
     const w = GM.state.window;
-    GM.crumb(I18n.t('ranking_title'));
+    GM.crumb(I18n.t('ranking_title'), root);
     const [data, topo] = await Promise.all([API.usersRanking(w), API.topology()]);
     if (!root.isConnected) return;
     root.innerHTML = "";
