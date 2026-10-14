@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.3 release notes](RELEASE_0.6.3.md#english) — root-quota attribution, whole-row details, and frontend releases without Web restarts.
+Current version: [v0.6.4 release notes](RELEASE_0.6.4.md#english) — quota-presence coverage, explicit denominators, and multi-quota attribution guidance.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |

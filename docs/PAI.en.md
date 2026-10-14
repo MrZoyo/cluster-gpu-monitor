@@ -204,7 +204,8 @@ boundaries, including the default, retain the existing accounting.
   marked “Attribution degraded”, a short visible warning links to the details, and the order is labeled “Provisional order: direct GPU-hours only”.
   Normal-state explanations no longer occupy the space above the ranking. Summary cards retain core values and coverage. Open disclosures survive dimension changes and refreshes.
 - **CSV export** includes the window, generation time, task-history start, truncation flag and every returned
-  row. Feature exports add capacity GPU hours, used GPU hours, observed hours, coverage and compute metrics
+  row. Feature exports add capacity GPU hours, used GPU hours, observed hours, expected hours,
+  excluded absence hours, the coverage basis, coverage and compute metrics
   for checking weekly reports. Unknown values are empty; exporting never sends reports or messages.
 
 Pages refresh every 120 seconds while retaining scroll, filters and expanded sections; typing in the
@@ -248,6 +249,44 @@ Cluster history starts when this audit feature is enabled, retains 32 days and n
 in compute statistics even when the heatmap displays original-quota idle `0`.
 `physical_metric_coverage_pct` reports confirmed capacity-time coverage. Cluster estimates and per-feature/user metrics can cover different
 intervals, so compare their coverage too. CSV carries `cluster_*` metadata and per-row occupied/borrowed time, efficiency and coverage.
+
+### Quota time coverage
+
+Quota time coverage is `observed_quota_hours / expected_quota_hours × 100%`. Expected hours
+equal the selected window minus time when a **successful, complete quota snapshot confirmed that
+the quota did not exist** (`absent_quota_hours`). Deleted periods are excluded from the denominator;
+they are not added to observed time or filled with zero-capacity records.
+
+A quota that exists but has missing capacity or usage counters still has missing observations.
+Failed collection, long outages and older periods without presence evidence remain in the denominator.
+An ID missing from today's snapshot does not prove it was absent throughout an earlier window.
+
+The collector separately integrates complete-catalog observation time and each ID's presence,
+subject to `max_gap`; failures break continuity. Newly discovered IDs can exclude earlier periods
+when complete snapshots confirmed their absence. Older databases without presence history retain
+the original window denominator. Evidence-backed historical corrections can use
+`quota_absence_override`, retaining a reason and backup and avoiding overlap with collected history.
+Exclusions do not change task GPU hours, quota capacity or quota-reported occupancy.
+
+For example, a 24-hour window with 8 hours of confirmed absence and 15 hours of valid observations
+has coverage of `15 / (24 - 8) = 93.75%`. The remaining hour stays missing. The API reports
+`quota_coverage_basis=window_excluding_known_absence`; details and CSV retain
+`observed_quota_hours`, `expected_quota_hours`, `absent_quota_hours` and percentage
+`quota_coverage_pct`. If the quota is confirmed absent throughout the window, the denominator is
+zero, coverage is `null`, and the page shows “—”.
+
+Deleting and recreating a quota changes its ID. Matching names do not automatically merge history.
+Before a manual merge, verify the workspace, parent quota and intervals, preserve a backup, and
+check usage, capacity and presence history together to avoid double counting. Current names or
+capacity cannot reconstruct missing historical evidence; confirmed absence affects only the denominator.
+
+A user may hold access roles for several features. Child-quota submissions always follow the task's
+`QuotaId`. Root-quota submissions are additionally attributed only when current roles uniquely match
+one feature. Multiple matches stay in the root's unattributed usage as `multiple_features`; usage is
+neither divided nor counted twice. These root attributions use current roles, so role changes can
+change historical rankings; they are not snapshots of roles at task runtime.
+One `UserId` remains one user with separate submission-quota breakdowns; identical display names with
+different IDs are not merged. Several roles mapping to the same quota ID still form one feature match.
 
 ## Production deployment
 
