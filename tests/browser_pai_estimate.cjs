@@ -110,7 +110,7 @@ const capture=async(target,name)=>{
         fixture=structuredClone(original);fixture.nodes[3].mapping_conflict=true;
         fixture.nodes[4].cards[0].assignments=[{workload_id:'unlisted',fresh:true}];await renderEstimate('overview');
       });
-      assert.match(await page.locator('.pai-estimate-more').innerText(),locale==='zh'?/另 2 项/:/2 more/);
+      assert.match(await page.locator('.pai-estimate-more').innerText(),/^\+2$/); // Remaining reasons fold into "+N"; the full list stays in the tip.
       await page.locator('.pai-estimate-info').click();
       assert.equal(await page.locator('.pai-estimate-detail-reasons li').count(),4);
       await page.keyboard.press('Escape');

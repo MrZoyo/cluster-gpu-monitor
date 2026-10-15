@@ -9,7 +9,7 @@ window.PaiUI = (() => {
   const RECENT_MIN_POINTS = 5;
   const isLow = (m) => !!(m && m.fresh && m.recent_n >= RECENT_MIN_POINTS && m.recent_mean != null && m.recent_mean < LOW);
   // 跨 120 秒自动刷新保留的交互状态，避免刷新后筛选、排序、展开被重置。
-  const ui = { type: "all", q: "", sort: "gpu", desc: true, nodes: "all", sourcesOpen: false, queueOpen: false };
+  const ui = { type: "all", q: "", sort: "gpu", desc: true, nodes: "all", quota: "all", sourcesOpen: false, queueOpen: false };
 
   const num = (v) => {
     const n = Number(v);
@@ -28,6 +28,14 @@ window.PaiUI = (() => {
   const href = (...parts) => "#/pai/" + parts.map((p) => encodeURIComponent(p)).join("/");
   const link = (text, url, cls) => el("a", { href: url, class: cls || null }, [text || "—"]);
   const note = (text, cls) => el("p", { class: "note" + (cls ? " " + cls : "") }, [text]);
+  // 口径说明：默认折叠、逐条保留原文；与排行页的统计说明同一视觉，不与状态数据争抢层级。
+  function methodDetails(items, opts) {
+    opts = opts || {};
+    return el("details", { class: "pai-method" + (opts.cls ? " " + opts.cls : "") }, [
+      el("summary", {}, [opts.title || t("统计口径", "How it is computed")]),
+      el("ul", {}, items.filter(Boolean).map((x) => el("li", {}, Array.isArray(x) ? x : [x]))),
+    ]);
+  }
   const plural = (n, zh, en) => t(`${n} ${zh}`, `${n} ${en}${n === 1 ? "" : "s"}`);
   const dur = (sec) => {
     if (sec == null) return "—";
@@ -274,6 +282,65 @@ window.PaiUI = (() => {
       q.reported = q.hasBreakdown ? num(q.self_allocated_gpu) : num(q.gpu_used);
       q.mismatch = q.reported != null && Math.abs(q.reported - q.expected) > 1e-6;
     });
+    // 配额视图模型：树、绑定节点上的卡状态、子树任务与用户。父子配额容量不可相加；借用是占用的子集，不增加容量。
+    const depthOf = (q, seen = 0) => (q.parent_quota_id && quotas[q.parent_quota_id] && seen < 8 ? 1 + depthOf(quotas[q.parent_quota_id], seen + 1) : 0);
+    (d.quotas || []).forEach((q) => {
+      q.isRoot = q.quota_id === d.quota_id || !q.parent_quota_id;
+      q.parent = quotas[q.parent_quota_id] || null;
+      q.children = childrenOf(q.quota_id);
+      q.depth = depthOf(q);
+      const mine = new Set(subtree(q.quota_id));
+      q.boundNodes = q.isRoot ? d.nodes : d.nodes.filter((n) => n.quotaIds.includes(q.quota_id));
+      // 任务与配额的关系：直接提交 / 子配额提交 / 父配额任务落在本配额节点 / 闲时借用本配额节点。
+      q.relationOf = (w) => (w.QuotaId === q.quota_id ? "direct" : mine.has(w.QuotaId) ? "child" : w.oversold ? "borrowed" : "ancestor");
+      // 绑定节点上的物理卡：本配额（含子配额）任务 / 父配额任务 / 被闲时借用 / 原配额空闲 / 未知。
+      const cs = { self: 0, ancestor: 0, lent: 0, free: 0, unknown: 0, low: 0, total: 0, values: [] };
+      const placed = new Set();
+      q.boundNodes.forEach((n) => n.cards.forEach((c) => {
+        cs.total += 1;
+        if (!c.assignments.length) { cs[c.state === "free" ? "free" : "unknown"] += 1; return; }
+        if (c.low) cs.low += 1;
+        if (c.compute?.fresh) cs.values.push(c.compute.value);
+        c.assignments.forEach((a) => placed.add(a.workload_id));
+        const a = c.assignments[0], w = byId[a.workload_id];
+        const rel = a.borrowed === true ? "borrowed" : w ? q.relationOf(w) : "ancestor";
+        cs[rel === "borrowed" ? "lent" : rel === "ancestor" ? "ancestor" : "self"] += 1;
+      }));
+      q.cards = cs;
+      q.nodeComputeMean = mean(cs.values);
+      // 本配额的任务 = 提交到本配额（含子配额）的任务 ∪ 跑在本配额节点上的任务；每个任务只计一次。
+      q.relation = new Map(d.workloads.filter((w) => placed.has(w.WorkloadId) || mine.has(w.QuotaId)).map((w) => [w.WorkloadId, q.relationOf(w)]));
+      q.workloads = d.workloads.filter((w) => q.relation.has(w.WorkloadId));
+      q.running = q.workloads.filter((w) => w.WorkloadStatus === "Running" && !w.queued);
+      q.queued = q.workloads.filter((w) => w.queued);
+      const own = (w) => ["direct", "child"].includes(q.relation.get(w.WorkloadId));
+      q.ownRunning = q.running.filter(own);
+      q.borrowingJobs = q.ownRunning.filter((w) => w.oversold);
+      q.lentJobs = q.running.filter((w) => q.relation.get(w.WorkloadId) === "borrowed");
+      q.ancestorJobs = q.running.filter((w) => q.relation.get(w.WorkloadId) === "ancestor");
+      q.scheduledGpu = q.ownRunning.reduce((a, w) => a + gpuOf(w), 0);
+      q.borrowingGpu = q.borrowingJobs.reduce((a, w) => a + gpuOf(w), 0);
+      q.lowDims = q.running.reduce((a, w) => a + w.low, 0);
+      q.dsw = q.running.filter((w) => w.WorkloadType === "dsw").length;
+      q.dlc = q.running.length - q.dsw;
+      const um = new Map();
+      q.workloads.forEach((w) => {
+        const e = um.get(w.UserId) || { id: w.UserId, name: w.UserName || "—", jobs: 0, queued: 0, gpus: 0, oversold: 0, low: 0, rels: new Set(), values: [] };
+        e.jobs += 1;
+        e.rels.add(q.relation.get(w.WorkloadId));
+        if (w.queued) e.queued += 1;
+        else {
+          e.gpus += gpuOf(w);
+          if (w.oversold) e.oversold += gpuOf(w);
+          e.low += w.low;
+          e.values.push(...w.gpus.map((g) => g.compute).filter((x) => x && x.fresh).map((x) => x.value));
+        }
+        um.set(w.UserId, e);
+      });
+      q.users = [...um.values()].map((e) => ({ ...e, compute: mean(e.values) })).sort((a, b) => b.gpus - a.gpus || b.jobs - a.jobs || a.name.localeCompare(b.name));
+      q.unhealthyNodes = q.boundNodes.filter((n) => n.unhealthy);
+    });
+    d.quotaTree = (d.quotas || []).slice().sort((a, b) => (b.isRoot - a.isRoot) || a.depth - b.depth);
     d.users.forEach((u) => {
       const byQuota = new Map();
       running.filter((w) => w.UserId === u.UserId && gpuOf(w) > 0).forEach((w) => {
@@ -484,19 +551,21 @@ window.PaiUI = (() => {
   }
 
   // 非总览页的紧凑状态行：保留新鲜度与关键数字，不重复整块页头。
+  // 非总览页的紧凑状态行：五段等权读数，标签在上、数值在下；借用只作为已分配的后缀。
   function slimHeader(m) {
     const s = m.sx, sum = m.summary || {};
-    const item = (label, value, tone) => el("span", { class: "pai-slim-item" + (tone ? " " + tone : "") }, [el("b", {}, [value]), label]);
+    const item = (label, value, tone, extra) => el("div", { class: "pai-slim-item" + (tone ? " " + tone : "") }, [
+      el("span", { class: "pai-slim-label" }, [label]), el("span", { class: tone === "pai-slim-allocation" ? "pai-slim-amount" : "pai-slim-value" }, [el("b", {}, [value]), extra || null])]);
     return el("section", { class: "pai-slim" }, [
       el("div", { class: "pai-slim-title" }, [el("span", { class: "eyebrow" }, ["PAI · " + (m.region || "—")]), chip(m.state),
         el("span", { class: "pai-muted" }, [t("更新于 ", "Updated ") + ago(m.updatedAt)])]),
       el("div", { class: "pai-slim-items" }, [
-        item(t("原配额空闲", "quota idle"), String(s.free), s.free ? "good" : ""),
-        el("span", { class: "pai-slim-item pai-slim-allocation" }, [
-          el("span", { class: "pai-slim-amount" }, [el("b", {}, [allocatedCount(m)]), t("已分配 GPU", "allocated GPUs")]), borrowedLabel(m)]),
-        item(t("计算均值（任务）", "task mean"), pct(sum.task_compute_mean)),
-        estimateMetric(m, "slim"),
-        item(t("运行任务", "running"), String(s.running)),
+        item(t("原配额空闲", "Quota idle"), String(s.free), s.free ? "good" : ""),
+        item(t("已分配 GPU", "Allocated GPUs"), allocatedCount(m), "pai-slim-allocation", s.oversoldGpu
+          ? el("small", { class: "pai-slim-borrowed", title: OVERSOLD_TIP() }, [el("i", { class: "pai-borrowed-swatch", "aria-hidden": "true" }), t(`借 ${gpus(s.oversoldGpu)}`, `${gpus(s.oversoldGpu)} borrowed`)]) : null),
+        item(t("计算均值（任务）", "Task compute mean"), pct(sum.task_compute_mean)),
+        el("div", { class: "pai-slim-item" }, [estimateMetric(m, "slim")]),
+        item(t("运行任务", "Running"), String(s.running)),
       ]),
     ]);
   }
@@ -509,7 +578,7 @@ window.PaiUI = (() => {
   function estimateMetric(m, variant = "kpi") {
     const sum = m.summary || {}, info = m.estimateInfo || {}, available = num(sum.pool_compute_estimate) != null;
     const reasons = available ? [] : (info.reasons?.length ? info.reasons : [{labelZh:"当前快照未满足估算条件",labelEn:"The snapshot does not meet estimation requirements"}]);
-    const label = variant === "slim" ? t("集群计算（估算）", "Pool compute (est.)") : t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)");
+    const label = t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)");
     const reasonLabel = r => t(r.labelZh, r.labelEn);
     const taskState = status => ({Saving:t("保存中","saving"),Stopping:t("停止中","stopping"),Stopped:t("已停止","stopped"),
       Terminating:t("终止中","terminating"),Terminated:t("已终止","terminated"),Succeeded:t("已完成","completed"),Failed:t("已失败","failed"),
@@ -566,7 +635,7 @@ window.PaiUI = (() => {
       "aria-expanded":"false", "aria-controls":id, "aria-describedby":id,
       onmouseenter:show, onmouseleave:leave, onfocus:show, onblur:leave, onkeydown:escape,
       onclick:e=>{e.preventDefault();e.stopPropagation();const live=current();if(live.tip._pinned)close();else{show();live.tip._pinned=true;}} },
-      [el("span", {"aria-hidden":"true"}, ["ⓘ"])]);
+      [el("span", {class:"pai-info-icon", "aria-hidden":"true"}, ["i"])]);
     tip = el("div", {id, class:"pai-estimate-tip", popover:"auto", role:"tooltip", onmouseleave:leave, onkeydown:escape,
       ontoggle:e=>{const live=current();if(e.newState === "closed"){live.tip._pinned=false;live.button.setAttribute("aria-expanded","false");}} }, [
       el("strong", {}, [label]),
@@ -574,7 +643,6 @@ window.PaiUI = (() => {
         r.tasks?.length ? el("small", {}, [r.tasks.map(w=>(w.name || w.id) + (w.gpus != null ? t(`（${gpus(w.gpus)} 卡）`, ` (${gpus(w.gpus)} GPUs)`) : "")
           + (w.status ? " · " + taskState(w.status) : "")).join(" · ")]) : null]))) : null,
       el("p", {}, [clusterMeanHint(sum)]),
-      el("p", {class:"pai-estimate-dismiss"}, [t("点击 ⓘ 可固定；再次点击、点击外部或按 Esc 关闭。", "Click ⓘ to keep open; click it again, click outside or press Esc to close.")]),
     ]);
     const previousTip = document.getElementById(id);
     if(previousTip?.matches(":popover-open")) {
@@ -582,41 +650,50 @@ window.PaiUI = (() => {
       tip.style.cssText = previousTip.style.cssText;
       requestAnimationFrame(()=>{if(UI.live(tip)===previousTip && previousTip.matches(":popover-open"))show();});
     }
-    const shown = shortReasons.slice(0, 2);
+    const shown = shortReasons.slice(0, 2), rest = shortReasons.slice(2);
     return el("div", {class:"pai-estimate pai-estimate-" + variant + (available ? "" : " unavailable")}, [
       el("div", {class:"pai-estimate-value v"}, [available ? pct(sum.pool_compute_estimate) : t("暂无法估算", "Unavailable")]),
       el("div", {class:"pai-estimate-heading k"}, [el("span", {}, [label]), button]),
       available ? el("div", {class:"pai-estimate-summary hint"}, [t(`按 ${gpus(sum.physical_gpus)} 张物理卡折算`, `Across ${gpus(sum.physical_gpus)} physical GPUs`)])
         : el("div", {class:"pai-estimate-reasons hint"}, [...shown.map(r=>el("span", {}, [r.text])),
-          shortReasons.length > shown.length ? el("span", {class:"pai-estimate-more"}, [t(`另 ${shortReasons.length-shown.length} 项原因，点 ⓘ 查看`, `${shortReasons.length-shown.length} more reasons · ⓘ`)]) : null]),
+          rest.length ? el("span", {class:"pai-estimate-more", title: rest.map(r=>r.text).join("\n")}, ["+" + rest.length]) : null]),
       tip,
     ]);
   }
 
   const allocatedCount = (m) => m.summary?.pool_scheduled_gpus == null ? "—"
     : `${gpus(m.summary.pool_scheduled_gpus)} / ${gpus(m.summary.physical_gpus)}`;
-  const borrowedLabel = (m) => el("span", { class: "pai-borrowed-subset", title: OVERSOLD_TIP() }, [
-    t(`其中借用 ${m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu)} 卡`,
-      `Including ${m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu)} borrowed GPUs`), doc("idle", t("说明", "Docs"))]);
+  // 借用是已分配量的子集：紫色只用于斜纹色块，文字保持中性色；完整口径在悬停提示里。
+  const borrowedLabel = (m) => {
+    const n = m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu);
+    return el("span", { class: "pai-borrowed-subset", title: OVERSOLD_TIP() }, [el("i", { class: "pai-borrowed-swatch", "aria-hidden": "true" }),
+      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPUs · no extra capacity`)]);
+  };
 
   function kpis(m) {
     const s = m.sx, sum = m.summary || {};
+    const scheduled = num(sum.pool_scheduled_gpus), physical = num(sum.physical_gpus);
+    const part = (v) => (physical ? Math.max(0, Math.min(100, v / physical * 100)) : 0);
+    const meter = scheduled == null ? null : el("div", { class: "pai-kpi-meter", "aria-hidden": "true" }, [
+      el("i", { style: `width:${part(scheduled - s.oversoldGpu)}%` }), el("i", { class: "idle", style: `width:${part(s.oversoldGpu)}%` })]);
     const items = [
       [String(s.physical), t("物理 GPU", "Physical GPUs"), plural(m.nodes.length, "节点", "node") + (s.types.length ? " · " + s.types.join(" / ") : "")],
-      [allocatedCount(m), t("已分配 GPU", "Allocated GPUs"), t("运行任务总占用，含借用；借用已计入总数", "Running workload allocation, including borrowing once"), "allocation"],
+      [allocatedCount(m), t("已分配 GPU", "Allocated GPUs"), t("运行任务的调度卡数 / 物理卡；借用只计一次", "Scheduled GPUs of running workloads / physical GPUs; borrowing counted once"), "allocation"],
       [pct(sum.task_compute_mean), t("计算均值（任务）", "Compute mean (tasks)"), taskMeanHint(sum)],
       [null, null, null, "estimate"],
       [String(s.running), t("运行中任务", "Running workloads"), `DSW ${s.dsw} · DLC ${s.dlc}`],
     ];
-    return el("div", { class: "kpis pai-kpis" }, items.map(([v, k, hint, kind]) => kind === "estimate" ? el("div", {class:"kpi pai-estimate-kpi"}, [estimateMetric(m)]) : el("div", { class: "kpi" + (kind === "allocation" ? " pai-allocation-kpi" : "") }, [
+    // 来源陈旧时数值为最近成功值：整排压低明度并提示，不只靠页面级警告。
+    const stale = m.state !== "ok";
+    return el("div", { class: "kpis pai-kpis" + (stale ? " stale" : ""), title: stale ? t(`部分来源陈旧或采集失败：数值为最近成功值，更新于 ${ago(m.updatedAt)}`, `Some sources are stale or failed: values are the last successful ones, updated ${ago(m.updatedAt)}`) : null }, items.map(([v, k, hint, kind]) => kind === "estimate" ? el("div", {class:"kpi pai-estimate-kpi"}, [estimateMetric(m)]) : el("div", { class: "kpi" + (kind === "allocation" ? " pai-allocation-kpi" : ""), title: kind === "allocation" ? hint : null }, [
       el("div", { class: "v" }, [v]), el("div", { class: "k" }, [k]),
-      kind === "allocation" ? borrowedLabel(m) : null,
-      el("div", { class: "hint", title: hint }, [hint]),
+      kind === "allocation" ? meter : null,
+      kind === "allocation" ? borrowedLabel(m) : el("div", { class: "hint", title: hint }, [hint]),
     ])));
   }
 
   function tabs(m, active) {
-    const items = [["overview", t("总览", "Overview"), null], ["nodes", t("节点", "Nodes"), m.nodes.length],
+    const items = [["overview", t("总览", "Overview"), null], ["quotas", t("配额", "Quotas"), (m.quotas || []).length], ["nodes", t("节点", "Nodes"), m.nodes.length],
       ["workloads", t("任务", "Workloads"), m.workloads.length], ["users", t("用户", "Users"), m.users.length], ["ranking", t("排行", "Ranking"), null]];
     return el("nav", { class: "pai-tabs", "aria-label": "PAI" }, items.map(([key, label, n]) =>
       el("a", { href: href(key), class: key === active ? "active" : "" }, [label, n == null ? null : el("span", { class: "count" }, [String(n)])])));
@@ -654,12 +731,19 @@ window.PaiUI = (() => {
       ...s.healBlocked.flatMap((n, i) => n.healTasks.map((w, j) => el("div", { class: "pai-note warn", id: !i && !j ? "paiHealNote" : null }, [healText(n, w), " ",
         link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", doc("selfHeal")]))),
       el("div", { class: "pai-node-grid" }, m.nodes.map(nodeTile)),
-      m.cardsFlat.some((c) => c.possiblyBorrowed && c.state === "unknown") ? note(t(
-        "借用待确认：原配额未见占用，但尚未定位全部借用任务；这些卡显示 ?，不能据此判断物理卡空闲。",
-        "Borrowing unconfirmed: no original-quota allocation, but some borrowers remain unmapped. These GPUs display ? and cannot be confirmed idle.")) : null,
+      m.cardsFlat.some((c) => c.possiblyBorrowed && c.state === "unknown") ? el("div", { class: "pai-note warn" }, [t(
+        "借用待确认：部分借用任务尚未定位，显示 ? 的卡不能判为空闲。",
+        "Borrowing unconfirmed: some borrowers are still unmapped, so GPUs shown as ? cannot be treated as idle.")]) : null,
       s.oversoldGpu ? el("div", { class: "pai-note oversold" }, [t(
-        `${s.oversoldJobs} 个运行任务借用共 ${gpus(s.oversoldGpu)} 卡，已确认物理映射 ${s.borrowedMapped} 卡。可在节点与任务详情查看使用人和 GPU 卡号；未确认的映射保持未知，借用不增加物理容量。`,
-        `${s.oversoldJobs} running workloads borrow ${gpus(s.oversoldGpu)} GPUs; ${s.borrowedMapped} have confirmed physical mappings. Node and workload details show owners and GPU indices. Unconfirmed mappings stay unknown; borrowing adds no capacity. `), doc("idle")]) : null,
+        `${s.oversoldJobs} 个运行任务借用共 ${gpus(s.oversoldGpu)} 卡，已确认物理映射 ${s.borrowedMapped} 卡。`,
+        `${s.oversoldJobs} running workloads borrow ${gpus(s.oversoldGpu)} GPUs; ${s.borrowedMapped} have confirmed physical mappings. `), doc("idle")]) : null,
+      methodDetails([
+        t("每格一张物理卡，数字为最新计算利用率，底条为显存占比。只有节点、任务和两种 Pod 视图新鲜一致、且没有未定位的运行任务时，确认未分配的卡才显示 0。",
+          "One square per physical GPU showing the latest compute; the bottom bar is memory. A confirmed unallocated GPU shows 0 only when nodes, workloads and both Pod views are fresh and consistent, with no unlocated running workload."),
+        t("借用卡显示借用任务与使用人；指标卡号与物理卡号不能可靠关联时利用率保持未知，不按空闲补零。借用不增加物理容量，原配额需要时会回收。",
+          "Borrowed GPUs show the borrowing workload and owner; utilization stays unknown when metric indices cannot be matched to physical indices and is never filled in as idle. Borrowing adds no capacity and is reclaimed by the original quota."),
+        t("已定位借用的 GPU 卡号见节点与任务详情；未确认的映射保持未知，显示为 ?。", "GPU indices of located borrowers are on node and workload pages; unconfirmed mappings stay unknown and show ?."),
+      ]),
     ], { tools: legend(), id: "paiHeat" });
   }
 
@@ -741,17 +825,18 @@ window.PaiUI = (() => {
     if (!list.length) return null;
     const bad = m.sx.unschedulable.length, hard = m.sx.blocked.length;
     const preview = list.slice(0, 2).map((w) => w.WorkloadName || w.WorkloadId).join(" · ");
+    const longest = list.reduce((a, w) => (w.queuedFor != null && (a == null || w.queuedFor > a) ? w.queuedFor : a), null);
     const details = el("details", { id: "paiQueue", class: "pai-queue" + (bad ? " bad" : "") }, [
-      el("summary", { class: "pai-queue-head" }, [
-        el("div", { class: "pai-queue-summary" }, [el("strong", {}, [t(`排队中的任务 ${list.length} 个`, `${list.length} queued workloads`)
-          + (hard ? t(`，${hard} 个当前配置放不下`, `, ${hard} cannot fit now`) : "")
-          + (bad - hard ? t(`，${bad - hard} 个可能排不上`, `, ${bad - hard} may never fit`) : "")]),
-        el("small", { class: "pai-queue-preview", title: preview }, [
-          el("span", { class: "pai-queue-preview-names" }, [preview]),
-          list.length > 2 ? el("span", { class: "pai-queue-preview-more" }, [t(`· 另 ${list.length - 2} 个`, `· ${list.length - 2} more`)]) : null])]),
-        el("span", { class: "pai-queue-toggle", "aria-hidden": "true" }, [
-          el("span", { class: "when-closed" }, [t("展开列表", "Show queue")]),
-          el("span", { class: "when-open" }, [t("收起列表", "Hide queue")]), el("span", { class: "chevron" }, ["▾"])]),
+      el("summary", { class: "pai-queue-head", title: t("展开或收起排队列表", "Show or hide the queue") }, [
+        el("div", { class: "pai-queue-summary" }, [
+          el("div", { class: "pai-queue-line" }, [el("strong", {}, [t(`排队中的任务 ${list.length} 个`, `${list.length} queued workloads`)]),
+            hard ? el("span", { class: "pai-chip bad" }, [t(`${hard} 个当前配置放不下`, `${hard} cannot fit now`)]) : null,
+            bad - hard ? el("span", { class: "pai-chip warn" }, [t(`${bad - hard} 个可能排不上`, `${bad - hard} may never fit`)]) : null,
+            longest != null ? el("span", { class: "pai-muted" }, [t(`最长已等 ${dur(longest)}`, `longest wait ${dur(longest)}`)]) : null]),
+          el("small", { class: "pai-queue-preview", title: preview }, [
+            el("span", { class: "pai-queue-preview-names" }, [preview]),
+            list.length > 2 ? el("span", { class: "pai-queue-preview-more" }, [t(`· 另 ${list.length - 2} 个`, `· ${list.length - 2} more`)]) : null])]),
+        el("span", { class: "pai-queue-toggle", "aria-hidden": "true" }, [el("span", { class: "chevron" }, ["▾"])]),
       ]),
       el("div", { class: "pai-queue-docs pai-tools" }, [doc("schedule"), doc("idle", t("闲时资源", "Idle-time"))]),
       el("div", { class: "pai-queue-list", tabindex: "0", role: "region", "aria-label": t("排队任务列表，可滚动", "Scrollable queued workload list"),
@@ -808,7 +893,7 @@ window.PaiUI = (() => {
     // 排队任务固定置顶，硬性不满足的最前。
     rows.sort((a, b) => (b.unschedulable - a.unschedulable) || (b.queued - a.queued));
     const cols = [["name", t("任务", "Workload")], ["owner", "Owner"], ["gpu", "GPU", "num"], ["compute", t("计算均值", "Compute")],
-      ["memory", t("显存均值", "Memory")], [null, t("单卡计算", "Per GPU")], ["cpu", t("CPU · 内存", "CPU · RAM")], [null, t("节点", "Node")], [null, t("状态", "State")]]
+      ["memory", t("显存均值", "Memory"), "c-sec"], [null, t("单卡计算", "Per GPU"), "c-sec"], ["cpu", t("CPU · 内存", "CPU · RAM"), "c-sec"], [null, t("节点", "Node")], [null, t("状态", "State")]]
       .filter(([k]) => !(opts.hideOwner && k === "owner"));
     const label = (k) => (cols.find((c) => c[0] === k) || [])[1];
     const head = el("tr", {}, cols.map(([k, label, cls]) => el("th", {
@@ -821,16 +906,17 @@ window.PaiUI = (() => {
       return el("tr", { "data-refresh-key": w.WorkloadId, class: w.unschedulable ? "pai-row-bad" : w.queued ? "pai-row-queued" : null }, [
         el("td", { "data-label": label("name") }, [el("div", { class: "pai-wl" }, [
           link(w.WorkloadName, href("workload", w.WorkloadId), "pai-wl-name"),
-          el("div", { class: "pai-wl-sub" }, [typeChip(w.WorkloadType), el("span", {}, [w.quota]), w.oversold ? oversoldChip() : null]),
+          el("div", { class: "pai-wl-sub" }, [typeChip(w.WorkloadType), w.QuotaId ? link(w.quota, href("quota", w.QuotaId), "pai-wl-quota") : el("span", {}, [w.quota]),
+            w.oversold ? oversoldChip() : null, opts.relation ? relChip(opts.relation.get(w.WorkloadId)) : null]),
         ])]),
         opts.hideOwner ? null : el("td", { "data-label": "Owner" }, [link(w.UserName, href("user", w.UserId))]),
         el("td", { class: "num", "data-label": "GPU", title: t("任务申请卡数（逻辑量）", "Requested GPUs (logical)") }, [gpus(requested),
           scheduled != null && scheduled !== requested ? el("small", { class: "pai-muted" }, [t(` · 调度 ${gpus(scheduled)}`, ` · sched ${gpus(scheduled)}`)]) : null]),
         el("td", { "data-label": label("compute") }, [el("span", { class: "pai-inline" }, [bar(w.compute, { title: tip, stale: w.stale }),
           w.low ? el("small", { class: "pai-low" }, [t(`${w.low} 卡<${LOW}%`, `${w.low} <${LOW}%`)]) : null])]),
-        el("td", { "data-label": label("memory") }, [bar(w.memory, { memory: true, stale: w.stale })]),
-        el("td", { "data-label": t("单卡计算", "Per GPU") }, [strip(w)]),
-        el("td", { "data-label": t("CPU · 内存", "CPU · RAM") }, [hostCell(w)]),
+        el("td", { "data-label": label("memory"), class: "c-sec" }, [bar(w.memory, { memory: true, stale: w.stale })]),
+        el("td", { "data-label": t("单卡计算", "Per GPU"), class: "c-sec" }, [strip(w)]),
+        el("td", { "data-label": t("CPU · 内存", "CPU · RAM"), class: "c-sec" }, [hostCell(w)]),
         el("td", { "data-label": t("节点", "Node") }, [nodeCell(w)]),
         el("td", { "data-label": t("状态", "State") }, [el("span", { class: "pai-inline" }, [stateCell(w), w.stale ? el("small", { class: "pai-low" }, [t("陈旧", "stale")]) : null])]),
       ]);
@@ -892,13 +978,14 @@ window.PaiUI = (() => {
 
   function quotaChips(u) {
     if (!u.quotaUse.length) return el("span", { class: "pai-dash" }, ["—"]);
-    return el("span", { class: "pai-inline" }, u.quotaUse.map((q) => el("span", { class: "pai-user-chip" + (q.oversold ? " oversold" : ""),
+    return el("span", { class: "pai-inline" }, u.quotaUse.map((q) => el("a", { class: "pai-user-chip" + (q.oversold ? " oversold" : ""), href: href("quota", q.id),
       title: q.oversold ? OVERSOLD_TIP() : t("常规运行任务卡数（优先调度量，缺失时用申请量）", "Running GPUs (scheduled, requested as fallback)") },
       [q.name, el("b", {}, [gpus(q.gpus)]), q.oversold ? t(" 闲时", " idle-time") : null])));
   }
 
-  function usersTable(users, compact) {
-    const rows = users.slice().sort((a, b) => (num(b.submitted_gpu) ?? 0) - (num(a.submitted_gpu) ?? 0) || (a.Username || "").localeCompare(b.Username || ""));
+  function usersTable(users, compact, limit) {
+    let rows = users.slice().sort((a, b) => (num(b.submitted_gpu) ?? 0) - (num(a.submitted_gpu) ?? 0) || (a.Username || "").localeCompare(b.Username || ""));
+    if (limit) rows = rows.slice(0, limit);
     const userCell = (u) => compact
       ? el("div", { class: "pai-user-cell" }, [link(u.Username, href("user", u.UserId)),
         u.quotaUse.length ? el("small", {}, [u.quotaUse.map((q) => q.name + (q.oversold ? t("（闲时）", " (idle-time)") : "")).join(" · ")]) : null])
@@ -921,62 +1008,282 @@ window.PaiUI = (() => {
     ])]);
   }
 
+  // 总览里的配额面板：每行一个配额，名称进入配额详情；人名 chip 超过上限折叠，状态标记只在异常时出现。
   function quotasPanel(m) {
-    const list = (m.quotas || []).slice().sort((a, b) => (a.quota_id === m.quota_id ? -1 : b.quota_id === m.quota_id ? 1 : 0));
+    const list = m.quotaTree || (m.quotas || []);
     const anyBreakdown = list.some((q) => q.hasBreakdown);
+    const MAX_CHIPS = 6;
     const userChip = (u, cls, title, suffix) => el("a", { class: "pai-user-chip" + (cls ? " " + cls : ""), href: href("user", u.id), title },
       [u.name, el("b", {}, [gpus(u.gpus)]), suffix || null]);
+    const fold = (chips, rest) => (rest.length ? [...chips, el("span", { class: "pai-user-chip more", title: rest.map((u) => `${u.name} ${gpus(u.gpus)}`).join("\n") }, ["+" + rest.length])] : chips);
     return panel(t("配额", "Quotas"), [
       el("div", { class: "pai-quotas" }, list.map((q) => {
-        const cap = num(q.gpu_capacity), used = num(q.gpu_used);
-        const width = (v) => (cap ? Math.max(0, Math.min(100, (v || 0) / cap * 100)) : 0);
-        const root = q.quota_id === m.quota_id || !q.parent_quota_id;
-        // 有分配明细时按"本配额任务 / 子配额 / 父配额任务占用"三段画；旧快照只画配额用量。
-        const segs = q.hasBreakdown
-          ? [["", q.self_allocated_gpu, t("本配额任务", "This quota")], ["child", q.descendants_allocated_gpu, t("子配额", "Subquotas")],
-            ["borrowed", q.ancestors_allocated_gpu, t("父配额任务占用", "Used by parent quota")]]
-            .filter(([, v]) => num(v)).map(([cls, v, label]) => el("i", { class: cls || null, style: `width:${width(num(v))}%`, title: `${label} ${gpus(v)}` }))
-          : [el("i", { style: `width:${width(used)}%` })];
-        const shown = q.hasBreakdown ? num(q.allocated_gpu) : used;
-        const who = q.direct.map((u) => userChip(u, "", t(`${u.jobs} 个配额内任务直接提交到 ${q.quota_name}，共申请 ${gpus(u.gpus)} 卡`, `${u.jobs} in-quota workloads, ${gpus(u.gpus)} GPUs requested`)));
+        const cap = num(q.gpu_capacity), used = num(q.gpu_used), shown = quotaShown(q), root = q.isRoot;
+        const who = fold(q.direct.slice(0, MAX_CHIPS).map((u) => userChip(u, "", t(`${u.jobs} 个配额内任务直接提交到 ${q.quota_name}，共申请 ${gpus(u.gpus)} 卡`, `${u.jobs} in-quota workloads, ${gpus(u.gpus)} GPUs requested`))), q.direct.slice(MAX_CHIPS));
         if (num(q.childUsed) > 0) who.push(el("span", { class: "pai-user-chip child", title: t("子配额的用量合计，已包含在本配额中", "Subquota usage, included in this quota") },
           [t("子配额", "Subquotas"), el("b", {}, [gpus(q.childUsed)])]));
-        if (q.borrowedBy.length) who.push(el("span", { class: "pai-quota-label" }, [t("被父配额任务占用", "Used by parent quota")]),
-          ...q.borrowedBy.map((u) => userChip(u, "borrowed", t(`${u.quota} 配额的任务占用本配额节点上的 ${gpus(u.gpus)} 张卡`, `${u.quota} workloads use ${gpus(u.gpus)} GPUs on this quota's nodes`), " · " + u.quota)));
-        if (q.oversoldUsers.length) who.push(...q.oversoldUsers.map((u) => userChip(u, "oversold", OVERSOLD_TIP(), t(" 闲时", " idle-time"))));
-        // 控制台“闲时共享”：本级和子级资源可否被闲时任务使用（共享出去的方向）；与上级相同的子配额不重复标注。
-        const parent = list.find((x) => x.quota_id === q.parent_quota_id);
-        if (q.oversold_enabled != null && (root || !parent || parent.oversold_enabled !== q.oversold_enabled)) who.push(el("span", {
-          class: "pai-chip " + (q.oversold_enabled ? "muted" : "warn"),
-          title: t("控制台“闲时共享”：开启时，本级和子级配额的空闲资源可供闲时任务使用。它不决定本配额的任务能否借用别处资源，那由任务的提交策略决定。接口：OversoldUsageConfig.Disabled",
-            "Console \"idle sharing\": when on, idle capacity of this quota and its children can be used by idle-time workloads. It does not decide whether this quota's workloads may borrow capacity; the job's policy does. API: OversoldUsageConfig.Disabled") },
-          [q.oversold_enabled ? t("闲时共享：开启", "Idle sharing: on") : t("闲时共享：关闭", "Idle sharing: off")]));
-        if (q.nodesTotal && q.nodesSchedulable < q.nodesTotal) who.push(el("span", { class: "pai-chip " + (q.nodesSchedulable ? "warn" : "bad"),
+        if (q.borrowedBy.length) {
+          const lent = q.borrowedBy.slice(0, MAX_CHIPS).map((u) => userChip(u, "borrowed", t(`${u.quota} 配额的任务占用本配额节点上的 ${gpus(u.gpus)} 张卡`, `${u.quota} workloads use ${gpus(u.gpus)} GPUs on this quota's nodes`),
+            u.quota !== q.parent?.quota_name ? " · " + u.quota : null));
+          who.push(el("span", { class: "pai-quota-label" }, [t("父配额任务占用", "Parent-quota workloads")]), ...fold(lent, q.borrowedBy.slice(MAX_CHIPS)));
+        }
+        if (q.oversoldUsers.length) who.push(el("span", { class: "pai-quota-label" }, [t("借入（闲时）", "Borrowing in (idle-time)")]), ...q.oversoldUsers.map((u) => userChip(u, "oversold", OVERSOLD_TIP())));
+        const flags = [];
+        if (q.oversold_enabled === false) flags.push(el("span", { class: "pai-chip warn",
+          title: t("控制台“闲时共享”已关闭：本级和子级的空闲资源不供闲时任务使用。它不决定本配额的任务能否借用别处资源，那由任务的提交策略决定。接口：OversoldUsageConfig.Disabled",
+            "Console idle sharing is off: idle capacity here and below is not offered to idle-time workloads. It does not decide whether this quota's workloads may borrow elsewhere; the job's policy does. API: OversoldUsageConfig.Disabled") },
+          [t("闲时共享关闭", "Idle sharing off")]));
+        if (q.nodesTotal && q.nodesSchedulable < q.nodesTotal) flags.push(el("span", { class: "pai-chip " + (q.nodesSchedulable ? "warn" : "bad"),
           title: t("绑定节点中状态就绪且健康的数量；配置容量不等于健康可调度的卡", "Bound nodes that are ready and healthy; configured capacity is not schedulable capacity") },
-          [t(`可接新任务的节点 ${q.nodesSchedulable}/${q.nodesTotal}`, `Schedulable nodes ${q.nodesSchedulable}/${q.nodesTotal}`)]));
-        if (q.mismatch) who.push(el("span", { class: "pai-flag", title: q.hasBreakdown
+          [t(`可调度节点 ${q.nodesSchedulable}/${q.nodesTotal}`, `Schedulable nodes ${q.nodesSchedulable}/${q.nodesTotal}`)]));
+        if (q.mismatch) flags.push(el("span", { class: "pai-flag", title: q.hasBreakdown
           ? t("常规运行任务卡数（优先调度量，缺失时用申请量）与配额接口的“本配额分配”不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (scheduled, requested as fallback) differ from the quota's own allocation; check the PAI console.")
-          : t("常规运行任务卡数（优先调度量，缺失时用申请量）（含子配额用量）与配额用量不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (plus subquota usage) differ from quota usage; check the PAI console.") },
+          : t("常规运行任务卡数（含子配额用量）与配额用量不一致；页面不推断原因，需在 PAI 控制台核实。", "Running GPUs (plus subquota usage) differ from quota usage; check the PAI console.") },
           [t(`任务申请 ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "分配" : "用量"} ${gpus(q.reported)}`, `Requested ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "allocated" : "used"} ${gpus(q.reported)}`)]));
         return el("div", { "data-refresh-key": q.quota_id, class: "pai-quota" + (root ? " root" : "") }, [
           el("div", { class: "pai-quota-main" }, [
-            el("span", { class: "pai-quota-name", title: q.quota_name }, [root ? "" : "└ ", q.quota_name || q.quota_id, root ? el("small", {}, [t(" 根", " root")]) : null]),
-            el("span", { class: "pai-quota-bar" }, segs),
+            el("span", { class: "pai-quota-name", title: q.quota_name }, [root ? null : el("span", { class: "pai-quota-branch", "aria-hidden": "true" }, ["└"]),
+              link(q.quota_name || q.quota_id, href("quota", q.quota_id), "pai-quota-link"), root ? el("small", {}, [t(" 根", " root")]) : null]),
+            quotaBar(q),
             el("span", { class: "pai-quota-num", title: q.hasBreakdown ? t(`已分配 ${gpus(shown)}（AllocatedQuota，含父配额任务占用）；旧 UsedQuota ${gpus(used)}（官方已标弃用）`, `Allocated ${gpus(shown)} (AllocatedQuota, incl. parent workloads); legacy UsedQuota ${gpus(used)} (deprecated)`) : "" },
               [`${gpus(shown)} / ${gpus(cap)}`]),
             q.status && q.status !== "Ready" ? chip(q.status) : null,
           ]),
-          who.length ? el("div", { class: "pai-quota-users" }, [root && q.direct.length ? el("span", { class: "pai-quota-label" }, [t("直接提交", "Direct")]) : null, ...who]) : null,
+          flags.length || who.length ? el("div", { class: "pai-quota-users" }, [...flags, root && q.direct.length ? el("span", { class: "pai-quota-label" }, [t("直接提交", "Direct")]) : null, ...who]) : null,
         ]);
       })),
-      anyBreakdown ? el("div", { class: "pai-quota-legend" }, [
-        el("span", {}, [el("i"), t("本配额任务", "This quota")]), el("span", {}, [el("i", { class: "child" }), t("子配额", "Subquotas")]),
-        el("span", {}, [el("i", { class: "borrowed" }), t("父配额任务占用", "Parent-quota workloads")]),
-        el("span", {}, [el("i", { class: "oversold" }), t("闲时借用（计入团队总占用）", "Borrowing (included in team total)")]),
-      ]) : null,
-      note(t("数字为配额资源上的实际分配 / 容量，来自配额接口；父配额包含子配额。人名按任务的 QuotaId 归入其直接提交的配额，卡数优先使用调度量，缺失时使用申请量。“闲时共享”只在与上级不同时于子配额单独标注。",
-        "Numbers are allocation / capacity from the quota API; parents include subquotas. Users are listed under the quota their workloads were submitted to, with scheduled GPUs (requested as fallback). Idle sharing is shown on a subquota only when it differs from its parent.")),
-    ], { tools: el("div", { class: "pai-tools" }, [doc("quota", t("配额", "Quotas")), doc("preempt", t("抢占", "Preemption")), doc("idle", t("闲时资源", "Idle-time"))]), id: "paiQuotas" });
+      anyBreakdown ? quotaLegend() : null,
+      methodDetails([
+        t("数字为配额资源上的实际分配 / 容量，来自配额接口；父配额包含子配额，容量不可相加。", "Numbers are allocation / capacity from the quota API; parents include subquotas and capacities never add up."),
+        t("人名按任务的 QuotaId 归入其直接提交的配额，卡数优先使用调度量，缺失时使用申请量；父配额任务落在子配额节点上时，列在该子配额的“父配额任务占用”下。",
+          "Users are listed under the quota their workloads were submitted to, with scheduled GPUs (requested as fallback); parent-quota workloads placed on a subquota's nodes appear under that subquota as parent-quota workloads."),
+        t("闲时借用是团队占用的子集，不增加容量。控制台“闲时共享”默认开启，只在关闭时标注；可调度节点少于绑定节点时标注数量。",
+          "Idle borrowing is a subset of team allocation and adds no capacity. Console idle sharing is on by default and only flagged when off; schedulable nodes are flagged when fewer than bound nodes."),
+      ]),
+    ], { tools: link(t("全部配额 →", "All quotas →"), href("quotas"), "pai-more"), id: "paiQuotas" });
+  }
+
+  // ── 配额标签页：根配额 + 子配额卡片；详情页汇总该配额的节点、任务、用户与本周统计 ─────
+  // 任务按两种口径同时归入配额：提交到该配额（含子配额），或实际跑在该配额绑定的节点上。
+  const REL = {
+    direct: ["直接提交", "Submitted here"], child: ["子配额提交", "Subquota"],
+    ancestor: ["父配额任务", "Parent-quota job"], borrowed: ["借出给闲时任务", "Lent to idle-time job"],
+  };
+  const relChip = (rel) => (!rel || rel === "direct" ? null : el("span", { class: "pai-chip rel-" + rel }, [t(...REL[rel])]));
+  const quotaShown = (q) => (q.hasBreakdown ? num(q.allocated_gpu) : num(q.gpu_used));
+
+  function quotaSegments(q) {
+    const segs = q.hasBreakdown
+      ? [["", q.self_allocated_gpu, t("本配额任务", "This quota")], ["child", q.descendants_allocated_gpu, t("子配额", "Subquotas")],
+        ["borrowed", q.ancestors_allocated_gpu, t("父配额任务占用", "Used by parent quota")]]
+      : [["", q.gpu_used, t("配额用量", "Quota usage")]];
+    return segs.filter(([, v]) => num(v)).map(([cls, v, label]) => ({ cls, v: num(v), label }));
+  }
+  function quotaBar(q) {
+    const cap = num(q.gpu_capacity);
+    const width = (v) => (cap ? Math.max(0, Math.min(100, v / cap * 100)) : 0);
+    return el("span", { class: "pai-quota-bar" }, quotaSegments(q).map((s) => el("i", { class: s.cls || null, style: `width:${width(s.v)}%`, title: `${s.label} ${gpus(s.v)}` })));
+  }
+
+  // 每格一张物理卡，按绑定节点分组；颜色语义与热力图一致。
+  function quotaStrip(q) {
+    return el("div", { class: "pai-q-strip" }, q.boundNodes.map((n) => el("span", {
+      class: "pai-q-strip-node" + (n.NodeStatus !== "Ready" || n.unhealthy ? " cordoned" : ""),
+      title: n.NodeName + (n.quotaNames.length ? " · " + n.quotaNames.join(", ") : "") },
+    n.cards.map((c) => el("i", { class: c.state + (c.low ? " low" : ""), style: cardParts(c).style })))));
+  }
+
+  function quotaFlags(q) {
+    const flags = [];
+    if (q.queued.length) flags.push(el("span", { class: "pai-chip " + (q.queued.some((w) => w.unschedulable) ? "bad" : "warn") }, [t(`排队 ${q.queued.length}`, `${q.queued.length} queued`)]));
+    if (q.unhealthyNodes.length) flags.push(el("span", { class: "pai-chip bad" }, [t(`节点异常 ${q.unhealthyNodes.length}`, `${q.unhealthyNodes.length} unhealthy`)]));
+    if (q.lowDims) flags.push(el("span", { class: "pai-chip held", title: t(`已分配但近 10 分钟计算 <${LOW}% 的卡`, `Allocated GPUs with 10-min compute under ${LOW}%`) }, [t(`${q.lowDims} 卡计算<${LOW}%`, `${q.lowDims} GPUs <${LOW}%`)]));
+    // 方向固定为“借入 / 借出”：借入 = 本配额任务使用别处闲时资源；借出 = 闲时任务使用本配额节点。
+    // 根配额的借入与借出是同一笔池内借用，只标一次。
+    if (q.isRoot && q.borrowingGpu) flags.push(oversoldChip(t(`池内闲时借用 ${gpus(q.borrowingGpu)} 卡`, `${gpus(q.borrowingGpu)} GPUs borrowed within the pool`)));
+    else {
+      if (q.borrowingGpu) flags.push(oversoldChip(t(`借入 ${gpus(q.borrowingGpu)} 卡`, `Borrowing in ${gpus(q.borrowingGpu)}`)));
+      if (q.cards.lent) flags.push(el("span", { class: "pai-chip lent", title: OVERSOLD_TIP() }, [t(`借出 ${q.cards.lent} 卡`, `Lending out ${q.cards.lent}`)]));
+    }
+    if (q.mismatch) flags.push(el("span", { class: "pai-flag", title: t("常规运行任务卡数与配额接口的分配不一致，需在 PAI 控制台核实", "Running GPUs differ from the quota's own allocation; check the PAI console") }, [t("申请≠分配", "Mismatch")]));
+    return flags;
+  }
+
+  function quotaCard(q) {
+    const cap = num(q.gpu_capacity), shown = quotaShown(q);
+    const stat = (v, k, tone) => el("div", { class: "pai-q-stat" + (tone ? " " + tone : "") }, [el("b", {}, [v]), el("span", {}, [k])]);
+    return el("a", { class: "pai-q-card" + (q.isRoot ? " root" : ""), href: href("quota", q.quota_id), "data-refresh-key": q.quota_id }, [
+      el("div", { class: "pai-q-head" }, [
+        el("div", { class: "pai-q-title" }, [
+          el("div", { class: "pai-q-name" }, [el("b", { title: q.quota_name }, [q.quota_name || q.quota_id]),
+            el("small", {}, [q.isRoot ? t("根配额 · 全池去重视图；子配额的任务与用户可能重叠，不可相加", "Root quota · deduplicated pool view; subquota workloads and users may overlap and never add up") : t("子配额", "Subquota")])]),
+          el("div", { class: "pai-q-flags" }, [q.status && q.status !== "Ready" ? chip(q.status) : null, ...quotaFlags(q)]),
+        ]),
+        el("div", { class: "pai-q-cap", title: t("已分配 / 容量，来自配额接口；父配额包含子配额", "Allocated / capacity from the quota API; parents include subquotas") }, [
+          el("b", {}, [gpus(shown)]), el("span", {}, [" / " + gpus(cap)]),
+          el("small", {}, [cap && shown != null ? Math.round(shown / cap * 100) + "%" : ""])]),
+      ]),
+      quotaBar(q),
+      el("div", { class: "pai-q-stats" }, [
+        stat(`${q.nodesSchedulable} / ${q.nodesTotal}`, t("可调度节点", "Schedulable nodes"), q.nodesTotal && q.nodesSchedulable < q.nodesTotal ? "warn" : ""),
+        stat(String(q.running.length), q.isRoot ? t("运行任务 · 去重", "Running · deduplicated") : t("运行任务", "Running"), ""),
+        stat(String(q.users.length), q.isRoot ? t("用户 · 去重", "Users · deduplicated") : t("用户", "Users"), ""),
+        stat(pct(q.nodeComputeMean), t("节点计算均值", "Node compute"), ""),
+      ]),
+      quotaStrip(q),
+    ]);
+  }
+
+  function quotaLegend() {
+    return el("div", { class: "pai-quota-legend" }, [
+      el("span", {}, [el("i"), t("本配额任务", "This quota")]), el("span", {}, [el("i", { class: "child" }), t("子配额", "Subquotas")]),
+      el("span", {}, [el("i", { class: "borrowed" }), t("父配额任务占用", "Parent-quota workloads")]),
+      el("span", {}, [el("i", { class: "oversold" }), t("闲时借用（计入团队总占用）", "Borrowing (included in team total)")]),
+    ]);
+  }
+
+  function quotasTab(m) {
+    const roots = m.quotaTree.filter((q) => q.isRoot), rest = m.quotaTree.filter((q) => !q.isRoot);
+    return panel(t("配额", "Quotas"), [
+      ...roots.map(quotaCard),
+      rest.length ? el("div", { class: "pai-q-grid" }, rest.map(quotaCard)) : null,
+      quotaLegend(),
+      methodDetails([
+        t("已分配 / 容量来自配额接口；父配额包含子配额，容量不可相加。小格为绑定节点上的物理卡，颜色为实测计算利用率。", "Allocation / capacity come from the quota API; parents include subquotas and capacities never add up. Squares are physical GPUs on bound nodes, coloured by measured compute."),
+        t("运行任务与用户同时按提交配额和实际落点归入：父配额任务跑在子配额节点上时也计入该子配额，每个任务只计一次。", "Running workloads and users count by submission quota and by placement: a parent-quota workload running on a subquota's nodes also counts there, each workload once."),
+        t("闲时借用是任务占用的子集，不增加容量。方向固定为“借入 / 借出”：借入 = 本配额任务使用其他配额的闲时资源；借出 = 闲时任务使用本配额节点。根配额只标池内借用。", "Idle borrowing is a subset of task allocation and adds no capacity. Direction is always “borrowing in / lending out”: in = this quota's workloads using idle capacity elsewhere; out = idle-time workloads using this quota's nodes. The root quota only shows pool-internal borrowing."),
+      ]),
+    ], { tools: el("div", { class: "pai-tools" }, [doc("quota", t("配额", "Quotas")), doc("preempt", t("抢占", "Preemption")), doc("idle", t("闲时资源", "Idle-time"))]), id: "paiQuotaList" });
+  }
+
+  function quotaUsersTable(q) {
+    const relText = (u) => [...u.rels].filter((r) => r === "ancestor" || r === "borrowed").map((r) => t(...REL[r])).join(" · ");
+    const cols = [[t("用户", "User"), (u) => el("div", { class: "pai-user-cell" }, [link(u.name, href("user", u.id)), relText(u) ? el("small", {}, [relText(u)]) : null])],
+      [t("任务", "Jobs"), (u) => el("span", {}, [String(u.jobs), u.queued ? el("small", { class: "pai-low" }, [t(` · 排队 ${u.queued}`, ` · ${u.queued} queued`)]) : null]), true],
+      [t("占用 GPU", "GPUs"), (u) => gpus(u.gpus), true],
+      [t("其中闲时", "Idle-time"), (u) => (u.oversold ? oversoldChip(gpus(u.oversold)) : el("span", { class: "pai-dash" }, ["—"])), true],
+      [t("计算均值", "Compute"), (u) => bar(u.compute)],
+      [t(`计算<${LOW}%`, `<${LOW}%`), (u) => (u.low ? el("span", { class: "pai-low" }, [String(u.low)]) : "0"), true]];
+    return el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table compact" }, [
+      el("thead", {}, [el("tr", {}, cols.map(([label, , numeric]) => el("th", { class: numeric ? "num" : "" }, [label])))]),
+      el("tbody", {}, q.users.length ? q.users.map((u) => el("tr", { "data-refresh-key": u.id }, cols.map(([label, cell, numeric]) => el("td", { "data-label": label, class: numeric ? "num" : "" }, [cell(u)]))))
+        : [el("tr", {}, [el("td", { colspan: cols.length, class: "pai-empty" }, [t("当前无任务", "No workloads")])])]),
+    ])]);
+  }
+
+  function quotaWorkloadsPanel(q) {
+    const count = (rel) => q.workloads.filter((w) => q.relation.get(w.WorkloadId) === rel).length;
+    const filters = [["all", t("全部", "All"), q.workloads.length], ["direct", t("直接提交", "Submitted here"), count("direct")],
+      ["child", t("子配额", "Subquotas"), count("child")], ["ancestor", t("父配额任务", "Parent-quota"), count("ancestor")],
+      ["borrowed", t("借出", "Lent out"), count("borrowed")]].filter(([k, , n]) => k === "all" || n);
+    if (!filters.some(([k]) => k === ui.quota)) ui.quota = "all";
+    const host = el("div");
+    const draw = () => {
+      const list = q.workloads.filter((w) => ui.quota === "all" || q.relation.get(w.WorkloadId) === ui.quota);
+      UI.live(host).replaceChildren(workloadsTable(list, { redraw: draw, relation: q.relation }));
+      UI.live(seg).querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.k === ui.quota));
+    };
+    const seg = el("div", { class: "pai-seg" }, filters.map(([k, label, n]) => el("button", { "data-k": k, onclick: () => { ui.quota = k; draw(); } }, [label, el("span", { class: "count" }, [String(n)])])));
+    draw();
+    return panel(t("任务", "Workloads"), [host], { tools: filters.length > 2 ? seg : null });
+  }
+
+  // 配额详情页复用排行数据：同一时间窗 10 分钟内不重复请求，减轻小规格生产实例负担；排行页仍每次刷新。
+  const rankCache = new Map();
+  async function cachedRanking(window) {
+    const hit = rankCache.get(window);
+    if (hit && Date.now() - hit.at < 600000) return hit.data;
+    const data = await API.paiRanking(window);
+    rankCache.set(window, { at: Date.now(), data });
+    return data;
+  }
+
+  // 本周配额统计：复用排行接口的 Feature 行；根配额用其单列行。失败时只提示，不影响其余区块。
+  async function quotaWeekPanel(host, q) {
+    const body = el("div", { class: "pai-q-week" }, [note(t("读取中…", "Loading…"))]);
+    host.appendChild(panel(t("本周统计", "This week"), [body], { tools: link(t("查看排行 →", "Ranking →"), href("ranking"), "pai-more"), id: "paiQuotaWeek" }));
+    let data;
+    try { data = await cachedRanking("week"); } catch (e) {
+      if (!host.isConnected) return;
+      if (!GM.refreshFailed?.(host)) PageRecovery.show();
+      UI.live(body).replaceChildren(note(t("排行读取失败", "Failed to load ranking")));
+      return;
+    }
+    if (!host.isConnected) return;
+    const row = q.isRoot ? data.root_quota : (data.features || []).find((f) => String(f.quota_id) === String(q.quota_id));
+    const range = el("div", { class: "pai-rank-range" }, [el("span", { class: "mono" }, [`${minuteClock(data.since, data.timezone)} → ${minuteClock(data.until, data.timezone)}`]),
+      el("span", {}, [reportZone(data) + t(" · 本周进行中", " · week in progress")])]);
+    if (!row) { UI.live(body).replaceChildren(range, note(t("本周排行中没有该配额的记录。", "No record for this quota in this week's ranking."))); return; }
+    const known = row.gpu_hours != null;
+    const stat = (label, value, subs, extra) => el("div", { class: "pai-rank-stat" }, [el("span", {}, [label]), el("b", {}, [value]), extra || null, ...subs.filter(Boolean)]);
+    const small = (text, tone) => el("small", { class: tone || null }, [text]);
+    const meter = (v) => (v == null ? null : el("span", { class: "meter" }, [el("i", { style: `width:${Math.max(0, Math.min(100, v))}%` })]));
+    const direct = row.direct_gpu_hours ?? row.gpu_hours, via = row.root_attributed_gpu_hours || 0;
+    const coverage = row.gpu_hours ? share((row.measured_gpu_hours || 0) / row.gpu_hours * 100) : "—";
+    UI.live(body).replaceChildren(range, el("div", { class: "pai-rank-stats pai-q-week-stats" }, [
+      stat(t("占用 GPU·小时", "Occupied GPU-hours"), hrs(row.gpu_hours), [
+        !known ? small(t("该窗口无任务历史", "No task history in this window"))
+          : q.isRoot ? small(t(`仅直接提交；其中 ${hrs(via)} 已归入 Feature`, `Direct submissions only; ${hrs(via)} attributed to features`))
+            : small(t(`直接提交 ${hrs(direct)} · 从根配额归入 ${hrs(via)}`, `${hrs(direct)} direct · ${hrs(via)} from the root quota`)),
+        row.oversold_gpu_hours > 0 ? small(t(`其中借入 ${hrs(row.oversold_gpu_hours)}`, `${hrs(row.oversold_gpu_hours)} borrowed in`)) : null]),
+      stat(t("配额记账占用率", "Quota-reported utilization"), share(row.occupancy_pct), [small(t(`时间覆盖 ${share(row.quota_coverage_pct)}`, `${share(row.quota_coverage_pct)} coverage`))], meter(row.occupancy_pct)),
+      stat(t("占用期间计算效率", "Compute while occupied"), pct1(row.hardware_efficiency_pct), [small(t(`指标覆盖 ${coverage}`, `${coverage} measured`))], meter(row.hardware_efficiency_pct)),
+      stat(t("任务数", "Jobs"), row.workloads == null ? "—" : String(row.workloads), [known ? small(t("本窗口内出现过的任务", "Workloads seen in this window")) : null]),
+    ]), note(t("GPU·小时 = 调度卡数 × 观测运行时长，含借用一次；配额记账占用率来自平台计数，可能不含池内借用。完整口径见排行页的统计说明。",
+      "GPU-hours = scheduled GPUs × observed running time, borrowing counted once; quota-reported utilization comes from platform counters and may exclude pool borrowing. The ranking page documents the full method.")));
+  }
+
+  async function quotaDetail(root, m, q) {
+    GM.crumb(t("配额 › ", "Quotas › ") + (q.quota_name || q.quota_id), root);
+    root.appendChild(back(t("配额列表", "Quotas"), href("quotas")));
+    const cap = num(q.gpu_capacity), shown = quotaShown(q), cs = q.cards;
+    const linkQuota = (x) => link(x.quota_name || x.quota_id, href("quota", x.quota_id));
+    const parentName = q.parent?.quota_name || t("父配额", "the parent quota");
+    root.appendChild(el("section", { class: "panel pai-panel pai-q-detail" }, [
+      el("div", { class: "pai-detail-title" }, [el("h2", {}, [q.quota_name || q.quota_id]),
+        el("span", { class: "pai-chip muted" }, [q.isRoot ? t("根配额", "Root quota") : t("子配额", "Subquota")]),
+        q.status && q.status !== "Ready" ? chip(q.status) : null, ...quotaFlags(q)]),
+      el("div", { class: "pai-q-detail-grid" }, [
+        metaList([
+          [t("配额 ID", "Quota ID"), el("span", { class: "mono" }, [q.quota_id])],
+          q.parent ? [t("父配额", "Parent"), linkQuota(q.parent)] : null,
+          q.children.length ? [t("子配额", "Subquotas"), el("span", { class: "pai-inline" }, q.children.map(linkQuota))] : null,
+          [t("已分配 / 容量", "Allocated / capacity"), el("span", { class: "pai-q-cap-line" }, [el("b", { class: "mono" }, [`${gpus(shown)} / ${gpus(cap)}`]), quotaBar(q)])],
+          q.hasBreakdown ? [t("分配构成（当前）", "Allocation (current)"), t(`本配额任务 ${gpus(q.self_allocated_gpu)} · 子配额 ${gpus(q.descendants_allocated_gpu)} · 父配额任务占用 ${gpus(q.ancestors_allocated_gpu)}`,
+            `This quota ${gpus(q.self_allocated_gpu)} · subquotas ${gpus(q.descendants_allocated_gpu)} · parent-quota workloads ${gpus(q.ancestors_allocated_gpu)}`)] : null,
+          [t("绑定节点", "Bound nodes"), t(`${q.nodesTotal} 个 · 可接新任务 ${q.nodesSchedulable} 个`, `${q.nodesTotal} · ${q.nodesSchedulable} schedulable`)],
+          [t("物理卡", "Physical GPUs"), t(`${cs.total} 张 · 本配额任务 ${cs.self} · 父配额任务 ${cs.ancestor} · 借出 ${cs.lent} · 原配额空闲 ${cs.free} · 未知 ${cs.unknown}`,
+            `${cs.total} · this quota ${cs.self} · parent-quota ${cs.ancestor} · lent out ${cs.lent} · quota-idle ${cs.free} · unknown ${cs.unknown}`)],
+          q.oversold_enabled != null ? [t("闲时共享", "Idle sharing"), el("span", { class: "pai-inline" }, [
+            q.oversold_enabled ? t("开启：本级和子级空闲资源可供闲时任务使用", "On: idle capacity here and below may be used by idle-time workloads") : t("关闭", "Off"), doc("idle")])] : null,
+          q.mismatch ? [t("核对", "Check"), el("span", { class: "pai-flag" }, [t(`任务申请 ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "分配" : "用量"} ${gpus(q.reported)}`,
+            `Requested ${gpus(q.expected)} ≠ ${q.hasBreakdown ? "allocated" : "used"} ${gpus(q.reported)}`)])] : null,
+        ]),
+        el("div", { class: "pai-q-detail-side" }, [
+          miniMetrics([
+            [t("运行任务", "Running"), String(q.running.length)], [t("排队", "Queued"), String(q.queued.length)],
+            [t("用户", "Users"), String(q.users.length)], [t("任务占用 GPU", "Task GPUs"), gpus(q.scheduledGpu)],
+            [t("其中借入", "Borrowed in"), gpus(q.borrowingGpu)], [t("节点计算均值", "Node compute"), pct(q.nodeComputeMean)],
+            [t(`计算<${LOW}% 卡`, `GPUs <${LOW}%`), String(q.lowDims)], [t("原配额空闲卡", "Quota-idle GPUs"), String(cs.free)],
+          ]),
+          quotaStrip(q),
+        ]),
+      ]),
+      q.ancestorJobs.length ? note(t(`${q.ancestorJobs.length} 个父配额任务跑在本配额节点上，占 ${cs.ancestor} 卡；它们按提交配额计入 ${parentName} 的用量，这里按实际落点列出。`,
+        `${q.ancestorJobs.length} parent-quota workloads run on this quota's nodes (${cs.ancestor} GPUs); they count toward ${parentName} by submission and are listed here by placement.`)) : null,
+      q.lentJobs.length ? el("div", { class: "pai-note oversold" }, [t(`借出 ${cs.lent} 卡给 ${q.lentJobs.length} 个闲时任务；本配额需要时会被回收。`,
+        `${cs.lent} GPUs lent out to ${q.lentJobs.length} idle-time workloads; reclaimed when this quota needs them. `), doc("idle")]) : null,
+      q.borrowingJobs.length ? el("div", { class: "pai-note oversold" }, [t(`借入 ${gpus(q.borrowingGpu)} 卡：本配额 ${q.borrowingJobs.length} 个任务正使用其他配额的闲时资源；已计入任务占用，不增加本配额容量。`,
+        `Borrowing in ${gpus(q.borrowingGpu)} GPUs: ${q.borrowingJobs.length} of this quota's workloads use idle capacity elsewhere; counted as task GPUs without adding capacity. `), doc("idle")]) : null,
+    ]));
+    await quotaWeekPanel(root, q);
+    if (!root.isConnected) return;
+    root.appendChild(panel(t("绑定节点", "Bound nodes"), [
+      ...q.unhealthyNodes.flatMap((n) => n.healTasks.map((w) => el("div", { class: "pai-note warn" }, [healText(n, w), " ", link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", doc("selfHeal")]))),
+      q.boundNodes.length ? el("div", { class: "pai-node-grid" }, q.boundNodes.map(nodeTile)) : note(t("该配额没有绑定节点。", "No nodes are bound to this quota.")),
+    ], { tools: legend() }));
+    root.appendChild(quotaWorkloadsPanel(q));
+    root.appendChild(panel(t("用户", "Users"), [quotaUsersTable(q)]));
   }
 
   // 页面底部：相关概念的阿里云文档
@@ -1606,8 +1913,8 @@ window.PaiUI = (() => {
     draw();
   }
 
-  function metaList(items) {
-    return el("dl", { class: "pai-meta" }, items.filter(Boolean).flatMap(([k, v]) => [el("dt", {}, [k]), el("dd", {}, [v])]));
+  function metaList(items, cls) {
+    return el("dl", { class: "pai-meta" + (cls ? " " + cls : "") }, items.filter(Boolean).flatMap(([k, v]) => [el("dt", {}, [k]), el("dd", {}, [v])]));
   }
 
   function miniMetrics(items) {
@@ -1615,7 +1922,7 @@ window.PaiUI = (() => {
   }
 
   return { el, t, ui, LOW, isLow, num, pct, pct1, gpus, ago, clock, href, link, note, chip, typeChip, bar, prepare, cell, card, legend,
-    header, slimHeader, kpis, taskMeanHint, clusterMeanHint, estimateMetric, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel,
+    header, slimHeader, kpis, taskMeanHint, clusterMeanHint, estimateMetric, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel, quotasTab, quotaDetail,
     sourcesPanel, docsPanel, queueBanner, healText, rankingPanel, strategyText, specText, dur, doc, oversoldChip, stateCell, nodeChips, OVERSOLD_TIP, drawSeries, metaList, miniMetrics, rangeText, conflictFlag };
 })();
 
@@ -1692,7 +1999,7 @@ Views.home = { async render(root) {
 Views.pai = { async render(root, params) {
   const P = PaiUI;
   const { el, t, note, chip, href } = P;
-  const tabName = { overview: t("总览", "Overview"), nodes: t("节点", "Nodes"), workloads: t("任务", "Workloads"), users: t("用户", "Users"), ranking: t("排行", "Ranking") };
+  const tabName = { overview: t("总览", "Overview"), quotas: t("配额", "Quotas"), nodes: t("节点", "Nodes"), workloads: t("任务", "Workloads"), users: t("用户", "Users"), ranking: t("排行", "Ranking") };
   GM.crumb(tabName[params.tab] || "PAI", root);
   const raw = await API.paiOverview();
   if (!root.isConnected) return;
@@ -1707,7 +2014,7 @@ Views.pai = { async render(root, params) {
   const m = P.prepare(raw);
   GM.setSourceHealth("pai", m.state, m.updatedAt, root);
   const tab = params.tab || "overview";
-  const activeTab = { node: "nodes", workload: "workloads", user: "users" }[tab] || tab;
+  const activeTab = { node: "nodes", workload: "workloads", user: "users", quota: "quotas" }[tab] || tab;
   // 排行页与裸金属排行一致：左上角“返回总览”。
   if (tab === "ranking") root.appendChild(P.back(t("返回总览", "Back to overview"), "#/pai"));
   if (tab === "overview") {
@@ -1722,19 +2029,34 @@ Views.pai = { async render(root, params) {
   root.appendChild(P.tabs(m, activeTab));
 
   if (tab === "overview") {
+    // 窄屏总览只展示摘要：前 5 位用户与前 5 个任务，其余通过各自标签页查看。
+    const narrow = !!window.matchMedia?.("(max-width: 760px)").matches;
+    const userLimit = narrow ? 5 : null;
     root.appendChild(P.heatPanel(m));
     root.appendChild(el("div", { class: "grid2 pai-grid2" }, [
-      P.panel(t("用户", "Users"), [P.usersTable(m.users, true)], { tools: P.link(t("详情 →", "Details →"), href("users"), "pai-more") }),
+      P.panel(t("用户", "Users"), [P.usersTable(m.users, true, userLimit),
+        userLimit && m.users.length > userLimit ? el("a", { class: "pai-more", href: href("users") }, [t(`查看全部 ${m.users.length} 位用户 →`, `All ${m.users.length} users →`)]) : null],
+      { tools: P.link(t("详情 →", "Details →"), href("users"), "pai-more") }),
       P.quotasPanel(m),
     ]));
-    root.appendChild(P.workloadsPanel(m, { limit: 8 }));
+    root.appendChild(P.workloadsPanel(m, { limit: narrow ? 5 : 8 }));
   } else if (tab === "ranking") {
     await P.rankingPanel(root);
     if (!root.isConnected) return;
+  } else if (tab === "quotas") {
+    root.appendChild(P.quotasTab(m));
+  } else if (tab === "quota") {
+    const q = (m.quotas || []).find((x) => x.quota_id === params.id);
+    if (!q) root.appendChild(P.panel(t("配额未找到", "Quota not found"), [note(t("该配额不在当前快照中。", "This quota is not in the current snapshot.")), P.back(t("配额列表", "Quotas"), href("quotas"))]));
+    else {
+      await P.quotaDetail(root, m, q);
+      if (!root.isConnected) return;
+    }
   } else if (tab === "nodes") {
     root.appendChild(P.nodesPanel(m));
   } else if (tab === "node") {
     const n = m.nodes.find((x) => x.NodeName === params.id);
+    const avgOf = (cards, metric) => { const xs = cards.map((c) => c[metric]).filter((x) => x && x.fresh).map((x) => x.value); return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; };
     if (!n) root.appendChild(P.panel(t("节点未找到", "Node not found"), [P.back(t("节点列表", "Nodes"), href("nodes"))]));
     else {
       GM.crumb(t("节点 › ", "Nodes › ") + n.short, root);
@@ -1744,7 +2066,7 @@ Views.pai = { async render(root, params) {
       root.appendChild(el("section", { class: "panel pai-panel" }, [
         el("div", { class: "pai-detail-title" }, [el("h2", { class: "mono" }, [n.short]), ...P.nodeChips(n)]),
         P.metaList([[t("完整名称", "Full name"), el("span", { class: "mono" }, [n.NodeName])], [t("型号", "Model"), `${n.GPUType || "—"} · ${P.gpus(n.GPU)} GPU`],
-          [t("所属配额", "Quota"), n.quotaNames.length ? n.quotaNames.join(", ") : "—"],
+          [t("所属配额", "Quota"), n.quotaIds.length ? el("span", { class: "pai-inline" }, n.quotaIds.map((id, i) => P.link(n.quotaNames[i], href("quota", id)))) : "—"],
           [t("可分配 / 普通请求", "Allocatable / regular requests"), el("span", {
             title: t("节点原始请求计数可能不包含闲时借用；全部已定位占用见下项。", "The node request counter may exclude idle borrowing; all mapped allocation is shown below.")
           }, [`${P.gpus(n.AllocatableGPU)} / ${P.gpus(n.RequestGPU)}`])],
@@ -1757,10 +2079,17 @@ Views.pai = { async render(root, params) {
             n.ReasonCode ? el("span", { class: "mono" }, [n.ReasonCode + (n.ReasonMessage ? " · " + n.ReasonMessage : "")]) : null,
             n.unhealthy || n.NodeStatus !== "Ready" ? P.doc("manageQuota", t("节点状态说明", "Node states")) : null,
             n.unhealthy ? P.doc("selfHeal") : null])],
-          [t("Pod 映射", "Pod mapping"), chip(n.mapping_state)], [t("未见占用的卡", "No visible allocation"), String(n.free)]]),
+          [t("Pod 映射", "Pod mapping"), chip(n.mapping_state)], [t("未见占用的卡", "No visible allocation"), String(n.free)]], "cols2"),
         ...n.healTasks.map((w) => el("div", { class: "pai-note warn" }, [P.healText(n, w), " ", P.link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", P.doc("selfHeal")])),
         P.legend(),
-        el("div", { class: "cards pai-cards-lg" }, n.cards.map((c) => P.card(c, { href: c.assignments[0] ? href("workload", c.assignments[0].workload_id) : null }))),
+        // 单卡行右侧放节点摘要，利用宽屏空间；窄屏自然换行到下方。
+        el("div", { class: "pai-node-detail-row" }, [
+          el("div", { class: "cards pai-cards-lg" }, n.cards.map((c) => P.card(c, { href: c.assignments[0] ? href("workload", c.assignments[0].workload_id) : null }))),
+          P.miniMetrics([[t("计算均值", "Compute"), P.pct(avgOf(n.cards, "compute"))], [t("显存均值", "Memory"), P.pct(avgOf(n.cards, "memory"))],
+            [t("有近期值的卡", "GPUs with data"), `${n.cards.filter((c) => c.compute?.fresh).length} / ${n.cards.length}`],
+            [t(`计算<${P.LOW}% 卡`, `GPUs <${P.LOW}%`), String(n.cards.filter((c) => c.low).length)],
+            [t("借入卡", "Borrowed in"), String(n.cards.filter((c) => c.borrowed).length)], [t("原配额空闲", "Quota idle"), String(n.free)]]),
+        ]),
       ]));
       root.appendChild(P.panel(t("单卡归属", "Card assignments"), [el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table compact" }, [
         el("thead", {}, [el("tr", {}, ["GPU", t("任务", "Workload"), "Owner", t("计算", "Compute"), t("显存", "Memory"), t("源采样", "Sampled")].map((h) => el("th", {}, [h])))]),
@@ -1820,7 +2149,7 @@ Views.pai = { async render(root, params) {
       root.appendChild(el("section", { class: "panel pai-panel" }, [
         el("div", { class: "pai-detail-title" }, [P.typeChip(w.WorkloadType), el("h2", {}, [w.WorkloadName]), P.stateCell(w), w.oversold ? P.oversoldChip() : null]),
         P.metaList([
-          ["Owner", P.link(w.UserName, href("user", w.UserId))], [t("配额", "Quota"), w.quota],
+          ["Owner", P.link(w.UserName, href("user", w.UserId))], [t("配额", "Quota"), w.QuotaId ? P.link(w.quota, href("quota", w.QuotaId)) : w.quota],
           [t("申请 / 调度 GPU", "Requested / scheduled"), `${P.gpus(requested)} / ${P.gpus(scheduled)}`],
           [t("资源来源", "Capacity"), w.oversold
             ? el("span", { class: "pai-inline" }, [P.oversoldChip(t("闲时借用（自有资源）", "Borrowed (owned pool)")),
@@ -1841,7 +2170,7 @@ Views.pai = { async render(root, params) {
             : el("span", { class: "pai-muted" }, [w.oversold ? t("闲时 Pod 映射尚未确认", "Borrowed Pod mapping not yet confirmed")
               : w.metrics.length ? t("未关联（有单卡指标）", "Unmapped (has GPU metrics)") : "—"])],
           [t("任务 ID", "Workload ID"), el("span", { class: "mono" }, [w.WorkloadId])],
-        ]),
+        ], "cols2"),
         w.healNode ? el("div", { class: "pai-note warn" }, [P.healText(w.healNode, w), " ", P.doc("selfHeal")]) : null,
         w.queued ? el("div", { class: "pai-note " + (w.unschedulable ? "bad" : "warn") }, [
           t(`排队中${P.num(w.queue_position) ? `，第 ${w.queue_position} 位` : ""}${w.queuedFor != null ? `，已等 ${P.dur(w.queuedFor)}` : ""}。`,

@@ -92,6 +92,7 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 | Page | Contents |
 | --- | --- |
 | Overview | Quota allocation, physical GPU heatmap, low-utilization cues, queue and source health |
+| Quotas | Root and subquota cards with allocation breakdown, schedulable nodes, running workloads, users, node compute mean and a per-GPU strip; the quota page gathers bound nodes, workloads (including parent-quota and borrowing jobs), users and weekly figures |
 | Nodes | Per-card mappings, quotas, health and workload drill-down |
 | Workloads | Search/filter/sort, requested/scheduled resources, submission policies, pod specs and one-hour charts |
 | Users | Owner/submitter workloads, in-quota and idle-time usage, source discrepancies |
@@ -148,6 +149,10 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 - GPU hours use workloads successfully read in the current round with status Running. Long gaps count at
   most twice the degraded interval; known zero scheduled GPUs remain zero. UTC-hour buckets retain 32 days;
   fractional boundaries are estimated by hourly overlap. These are observed estimates, not billing records.
+
+- The quota pages count workloads by two rules at once: submitted to the quota (including subquotas) or running on its bound nodes; each workload counts once and is tagged as a parent-quota job or as lent to an idle-time job; borrowing direction is always “borrowing in / lending out”.
+  Weekly figures on a quota page reuse the ranking feature row (the root uses its own row) and are cached for ten minutes per window; a failed ranking read only degrades that block.
+  Quota names in the overview, workload tables, node pages and user tables open the quota page. Method notes on the overview panels are collapsed under “How it is computed”.
 
 ### Weekly feature ranking
 
