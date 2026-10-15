@@ -629,6 +629,33 @@ def test_usage_requires_fresh_running_snapshot(store, cfg, monkeypatch, failed, 
     assert tuple(usage) == (expected_seconds, 0)  # A known zero scheduled GPU count must stay zero.
 
 
+@pytest.mark.parametrize("argv", [["--once"], ["--rounds", "2"]])
+@pytest.mark.parametrize("complete", [False, True, None])
+def test_collector_main_preserves_deferred_round_status(tmp_path, cfg, monkeypatch, argv, complete):
+    import os
+    from gpumon.pai import collector
+    cfg.db_path = str(tmp_path / "pai.db")
+    monkeypatch.setattr(collector, "load_pai_settings", lambda: cfg)
+    sleeps = []
+    monkeypatch.setattr(collector.time, "sleep", sleeps.append)
+    def run_once(settings, target):
+        summary = {"ok": True, "errors": {}, "duration_s": 0}
+        if complete is not None:
+            summary.update(complete=complete, deferred_sources=[] if complete else ["feature_memberships"])
+        target.save("round", summary, state="partial" if complete is False else "ok")
+        return summary
+    monkeypatch.setattr(collector, "run_once", run_once)
+    original = os.umask(0o027)
+    try:
+        assert collector.main(argv) == 0  # Deferral is not an attempted API failure.
+    finally:
+        os.umask(original)
+    source = PaiStore(cfg.db_path, read_only=True).sources()["round"]
+    assert source["state"] == ("partial" if complete is False else "ok")
+    assert source["payload"]["next_interval_s"] == cfg.poll_interval_s
+    assert sleeps == ([] if argv == ["--once"] else [cfg.poll_interval_s])
+
+
 def test_collector_snapshot_is_group_readable_but_not_world_readable(tmp_path, cfg, monkeypatch):
     import os
     from gpumon.pai import collector

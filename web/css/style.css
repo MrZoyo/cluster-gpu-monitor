@@ -1463,7 +1463,9 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-slim-title { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .pai-slim-items { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 12px; }
 .pai-slim-item { display: inline-flex; align-items: baseline; gap: 6px; }
-.pai-slim-item b { font: 700 16px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.pai-slim-item b { font: 700 16px var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pai-slim-allocation { flex-wrap: wrap; }
+.pai-slim-amount { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; flex-shrink: 0; }
 .pai-slim-item.good b { color: var(--accent); }
 .pai-chart-box { min-width: 0; }
 .pai-chart-box h3 { font-size: 13px; }

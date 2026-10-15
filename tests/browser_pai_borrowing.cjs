@@ -108,6 +108,15 @@ const web = path.resolve(__dirname, '../web');
       assert.match(await row.textContent(),locale==='zh'?/Borrowing.*闲时借用.*Borrower/:/Borrowing.*Idle borrowing.*Borrower/);
       assert.equal(await row.locator('a[href="#/pai/workload/borrower"]').count(),1);
       assert.equal(await row.locator('a[href="#/pai/user/u-borrower"]').count(),1);
+      assert(await page.locator('.pai-slim-amount b').evaluate(n=>{
+        const range=document.createRange();range.selectNodeContents(n);
+        return range.getClientRects().length===1;
+      }));
+      assert(await page.locator('.pai-slim-amount').evaluate(n=>{
+        const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;
+      }));
+      assert.match(await page.locator('#paiSources summary').textContent(),locale==='zh'?/等待来源，状态未知/:/Waiting for sources; status unknown/);
+      assert.equal(await page.locator('#paiSources .dot.green').count(),0);
       assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
       if(process.env.SHOT_DIR) await page.screenshot({path:path.join(process.env.SHOT_DIR,`borrowed-node-${locale}-${width}.png`),fullPage:true});
       await page.evaluate(async () => {

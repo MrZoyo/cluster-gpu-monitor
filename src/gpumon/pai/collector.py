@@ -334,6 +334,7 @@ def run_once(cfg, store, client=None):
     except (sqlite3.Error, ValueError):
         errors["cluster_history"] = "store_error"
         summary["ok"] = False
+        summary["complete"] = False
         store.save("round", summary, state="partial")
     return summary
 
@@ -373,7 +374,7 @@ def main(argv=None):
             elif good >= 2:
                 interval = cfg.poll_interval_s
             summary["next_interval_s"] = interval
-            store.save("round", summary, state="ok" if summary["ok"] else "partial")
+            store.save("round", summary, state="ok" if summary["ok"] and summary.get("complete", True) else "partial")
             print(json.dumps({k: v for k, v in summary.items() if k != "active_sources"}), flush=True)
             if args.once or (args.rounds and count >= args.rounds):
                 return 0 if summary["ok"] else 1

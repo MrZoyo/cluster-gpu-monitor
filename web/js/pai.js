@@ -488,7 +488,8 @@ window.PaiUI = (() => {
         el("span", { class: "pai-muted" }, [t("更新于 ", "Updated ") + ago(m.updatedAt)])]),
       el("div", { class: "pai-slim-items" }, [
         item(t("原配额空闲", "quota idle"), String(s.free), s.free ? "good" : ""),
-        el("span", { class: "pai-slim-item" }, [el("b", {}, [allocatedCount(m)]), t("已分配 GPU", "allocated GPUs"), borrowedLabel(m)]),
+        el("span", { class: "pai-slim-item pai-slim-allocation" }, [
+          el("span", { class: "pai-slim-amount" }, [el("b", {}, [allocatedCount(m)]), t("已分配 GPU", "allocated GPUs")]), borrowedLabel(m)]),
         item(t("计算均值（任务）", "task mean"), pct(sum.task_compute_mean)),
         item(t("集群计算（估算）", "pool compute (est.)"), pct(sum.pool_compute_estimate)),
         item(t("运行任务", "running"), String(s.running)),
@@ -909,11 +910,11 @@ window.PaiUI = (() => {
     const bad = sources.filter((s) => s.state !== "ok").length;
     const r = m.round || {};
     const summary = [t(`采集来源 ${sources.length} 项`, `${sources.length} sources`),
-      bad ? t(`${bad} 项异常`, `${bad} need attention`) : t("全部正常", "all healthy"),
+      !sources.length ? t("等待来源，状态未知", "Waiting for sources; status unknown") : bad ? t(`${bad} 项异常`, `${bad} need attention`) : t("全部正常", "all healthy"),
       r.duration_s != null ? t(`上一轮 ${Number(r.duration_s).toFixed(1)} 秒 / ${r.calls} 次调用`, `last round ${Number(r.duration_s).toFixed(1)}s / ${r.calls} calls`) : null,
     ].filter(Boolean).join(" · ");
     const details = el("details", { id: "paiSources", class: "panel pai-sources" + (bad ? " has-bad" : "") }, [
-      el("summary", {}, [el("span", { class: "dot " + (bad ? "yellow" : "green") }), summary]),
+      el("summary", {}, [el("span", { class: "dot" + (sources.length ? (bad ? " yellow" : " green") : "") }), summary]),
       note(t("页面只读本地快照，刷新页面不会请求云 API。", "This page reads local snapshots; refreshing never calls cloud APIs.")),
       el("div", { class: "pai-table-scroll" }, [el("table", { class: "pai-table compact" }, [
         el("thead", {}, [el("tr", {}, [t("来源", "Source"), t("状态", "State"), t("最近成功获取", "Last fetch"), t("最新源采样", "Latest sample"), t("记录", "Records")].map((h) => el("th", {}, [h])))]),
