@@ -291,19 +291,31 @@ window.PaiUI = (() => {
       q.depth = depthOf(q);
       const mine = new Set(subtree(q.quota_id));
       q.boundNodes = q.isRoot ? d.nodes : d.nodes.filter((n) => n.quotaIds.includes(q.quota_id));
+      const ancestors = new Set(), borrowedHere = new Set();
+      for (let parent = q.parent; parent && !ancestors.has(parent.quota_id); parent = quotas[parent.parent_quota_id]) ancestors.add(parent.quota_id);
+      const nodesFresh = (d.sources || []).some((s) => s.name === "nodes" && s.state === "ok");
       // 任务与配额的关系：直接提交 / 子配额提交 / 父配额任务落在本配额节点 / 闲时借用本配额节点。
-      q.relationOf = (w) => (w.QuotaId === q.quota_id ? "direct" : mine.has(w.QuotaId) ? "child" : w.oversold ? "borrowed" : "ancestor");
+      q.relationOf = (w) => (w.QuotaId === q.quota_id ? "direct" : mine.has(w.QuotaId) ? "child"
+        : w.oversold || borrowedHere.has(w.WorkloadId) ? "borrowed" : ancestors.has(w.QuotaId) ? "ancestor" : null);
       // 绑定节点上的物理卡：本配额（含子配额）任务 / 父配额任务 / 被闲时借用 / 原配额空闲 / 未知。
       const cs = { self: 0, ancestor: 0, lent: 0, free: 0, unknown: 0, low: 0, total: 0, values: [] };
       const placed = new Set();
       q.boundNodes.forEach((n) => n.cards.forEach((c) => {
         cs.total += 1;
-        if (!c.assignments.length) { cs[c.state === "free" ? "free" : "unknown"] += 1; return; }
+        if (!c.assignments.length) { cs[nodesFresh && !n.mapping_conflict && c.state === "free" ? "free" : "unknown"] += 1; return; }
+        const a = c.assignments[0], w = byId[a.workload_id];
+        // Retained/ambiguous placements may stay visible on node cards, but cannot
+        // certify a current donor or parent-quota allocation in this summary.
+        if (!nodesFresh || n.mapping_conflict || c.assignments.length !== 1 || a.fresh !== true || !w) {
+          cs.unknown += 1;
+          return;
+        }
+        if (a.borrowed === true) borrowedHere.add(w.WorkloadId);
+        const rel = a.borrowed === true ? "borrowed" : q.relationOf(w);
+        if (!rel) { cs.unknown += 1; return; }
         if (c.low) cs.low += 1;
         if (c.compute?.fresh) cs.values.push(c.compute.value);
-        c.assignments.forEach((a) => placed.add(a.workload_id));
-        const a = c.assignments[0], w = byId[a.workload_id];
-        const rel = a.borrowed === true ? "borrowed" : w ? q.relationOf(w) : "ancestor";
+        placed.add(a.workload_id);
         cs[rel === "borrowed" ? "lent" : rel === "ancestor" ? "ancestor" : "self"] += 1;
       }));
       q.cards = cs;
@@ -329,7 +341,7 @@ window.PaiUI = (() => {
         e.jobs += 1;
         e.rels.add(q.relation.get(w.WorkloadId));
         if (w.queued) e.queued += 1;
-        else {
+        else if (w.WorkloadStatus === "Running") {
           e.gpus += gpuOf(w);
           if (w.oversold) e.oversold += gpuOf(w);
           e.low += w.low;
@@ -1090,7 +1102,7 @@ window.PaiUI = (() => {
     return el("div", { class: "pai-q-strip" }, q.boundNodes.map((n) => el("span", {
       class: "pai-q-strip-node" + (n.NodeStatus !== "Ready" || n.unhealthy ? " cordoned" : ""),
       title: n.NodeName + (n.quotaNames.length ? " · " + n.quotaNames.join(", ") : "") },
-    n.cards.map((c) => el("i", { class: c.state + (c.low ? " low" : ""), style: cardParts(c).style })))));
+    n.cards.map((c) => { const p = cardParts(c); return el("i", { class: p.cls.trim(), style: p.style }); }))));
   }
 
   function quotaFlags(q) {
@@ -1202,28 +1214,47 @@ window.PaiUI = (() => {
   async function quotaWeekPanel(host, q) {
     const body = el("div", { class: "pai-q-week" }, [note(t("读取中…", "Loading…"))]);
     host.appendChild(panel(t("本周统计", "This week"), [body], { tools: link(t("查看排行 →", "Ranking →"), href("ranking"), "pai-more"), id: "paiQuotaWeek" }));
-    let data;
+    let data, staleAt = null;
     try { data = await cachedRanking("week"); } catch (e) {
       if (!host.isConnected) return;
-      if (!GM.refreshFailed?.(host)) PageRecovery.show();
-      UI.live(body).replaceChildren(note(t("排行读取失败", "Failed to load ranking")));
-      return;
+      // Weekly history is optional: its failure must not discard a fresh overview draft.
+      const previous = rankCache.get("week");
+      if (!previous) {
+        UI.live(body).dataset.rankingState = "error";
+        UI.live(body).replaceChildren(note(t("排行读取失败", "Failed to load ranking"), "pai-note warn"));
+        return;
+      }
+      data = previous.data;
+      staleAt = previous.at;
     }
     if (!host.isConnected) return;
+    UI.live(body).dataset.rankingState = staleAt == null ? "ok" : "stale";
+    const notices = [];
+    if (staleAt != null) notices.push(note(t(
+      `周统计更新失败，保留上次成功结果（${minuteClock(staleAt / 1000, data.timezone)}）；不影响其他数据刷新。`,
+      `Weekly statistics could not refresh; showing the last successful result (${minuteClock(staleAt / 1000, data.timezone)}). Other sections can still refresh.`), "pai-note warn"));
+    const attributionKnown = data.feature_attribution?.fresh === true;
+    if (data.root_quota && !attributionKnown) {
+      const state = data.feature_attribution?.state;
+      const reason = state === "stale" ? t("成员归属已过期", "Member attribution is stale")
+        : state === "error" ? t("成员归属读取失败", "Member attribution could not be read") : t("成员归属尚未就绪", "Member attribution is not ready");
+      notices.push(note(reason + t("，目前仅统计直接提交。", "; currently includes direct submissions only."), "pai-note warn"));
+    }
     const row = q.isRoot ? data.root_quota : (data.features || []).find((f) => String(f.quota_id) === String(q.quota_id));
     const range = el("div", { class: "pai-rank-range" }, [el("span", { class: "mono" }, [`${minuteClock(data.since, data.timezone)} → ${minuteClock(data.until, data.timezone)}`]),
-      el("span", {}, [reportZone(data) + t(" · 本周进行中", " · week in progress")])]);
-    if (!row) { UI.live(body).replaceChildren(range, note(t("本周排行中没有该配额的记录。", "No record for this quota in this week's ranking."))); return; }
+      el("span", {}, [reportZone(data) + (staleAt == null ? t(" · 本周进行中", " · week in progress") : t(" · 上次成功结果", " · last successful result"))])]);
+    if (!row) { UI.live(body).replaceChildren(...notices, range, note(t("该排行窗口没有此配额的记录。", "No record for this quota in this ranking window."))); return; }
     const known = row.gpu_hours != null;
     const stat = (label, value, subs, extra) => el("div", { class: "pai-rank-stat" }, [el("span", {}, [label]), el("b", {}, [value]), extra || null, ...subs.filter(Boolean)]);
     const small = (text, tone) => el("small", { class: tone || null }, [text]);
     const meter = (v) => (v == null ? null : el("span", { class: "meter" }, [el("i", { style: `width:${Math.max(0, Math.min(100, v))}%` })]));
-    const direct = row.direct_gpu_hours ?? row.gpu_hours, via = row.root_attributed_gpu_hours || 0;
+    const direct = row.direct_gpu_hours ?? row.gpu_hours, via = attributionKnown ? (row.root_attributed_gpu_hours ?? 0) : null;
     const coverage = row.gpu_hours ? share((row.measured_gpu_hours || 0) / row.gpu_hours * 100) : "—";
-    UI.live(body).replaceChildren(range, el("div", { class: "pai-rank-stats pai-q-week-stats" }, [
+    UI.live(body).replaceChildren(...notices, range, el("div", { class: "pai-rank-stats pai-q-week-stats" }, [
       stat(t("占用 GPU·小时", "Occupied GPU-hours"), hrs(row.gpu_hours), [
         !known ? small(t("该窗口无任务历史", "No task history in this window"))
-          : q.isRoot ? small(t(`仅直接提交；其中 ${hrs(via)} 已归入 Feature`, `Direct submissions only; ${hrs(via)} attributed to features`))
+          : q.isRoot ? small(attributionKnown ? t(`仅直接提交；其中 ${hrs(via)} 已归入 Feature`, `Direct submissions only; ${hrs(via)} attributed to features`)
+            : t("仅直接提交；归入 Feature 的用量未知", "Direct submissions only; usage attributed to features is unknown"))
             : small(t(`直接提交 ${hrs(direct)} · 从根配额归入 ${hrs(via)}`, `${hrs(direct)} direct · ${hrs(via)} from the root quota`)),
         row.oversold_gpu_hours > 0 ? small(t(`其中借入 ${hrs(row.oversold_gpu_hours)}`, `${hrs(row.oversold_gpu_hours)} borrowed in`)) : null]),
       stat(t("配额记账占用率", "Quota-reported utilization"), share(row.occupancy_pct), [small(t(`时间覆盖 ${share(row.quota_coverage_pct)}`, `${share(row.quota_coverage_pct)} coverage`))], meter(row.occupancy_pct)),

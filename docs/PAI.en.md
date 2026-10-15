@@ -151,7 +151,8 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   fractional boundaries are estimated by hourly overlap. These are observed estimates, not billing records.
 
 - The quota pages count workloads by two rules at once: submitted to the quota (including subquotas) or running on its bound nodes; each workload counts once and is tagged as a parent-quota job or as lent to an idle-time job; borrowing direction is always “borrowing in / lending out”.
-  Weekly figures on a quota page reuse the ranking feature row (the root uses its own row) and are cached for ten minutes per window; a failed ranking read only degrades that block.
+  User occupancy includes running, nonqueued workloads only. Saving or stopping workloads with trusted mappings still appear in physical occupancy. Unknown workloads and stale or conflicting mappings count as unknown; they do not establish a lender or parent-quota placement.
+  Weekly figures on a quota page reuse the ranking feature row (the root uses its own row) and are cached for ten minutes per window. A failed read marks that block and retains its last successful result while nodes and workloads keep refreshing. Failed or stale member attribution is shown as degraded, and usage attributed from the root remains unknown.
   Quota names in the overview, workload tables, node pages and user tables open the quota page. Method notes on the overview panels are collapsed under “How it is computed”.
 
 ### Weekly feature ranking

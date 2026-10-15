@@ -43,6 +43,7 @@ function ranking() {
     root_attributed_gpu_hours: 0, oversold_gpu_hours: id === 'q-a' ? 4 : 0, measured_gpu_hours: gh * 0.9, effective_gpu_hours: gh * 0.45, hardware_efficiency_pct: 50,
     workloads: 3, occupancy_pct: occ, quota_coverage_pct: 97.5 });
   return { window: 'week', since: 0, until: 20000, generated_at: 20000, timezone: 'Asia/Shanghai', first_hour: 0,
+    feature_attribution: { fresh: true, state: 'ok', fetched_at: 20000 },
     features: [feature('q-a', 'alpha', false, 120.4, 61.2), feature('q-b', 'beta', false, 80, 88.8)], root_quota: feature('q-root', 'training', true, 300, 70), totals: { gpu_hours: 500 } };
 }
 
@@ -58,8 +59,13 @@ function ranking() {
       await page.addScriptTag({ path: path.join(web, 'vendor/echarts.min.js') });
       await page.evaluate((locale) => {
         window.locale = locale; window.I18n = { getLocale: () => locale, t: (k) => k };
-        window.GM = { crumb() {}, setSourceHealth() {}, refreshFailed: () => false, state: { window: '24h', meta: { windows: ['24h'] } } };
+        window.GM = { crumb() {}, setSourceHealth() {}, refreshFailed: (host) => {
+          const draft = window.LiveDOM?.draft(host);
+          if (!draft) return false;
+          draft._failed = true; return true;
+        }, state: { window: '24h', meta: { windows: ['24h'] } } };
         window.PageRecovery = { show() { window.recoveryShown = (window.recoveryShown || 0) + 1; } };
+        const now = Date.now; window.clockOffset = 0; Date.now = () => now() + clockOffset;
       }, locale);
       for (const file of ['refresh.js', 'components.js', 'pai-estimate.js', 'pai.js']) await page.addScriptTag({ path: path.join(web, 'js', file) });
       await page.evaluate(({ raw, rank }) => {
@@ -71,7 +77,7 @@ function ranking() {
           if (soft) { wrapper = document.createElement('div'); wrapper.setAttribute('data-refresh-draft', ''); wrapper.style.cssText = 'position:absolute;left:-10000px;visibility:hidden'; next = root.cloneNode(false); wrapper.append(next); document.body.append(wrapper); }
           else root.replaceChildren();
           await Views.pai.render(next, { tab, id });
-          if (soft) { LiveDOM.commit(root, next); wrapper.remove(); }
+          if (soft) { window.lastDraftFailed = !!wrapper._failed; if (!wrapper._failed) LiveDOM.commit(root, next); wrapper.remove(); }
         };
       }, { raw: fixture(), rank: ranking() });
       const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
@@ -122,6 +128,7 @@ function ranking() {
       assert.equal(await page.locator('#paiQuotaWeek .pai-rank-stat').count(), 4);
       assert.match(await page.locator('#paiQuotaWeek .pai-rank-stat').first().innerText(), /\b120\b/); // hrs() rounds values >= 100
       assert.match(await page.locator('#paiQuotaWeek .pai-rank-stat').nth(1).innerText(), /61\.2%/);
+      assert.match(await page.locator('#paiQuotaWeek').innerText(), zh ? /从根配额归入\s*0\b/ : /\b0\s*from the root quota/);
       assert.equal(await page.locator('.pai-node-grid .pai-node-tile').count(), 2);
       const seg = page.locator('.pai-panel').filter({ has: page.locator('.pai-wl-table') }).locator('.pai-seg button');
       assert.deepEqual((await seg.locator('.count').allInnerTexts()), ['4', '3', '1']); // all / submitted here (incl. queued + borrowing elsewhere) / parent-quota
@@ -144,19 +151,59 @@ function ranking() {
       assert.match(await page.locator('.pai-wl-table tbody').innerText(), /a-dev-renamed/);
       assert.equal(await page.locator('#paiQuotaWeek .pai-rank-stat').count(), 4);
 
-      // Root quota uses its own ranking row; a failed ranking only degrades the week panel.
+      // Root quota uses its own ranking row.
       await page.evaluate(() => renderTab('quota', 'q-root'));
       assert.equal(await page.locator('.pai-q-detail a[href^="#/pai/quota/q-"]').count(), 2);
       assert.match(await page.locator('#paiQuotaWeek').innerText(), /300/);
       assert.equal(await page.locator('.pai-node-grid .pai-node-tile').count(), 3);
-      await page.evaluate(() => { PaiUI.ui.quota = 'all'; window.rankingFails = true; });
-      await page.evaluate(() => { const live = document.querySelector('#paiQuotaWeek'); live.remove(); });
-      assert.equal(await page.locator('#paiQuotaWeek').count(), 0);
+      await page.evaluate(() => { PaiUI.ui.quota = 'all'; });
       await page.evaluate(() => renderTab('quota', 'q-b'));
-      assert.match(await page.locator('#paiQuotaWeek').innerText(), zh ? /排行读取失败|配额记账占用率/ : /Failed to load ranking|Quota-reported/);
       assert.equal(await page.locator('.pai-q-detail h2').innerText(), 'beta');
       assert.match(await page.locator('.pai-q-detail').innerText(), zh ? /借出 2 卡/ : /Lending out 2/);
       assert.equal(await page.locator('.pai-wl-table .pai-chip.rel-borrowed').count(), 1);
+
+      // A real cache-expiry failure must not discard fresh node and workload data.
+      await page.evaluate(() => renderTab('quota', 'q-a'));
+      const callsBeforeFailure = await page.evaluate(() => rankingCalls);
+      await page.evaluate(() => {
+        window.savedDetail = document.querySelector('.pai-q-detail'); window.savedWeek = document.querySelector('#paiQuotaWeek');
+        clockOffset += 610001; rankingFails = true;
+        fixture.workloads[1].WorkloadName = 'a-dev-after-ranking-failure'; fixture.nodes[0].NodeStatus = 'SchedulingDisabled';
+        return renderTab('quota', 'q-a', true);
+      });
+      assert.equal(await page.evaluate(() => rankingCalls), callsBeforeFailure + 1);
+      assert.equal(await page.evaluate(() => lastDraftFailed), false);
+      assert(await page.evaluate(() => savedDetail === document.querySelector('.pai-q-detail') && savedWeek === document.querySelector('#paiQuotaWeek')));
+      assert.match(await page.locator('.pai-wl-table tbody').innerText(), /a-dev-after-ranking-failure/);
+      assert.equal(await page.locator('.pai-node-tile[href="#/pai/node/node-a1"]').evaluate(n => n.classList.contains('cordoned')), true);
+      assert.equal(await page.locator('.pai-q-week').getAttribute('data-ranking-state'), 'stale');
+      assert.match(await page.locator('#paiQuotaWeek').innerText(), zh ? /周统计更新失败.*保留上次成功结果.*不影响其他数据刷新/s : /Weekly statistics could not refresh.*last successful result.*Other sections can still refresh/s);
+      assert.match(await page.locator('#paiQuotaWeek .pai-rank-stat').first().innerText(), /\b120\b/);
+      assert.equal(await page.evaluate(() => window.recoveryShown || 0), 0);
+
+      // Recovery replaces stale history and clears only the weekly warning.
+      await page.evaluate(() => {
+        rankingFails = false; rank.features[0].gpu_hours = 140.4; rank.features[0].direct_gpu_hours = 140.4;
+        return renderTab('quota', 'q-a', true);
+      });
+      assert.equal(await page.locator('.pai-q-week').getAttribute('data-ranking-state'), 'ok');
+      assert.match(await page.locator('#paiQuotaWeek .pai-rank-stat').first().innerText(), /\b140\b/);
+      assert.doesNotMatch(await page.locator('#paiQuotaWeek').innerText(), /周统计更新失败|Weekly statistics could not refresh/);
+
+      // Unavailable role attribution is unknown, even when the API's numeric fallback is zero.
+      await page.evaluate(() => {
+        clockOffset += 610001; rank.feature_attribution = { fresh: false, state: 'error' };
+        rank.features[0].root_attributed_gpu_hours = 0;
+        return renderTab('quota', 'q-a', true);
+      });
+      const degraded = await page.locator('#paiQuotaWeek').innerText();
+      assert.match(degraded, zh ? /成员归属读取失败.*目前仅统计直接提交/s : /Member attribution could not be read.*direct submissions only/s);
+      assert.match(degraded, zh ? /从根配额归入\s*—/ : /—\s*from the root quota/);
+      assert.doesNotMatch(degraded, zh ? /从根配额归入\s*0\b/ : /\b0\s*from the root quota/);
+      assert.equal(await page.evaluate(() => lastDraftFailed), false);
+      await page.evaluate(() => renderTab('quota', 'q-root'));
+      assert.match(await page.locator('#paiQuotaWeek').innerText(), zh ? /归入 Feature 的用量未知/ : /usage attributed to features is unknown/);
+      assert.doesNotMatch(await page.locator('#paiQuotaWeek').innerText(), zh ? /其中\s*0\s*已归入 Feature/ : /\b0\s*attributed to features/);
       await page.evaluate(() => renderTab('quota', 'missing'));
       assert.match(await page.locator('#view').innerText(), zh ? /配额未找到/ : /Quota not found/);
       assert(await fits());
@@ -166,8 +213,28 @@ function ranking() {
         await page.screenshot({ path: path.join(process.env.SHOT_DIR, `quota-tab-${locale}-${width}.png`), fullPage: true });
       }
       assert.deepEqual(errors, []);
-      console.log(`PASS ${locale} ${width}px: quota tab, cards, relations, week panel cache, detail filters, users, failures and overflow`);
+      console.log(`PASS ${locale} ${width}px: quota navigation, real cache-expiry failure and recovery, live nodes/workloads retained, unknown attribution, filters and overflow`);
       await page.close();
     }
+    // A first-load ranking failure has no cache: only the weekly section is unavailable.
+    const empty = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    await empty.setContent('<main id="view" class="pai-scope"></main>');
+    await empty.evaluate(() => {
+      window.I18n = { getLocale: () => 'zh', t: k => k };
+      window.GM = { crumb() {}, setSourceHealth() {}, refreshFailed() { window.fullPageFailure = true; return false; } };
+      window.PageRecovery = { show() { window.recoveryShown = true; } };
+    });
+    for (const file of ['components.js', 'pai-estimate.js', 'pai.js']) await empty.addScriptTag({ path: path.join(web, 'js', file) });
+    await empty.evaluate(async raw => {
+      window.API = { paiOverview: async () => raw, paiRanking: async () => { throw new Error('503'); } };
+      await Views.pai.render(document.querySelector('#view'), { tab: 'quota', id: 'q-a' });
+    }, fixture());
+    assert.equal(await empty.locator('.pai-q-week').getAttribute('data-ranking-state'), 'error');
+    assert.match(await empty.locator('#paiQuotaWeek').innerText(), /排行读取失败/);
+    assert.equal(await empty.locator('.pai-node-tile').count(), 2);
+    assert.equal(await empty.locator('.pai-wl-table tbody tr').count(), 4);
+    assert.equal(await empty.evaluate(() => !!window.fullPageFailure || !!window.recoveryShown), false);
+    await empty.close();
+    console.log('PASS uncached ranking failure: weekly error only; nodes and workloads still render without whole-page recovery');
   } finally { await browser.close(); }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

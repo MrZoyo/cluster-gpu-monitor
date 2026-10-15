@@ -1864,7 +1864,7 @@ a.pai-user-chip:hover { border-color: var(--accent); color: var(--accent); }
 .pai-q-card .pai-quota-bar { height: 8px; border-radius: 4px; }
 .pai-q-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-top: 2px; }
 .pai-q-stat b { display: block; font: 700 15px/1.1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.pai-q-stat span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pai-q-stat span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
 .pai-q-stat.warn b { color: var(--held); }
 /* 每格一张物理卡，按绑定节点成组；颜色与热力图一致 */
 .pai-q-strip { display: flex; flex-wrap: wrap; gap: 6px 10px; }
