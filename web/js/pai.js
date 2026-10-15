@@ -679,7 +679,7 @@ window.PaiUI = (() => {
   const borrowedLabel = (m) => {
     const n = m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu);
     return el("span", { class: "pai-borrowed-subset", title: OVERSOLD_TIP() }, [el("i", { class: "pai-borrowed-swatch", "aria-hidden": "true" }),
-      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPUs · no extra capacity`)]);
+      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPU${n === 1 ? "" : "s"} · no extra capacity`)]);
   };
 
   function kpis(m) {
@@ -1112,7 +1112,7 @@ window.PaiUI = (() => {
     if (q.lowDims) flags.push(el("span", { class: "pai-chip held", title: t(`已分配但近 10 分钟计算 <${LOW}% 的卡`, `Allocated GPUs with 10-min compute under ${LOW}%`) }, [t(`${q.lowDims} 卡计算<${LOW}%`, `${q.lowDims} GPUs <${LOW}%`)]));
     // 方向固定为“借入 / 借出”：借入 = 本配额任务使用别处闲时资源；借出 = 闲时任务使用本配额节点。
     // 根配额的借入与借出是同一笔池内借用，只标一次。
-    if (q.isRoot && q.borrowingGpu) flags.push(oversoldChip(t(`池内闲时借用 ${gpus(q.borrowingGpu)} 卡`, `${gpus(q.borrowingGpu)} GPUs borrowed within the pool`)));
+    if (q.isRoot && q.borrowingGpu) flags.push(oversoldChip(t(`池内闲时借用 ${gpus(q.borrowingGpu)} 卡`, `${gpus(q.borrowingGpu)} GPU${q.borrowingGpu === 1 ? "" : "s"} borrowed within the pool`)));
     else {
       if (q.borrowingGpu) flags.push(oversoldChip(t(`借入 ${gpus(q.borrowingGpu)} 卡`, `Borrowing in ${gpus(q.borrowingGpu)}`)));
       if (q.cards.lent) flags.push(el("span", { class: "pai-chip lent", title: OVERSOLD_TIP() }, [t(`借出 ${q.cards.lent} 卡`, `Lending out ${q.cards.lent}`)]));
