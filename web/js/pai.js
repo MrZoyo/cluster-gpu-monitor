@@ -513,7 +513,7 @@ window.PaiUI = (() => {
     const reasonLabel = r => t(r.labelZh, r.labelEn);
     const taskState = status => ({Saving:t("保存中","saving"),Stopping:t("停止中","stopping"),Stopped:t("已停止","stopped"),
       Terminating:t("终止中","terminating"),Terminated:t("已终止","terminated"),Succeeded:t("已完成","completed"),Failed:t("已失败","failed"),
-      Starting:t("启动中","starting"),Creating:t("创建中","creating")}[status] || stateText(status));
+      Starting:t("启动中","starting"),Creating:t("创建中","creating"),EnvPreparing:t("环境准备中","preparing environment")}[status] || stateText(status));
     const shortReasons = reasons.flatMap(r => {
       if(r.code === "non_running_allocations" && r.tasks?.length && r.tasks.reduce((n,w)=>n+(num(w.gpus)||0),0) === r.gpus) {
         const byState = new Map();
