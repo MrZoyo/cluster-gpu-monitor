@@ -143,7 +143,7 @@ def run_once(cfg, store, client=None):
     client = client or PaiClient(cfg)
     started = time.time()
     previous = store.sources()
-    errors, seen = {}, set()
+    errors, seen, deferred = {}, set(), set()
 
     def fetch(name, function, normalize=lambda x: x, cache=False, min_interval=None, empty_ok=False):
         seen.add(name)
@@ -207,9 +207,13 @@ def run_once(cfg, store, client=None):
     } for u in result[0]])
 
     def collect_pods(node):
-        fetch("pods:" + node["NodeName"], lambda n=node: client.pods(n["NodeName"], n["ResourceGroupId"]),
-              lambda result: [select(p, "PodName Phase WorkloadId WorkloadType WorkspaceId QuotaId GPUIndexes")
-                              for p in result[0]], empty_ok=True)
+        # Default ListNodePods omits borrowed allocations. Keep both views independently:
+        # a failed view retains its last value and cannot certify unallocated cards.
+        for prefix, borrowed in (("pods:", False), ("pods-borrowed:", True)):
+            fetch(prefix + node["NodeName"],
+                  lambda n=node, b=borrowed: client.pods(n["NodeName"], n["ResourceGroupId"], borrowed=b),
+                  lambda result: [select(p, "PodName Phase WorkloadId WorkloadType WorkspaceId QuotaId GPUIndexes")
+                                  for p in result[0]], empty_ok=True)
     with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
         list(executor.map(collect_pods, nodes))
 
@@ -238,30 +242,27 @@ def run_once(cfg, store, client=None):
     with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
         list(executor.map(collect_workload, list(active.items())[:cfg.max_workloads]))
 
-    # DLC job details: new or queued jobs first, bounded per round, cached otherwise.
+    # Optional sources share the budget left after placement and GPU telemetry.
+    # Rotate by last attempt across all source types so CPU/RAM cannot starve job
+    # details or Feature attribution. Deferral preserves snapshots, not an API error.
+    optional = []
+    def queue_optional(name, function, normalize=lambda x: x, *, interval, empty_ok=False, cost=1):
+        seen.add(name)
+        old = previous.get(name, {})
+        if old.get("state") in ("ok", "no_data") and started - (old.get("fetched_at") or 0) < interval:
+            return
+        optional.append((name, function, normalize, empty_ok, cost))
+
     jobs = [w for w in workloads if w["WorkloadType"] == "dlc" and w["WorkspaceId"] == cfg.workspace_id
             and w["WorkloadStatus"] not in TERMINAL]
-    jobs.sort(key=lambda w: (w.get("scheduled") is not False, "job:" + w["WorkloadId"] in previous))
-    budget = [cfg.max_job_details]
-    def collect_job(w):
+    jobs.sort(key=lambda w: previous.get("job:" + w["WorkloadId"], {}).get("attempted_at") or 0)
+    for w in jobs[:cfg.max_workloads]:
         name = "job:" + w["WorkloadId"]
         refresh = cfg.queued_job_refresh_s if w.get("scheduled") is False else cfg.job_refresh_s
-        old = previous.get(name, {})
-        if old.get("state") == "ok" and started - (old.get("fetched_at") or 0) < refresh:
-            seen.add(name)
-            return
-        with client.lock:
-            if budget[0] <= 0:
-                seen.add(name)
-                return
-            budget[0] -= 1
-        fetch(name, lambda: client.job(w["WorkloadId"]), job_row)
-    with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
-        list(executor.map(collect_job, jobs[:cfg.max_workloads]))
+        queue_optional(name, lambda w=w: client.job(w["WorkloadId"]), job_row, interval=refresh)
 
     host_interval = min(cfg.host_metric_interval_s, cfg.metric_window_s - 120)
-    def collect_host(item):
-        wid, w = item
+    for wid, w in list(running.items())[:cfg.max_workloads]:
         for key, metric in HOST_METRICS[w["WorkloadType"]].items():
             def collect_metric(w=w, wid=wid, key=key, metric=metric):
                 now = time.time()
@@ -271,18 +272,39 @@ def run_once(cfg, store, client=None):
                     raise CollectionError("invalid_dimensions")
                 store.put_metrics(rows, now - cfg.retention_hours * 3600)
                 return [{"sampled_at": max(r[1] for r in rows), "points": len(rows)}] if rows else []
-            fetch("metric:" + wid + ":" + key, collect_metric, min_interval=host_interval)
-    with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
-        list(executor.map(collect_host, list(running.items())[:cfg.max_workloads]))
+            queue_optional("metric:" + wid + ":" + key, collect_metric, interval=host_interval)
 
-    # Optional attribution comes after operational monitoring, sharing the same call/time
-    # budget. Save one atomic, whitelisted snapshot; incomplete pagination cannot replace it.
+    # Save attribution atomically; incomplete pagination cannot replace its snapshot.
     from .attribution import feature_memberships
     def memberships():
         if "quotas" in errors:
             raise CollectionError("incomplete_quotas")
         return feature_memberships(client.members()[0], client.quota_roles()[0], quota_rows, cfg.quota_id)
-    fetch("feature_memberships", memberships, cache=True, empty_ok=True)
+    queue_optional("feature_memberships", memberships, interval=cfg.topology_interval_s, empty_ok=True, cost=2)
+    optional.sort(key=lambda task: (previous.get(task[0], {}).get("attempted_at") or 0,
+                                    task[0] != "feature_memberships"))
+    reserved, job_count = [0], [0]
+    def collect_optional(task):
+        name, function, normalize, empty_ok, cost = task
+        with client.lock:
+            remaining = getattr(client, "deadline", float("inf")) - time.monotonic()
+            if (getattr(client, "rate_limited", False) or client.calls + reserved[0] + cost > cfg.max_calls
+                    or remaining <= cost * cfg.request_timeout_s
+                    or name.startswith("job:") and job_count[0] >= cfg.max_job_details):
+                deferred.add(name)
+                return
+            # Count in-flight work conservatively; every actual request still passes
+            # the client's unchanged call/deadline/pagination checks.
+            reserved[0] += cost
+            if name.startswith("job:"):
+                job_count[0] += 1
+        try:
+            fetch(name, function, normalize, empty_ok=empty_ok)
+        finally:
+            with client.lock:
+                reserved[0] -= cost
+    with ThreadPoolExecutor(max_workers=cfg.concurrency) as executor:
+        list(executor.map(collect_optional, optional))
 
     # Bounded ranking history: observed scheduled resources plus hourly metric sums.
     try:
@@ -298,12 +320,13 @@ def run_once(cfg, store, client=None):
         store.refresh_utilization(now)
     except sqlite3.Error:
         errors["usage"] = "store_error"
-    summary = {"ok": not errors, "started_at": started, "finished_at": time.time(),
+    summary = {"ok": not errors, "complete": not errors and not deferred,
+               "started_at": started, "finished_at": time.time(),
                "duration_s": round(time.time() - started, 3), "calls": client.calls,
-               "errors": errors, "active_sources": sorted(seen),
+               "errors": errors, "deferred_sources": sorted(deferred), "active_sources": sorted(seen),
                "metric_workloads": min(len(active), cfg.max_workloads),
                "expected_metric_workloads": len(active)}
-    store.save("round", summary, state="ok" if not errors else "partial")
+    store.save("round", summary, state="ok" if summary["complete"] else "partial")
     # Derive from existing local snapshots only; this adds no cloud API calls.
     try:
         from .view import overview

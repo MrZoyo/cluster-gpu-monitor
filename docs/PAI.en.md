@@ -77,6 +77,11 @@ Relative `db_path` values resolve against `GPUMON_ROOT`. The default configurati
 | `job_refresh_s` / `queued_job_refresh_s` | `21600` / `600` | Running/queued DLC detail cache cadence |
 | `max_job_details` | `8` | Maximum DLC details refreshed per round |
 
+Both Pod views and GPU metrics are collected first. Job details, CPU/RAM and membership attribution
+share the remaining budget, ordered by last attempt to prevent starvation. Deferred sources appear in
+`round.deferred_sources` with `round.complete=false`; retained values still follow their freshness rules.
+Deferral is not an upstream API failure. Every call and page remains subject to the same hard limits.
+
 Two failed rounds reduce polling frequency; two successful rounds restore it. Throttling stops
 new requests and backs off for at least 600 seconds, with further backoff on repeated throttling.
 Budget or pagination failures retain the last successful values and are not reported as complete
@@ -94,13 +99,21 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
 
 - Physical GPUs are deduplicated by node/card. Parent quotas include children and must not be added together.
   Requested, scheduled, quota-allocated and physically mapped resources are separate quantities.
+- Each node is queried through both the default Pod view and `OversoldTypes=ForceQuotaOversold`.
+  Results are deduplicated by workload, Pod and GPU index. Confirmed borrowed allocations show the workload,
+  owner, Pod and card; each view retains its own freshness and failure state.
+  The parameter follows [ListNodePods](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listnodepods)
+  and differs in capitalization from the submission policy `ForceQuotaOverSold`.
+  Node `RequestGPU` remains the platform's regular request counter; borrowed mappings are not added twice.
 - Physical mapping requires the pod metric GPU-index set to match `GPUIndexes`. Ambiguous mappings or
   multiple workloads sharing a card remain unknown.
 - `UseOversoldResource` describes actual idle-time allocation for a scheduled workload. It differs from
-  submission policy and quota sharing. Borrowing stays inside owned capacity, with undisclosed donors;
+  submission policy and quota sharing. Borrowing stays inside owned capacity; the explicit Pod view can locate it,
   borrowed GPU counts are never added to the physical total.
 - Queue guidance considers submission policy, quota capacity and per-pod specifications while preserving
   the scheduler's reason. Missing evidence does not justify a definite scheduling conclusion.
+  The overview queue starts collapsed, showing the total, risk count and first two workload names.
+  Expanding reveals the full list; background refresh preserves the expanded state.
 - Charts retain workload/pod/GPU dimensions and source timestamps in fixed 120-second buckets. Late points
   can revise buckets; gaps are not zero. Metrics remain available without a physical-node mapping, and
   current physical ownership is not backfilled into history.
@@ -108,17 +121,16 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   running tasks, with equal weight per GPU, including unmapped idle-time tasks. Unallocated GPUs and missing
   or stale values are excluded. This is not an equal-weight average of task averages.
 - Pool GPU utilization is a monitored-workspace workload estimate over the owned physical capacity, including borrowing once.
-  Hidden donors prevent counting unmapped cards as measured idle GPUs. It is not a complete per-card measurement of the whole tenant.
+  Unlocated workloads prevent counting unmapped cards as measured idle GPUs. It is not a complete per-card measurement of the whole tenant.
 - “Allocated GPUs” sums running workloads’ scheduled GPUs, falling back to requested counts when absent,
   and includes borrowing once. A purple “Including N borrowed GPUs” label appears in the same card.
   “Mapped allocation” describes only the subset with known physical mapping.
-- The heatmap distinguishes original-quota allocation from measured compute. With fresh, consistent node,
-  workload and Pod mapping, GPUs idle for the original quota display `0`. If only borrowing workloads lack
-  physical mapping, these GPUs are labeled “Possibly borrowed”. The original quota can request them with
-  priority; borrowing is reclaimed, resources are released and the borrower requeues.
-  This `0` is an allocation display value, not measured GPU utilization, and never fills compute, efficiency
-  or history metrics. Failed or stale sources, inconsistent node requests and unmapped regular workloads
-  still display `?`. Scheduling also depends on node health, CPU, memory and quota policy.
+- The heatmap distinguishes physical allocation from measured compute. Only confirmed unallocated cards
+  display `0`, requiring fresh, consistent nodes, workloads and both Pod views, with no unlocated running workloads.
+  Located borrowed cards show the workload; compute stays unknown when metric indices cannot be safely joined.
+  Failed or stale sources, inconsistent node requests and incomplete mappings leave unmapped cards at `?`.
+  The owning quota retains priority; reclaimed borrowers release resources and requeue.
+  Scheduling also depends on node health, CPU, memory and quota policy.
 
 - Workload and user detail pages may retain last-successful stale metrics and mark them; the overview task
   mean uses fresh metrics only.
@@ -224,7 +236,8 @@ On 2026-10-10 this project aligned the owned-pool interpretation with provider c
 
 - `UseOversoldResource` / oversold means temporarily borrowing unused nodes from other quotas in the owned pool.
   It adds neither physical GPU capacity nor additional GPU resource charges. Never add borrowed GPUs to pool capacity.
-- The lending quota and node ownership are undisclosed. The owning quota always has priority; when reclaimed,
+- Node and GPU placement can be confirmed through the explicit borrowed Pod query. Missing mappings remain
+  unknown and do not establish a donor team. The owning quota always has priority; when reclaimed,
   the borrowing workload pauses, releases resources and requeues. Do not imply an extra compute pool or guaranteed permanent termination.
 - Borrowed GPU time belongs to the **borrowing workload's submitting feature/user**, not an inferred donor team.
   Features follow child submissions or current member-role attribution of root tasks; users follow RAM owner/submitter. The root stays separate and unranked.

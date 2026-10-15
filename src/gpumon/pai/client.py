@@ -137,9 +137,13 @@ class PaiClient:
         # Read-only DLC job detail; only whitelisted fields are kept by the collector.
         return self._call(["dlc", "job", "get", job_id])
 
-    def pods(self, node, group):
+    def pods(self, node, group, *, borrowed=False):
+        params = {"ResourceGroupId": group}
+        if borrowed:
+            # ListNodePods uses this exact spelling, unlike job Settings.OversoldType.
+            params["OversoldTypes"] = "ForceQuotaOversold"
         return self.pages("ListNodePods", f"/api/v1/nodes/{quote(node, safe='')}/Pods",
-                          "NodePodInfos", {"ResourceGroupId": group})
+                          "NodePodInfos", params)
 
     def metrics(self, kind, workload_id, metric, now):
         cursor, seen, points = None, set(), []

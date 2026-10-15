@@ -101,8 +101,224 @@ def seed(store):
         "UserId": "person", "UserName": "Alice", "requested_gpu": 1}], now=960)
     store.save("users", [{"UserId": "person", "Username": "Alice", "used_gpu": 0}], now=960)
     store.save("pods:node", [{"WorkloadId": "job", "PodName": "pod", "GPUIndexes": [0], "Phase": "Running"}], now=960)
+    store.save("pods-borrowed:node", [], now=960)
     store.save("metric:job:compute", [{"sampled_at": 900}], now=960)
     store.save("round", {"ok": True}, now=960)
+
+
+def test_node_pod_views_use_exact_filter_and_independent_pagination(cfg):
+    client = PaiClient(cfg)
+    calls = []
+    def api(action, path, params):
+        calls.append((action, path, params))
+        borrowed = params.get("OversoldTypes") == "ForceQuotaOversold"
+        page = params["PageNumber"]
+        return {"NodePodInfos": [{"PodName": f"{'borrowed' if borrowed else 'regular'}-{page}"}],
+                "TotalCount": 2 if borrowed else 1}
+    client._api = api
+    assert client.pods("node/name", "group")[1] == 1
+    assert client.pods("node/name", "group", borrowed=True)[1] == 2
+    assert len(calls) == 3
+    assert all(action == "ListNodePods" and path == "/api/v1/nodes/node%2Fname/Pods"
+               and params["ResourceGroupId"] == "group" for action, path, params in calls)
+    assert "OversoldTypes" not in calls[0][2]
+    assert [p["PageNumber"] for _, _, p in calls[1:]] == [1, 2]
+
+
+@pytest.mark.parametrize("limit", ["calls", "deadline"])
+def test_borrowed_pod_view_obeys_existing_round_budget(cfg, monkeypatch, limit):
+    from types import SimpleNamespace
+    from gpumon.pai import client as module
+    calls = []
+    def run(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stderr=b"", stdout=b'{"NodePodInfos":[],"TotalCount":0}')
+    monkeypatch.setattr(module.subprocess, "run", run)
+    client = PaiClient(cfg)
+    client.pods("node", "group")
+    if limit == "calls":
+        cfg.max_calls = 1
+    else:
+        client.deadline = 0
+    with pytest.raises(CollectionError, match="^budget_exceeded$"):
+        client.pods("node", "group", borrowed=True)
+    assert client.calls == len(calls) == 1
+
+
+@pytest.mark.parametrize("failed_view", ["pods:node", "pods-borrowed:node"])
+def test_collector_retains_failed_pod_view_without_certifying_idle(store, cfg, monkeypatch, failed_view):
+    from gpumon.pai import collector
+    seed(store)
+    store.save("nodes", [{**store.sources()["nodes"]["payload"][0], "ResourceGroupId": "group"}], now=960)
+    previous = store.sources()[failed_view]
+    monkeypatch.setattr(collector.time, "time", lambda: 1000)
+    class Client(PaiClient):
+        def identity(self): return {"AccountId": cfg.account_id}
+        def quota(self, q): return {"quota_id": q}
+        def workloads(self): return [], 0
+        def users(self): return [], 0
+        def members(self): return [], 0
+        def quota_roles(self): return [], 0
+        def pods(self, node, group, *, borrowed=False):
+            if ("pods-borrowed:" if borrowed else "pods:") + node == failed_view:
+                raise CollectionError("permission_denied")
+            return [], 0
+    result = collector.run_once(cfg, store, Client(cfg))
+    assert result["errors"][failed_view] == "permission_denied"
+    source = store.sources()[failed_view]
+    assert source["payload"] == previous["payload"]
+    assert source["fetched_at"] == previous["fetched_at"]
+    assert set(("pods:node", "pods-borrowed:node")).issubset(result["active_sources"])
+    data = overview(store, cfg, 1000)
+    assert data["nodes"][0]["mapping_state"] == "error"
+    assert data["nodes"][0]["free_known"] is False
+    assert data["summary"]["cluster_unallocated_gpus"] == 0
+
+
+def test_borrowed_pod_maps_owner_quota_cards_and_metrics_once(store, cfg):
+    seed(store)
+    store.save("nodes", [{"NodeName": "node", "GPU": 4, "RequestGPU": 1}], now=960)
+    workloads = store.sources()["workloads"]["payload"]
+    workloads.append({"WorkloadId": "borrowed", "WorkloadStatus": "Running", "UserId": "b",
+                      "UserName": "Bob", "QuotaId": "research", "WorkspaceId": "work",
+                      "requested_gpu": 2, "scheduled_gpu": 2, "oversold": True})
+    store.save("workloads", workloads, now=960)
+    borrowed = {"WorkloadId": "borrowed", "PodName": "borrowed-pod", "GPUIndexes": [1, 2, 2],
+                "Phase": "Running", "QuotaId": "research", "WorkspaceId": "work"}
+    regular = store.sources()["pods:node"]["payload"][0]
+    store.save("pods:node", [regular, borrowed], now=960)
+    store.save("pods-borrowed:node", [borrowed, {**borrowed, "GPUIndexes": [2, 1]}], now=960)
+    for wid, pod, values in [("job", "pod", [(0, 100)]), ("borrowed", "borrowed-pod", [(1, 50), (2, 50)])]:
+        store.save(f"metric:{wid}:compute", [{"sampled_at": 900}], now=960)
+        store.put_metrics(normalize_metrics([{"jobId": wid, "pod": pod, "gpu": str(i),
+            "timestamp": 900, "Value": value} for i, value in values], cfg, wid, "compute", 960), 0)
+    data = overview(store, cfg, 1000)
+    node, summary = data["nodes"][0], data["summary"]
+    assert (node["mapped_gpus"], node["borrowed_gpus"], node["RequestGPU"]) == (3, 2, 1)
+    assert node["free_known"] and node["mapping_state"] == "ok"
+    assignment = node["cards"][1]["assignments"]
+    assert len(assignment) == 1
+    assert {k: assignment[0][k] for k in ("owner_id", "owner_name", "borrowed", "quota_id")} == {
+        "owner_id": "b", "owner_name": "Bob", "borrowed": True, "quota_id": "research"}
+    assert data["workloads"][1]["cards"] == [{"node": "node", "index": 1}, {"node": "node", "index": 2}]
+    assert (summary["physical_gpus"], summary["mapped_gpus"], summary["pool_scheduled_gpus"]) == (4, 3, 3)
+    assert summary["cluster_compute_mean"] == summary["pool_compute_estimate"] == 50
+    assert summary["cluster_unallocated_gpus"] == 1
+
+
+@pytest.mark.parametrize("problem", ["missing", "stale", "conflict", "regular_request"])
+def test_pod_view_uncertainty_never_becomes_free_gpu(store, cfg, problem):
+    seed(store)
+    if problem == "missing":
+        with store.connect() as c:
+            c.execute("DELETE FROM source WHERE name='pods-borrowed:node'")
+    elif problem == "stale":
+        store.save("pods-borrowed:node", [], now=1)
+    elif problem == "conflict":
+        store.save("pods-borrowed:node", [{"WorkloadId": "job", "PodName": "pod", "GPUIndexes": [1]}], now=960)
+    else:
+        store.save("nodes", [{"NodeName": "node", "GPU": 4, "RequestGPU": 2}], now=960)
+        store.save("pods-borrowed:node", [{"WorkloadId": "borrowed", "PodName": "borrowed-pod", "GPUIndexes": [1]}], now=960)
+    data = overview(store, cfg, 1000)
+    assert data["nodes"][0]["free_known"] is False
+    assert data["nodes"][0]["possibly_borrowed"] is False
+    assert data["summary"]["cluster_compute_mean"] is None
+    assert data["summary"]["cluster_unallocated_gpus"] == 0
+    if problem == "conflict":
+        assert data["nodes"][0]["mapping_conflict"] is True
+        assert data["summary"]["pool_compute_estimate"] is None
+
+
+def test_pod_overlap_conflict_deduplicates_cards_and_stale_view_does_not_confirm_borrowing(store, cfg):
+    seed(store)
+    regular = store.sources()["pods:node"]["payload"][0]
+    store.save("pods-borrowed:node", [{**regular, "GPUIndexes": [0, 1]}], now=960)
+    node = overview(store, cfg, 1000)["nodes"][0]
+    assert node["mapping_conflict"] is True
+    assert len(node["cards"][0]["assignments"]) == 1
+    assert node["cards"][0]["assignments"][0]["fresh"] is False
+    store.save("pods-borrowed:node", [regular], now=1)
+    node = overview(store, cfg, 1000)["nodes"][0]
+    assignment = node["cards"][0]["assignments"][0]
+    assert assignment["fresh"] is True and assignment["borrowed"] is None
+    assert node["borrowed_gpus"] == 0 and node["free_known"] is False
+
+
+def test_merged_pod_metadata_comes_from_fresh_view(store, cfg):
+    seed(store)
+    regular = store.sources()["pods:node"]["payload"][0]
+    store.save("pods:node", [{**regular, "Phase": "Pending", "QuotaId": "old"}], now=1)
+    store.save("pods-borrowed:node", [{**regular, "Phase": "Running", "QuotaId": "current"}], now=960)
+    assignment = overview(store, cfg, 1000)["nodes"][0]["cards"][0]["assignments"][0]
+    assert assignment["fresh"] is True
+    assert (assignment["phase"], assignment["quota_id"], assignment["observed_at"]) == ("Running", "current", 960)
+
+
+@pytest.mark.parametrize("max_calls", [120, 160])
+def test_optional_sources_rotate_under_call_budget_without_starvation(store, cfg, monkeypatch, max_calls):
+    from gpumon.pai import collector
+    cfg.max_calls = max_calls
+    now = [1000]
+    monkeypatch.setattr(collector.time, "time", lambda: now[0])
+    class Client(PaiClient):
+        def tick(self, value):
+            with self.lock:
+                if self.calls >= self.settings.max_calls:
+                    raise CollectionError("budget_exceeded")
+                self.calls += 1
+            return value
+        def identity(self): return self.tick({"AccountId": cfg.account_id})
+        def quota(self, q): return self.tick({"quota_id": q})
+        def nodes(self, q):
+            return self.tick(([{"NodeName": f"node-{i}", "GPU": 8, "RequestGPU": 0,
+                                "ResourceGroupId": "group"} for i in range(16)], 16))
+        def pods(self, *args, **kwargs): return self.tick(([], 0))
+        def users(self): return self.tick(([], 0))
+        def members(self): return self.tick(([], 0))
+        def quota_roles(self): return self.tick(([], 0))
+        def job(self, *args): return self.tick({})
+        def metrics(self, *args): return self.tick([])
+        def workloads(self):
+            return self.tick(([{"WorkloadId": f"job-{i}", "WorkloadType": "dlc" if i < 10 else "dsw",
+                "WorkspaceId": cfg.workspace_id, "WorkloadStatus": "Running", "IsScheduled": True,
+                "UseOversoldResource": True, "Resource": {"GPU": 1}, "ScheduledResource": {"GPU": 1}}
+                for i in range(29)], 29))
+    for iteration in range(4):
+        result = collector.run_once(cfg, store, Client(cfg))
+        assert result["calls"] <= max_calls
+        assert result["ok"] is True and result["errors"] == {}
+        assert all(not name.startswith(("pods:", "pods-borrowed:"))
+                   and not name.endswith((":compute", ":memory")) for name in result["deferred_sources"])
+        if iteration == 0:
+            assert result["deferred_sources"] and result["complete"] is False
+            assert store.sources()["round"]["state"] == "partial"
+            assert store.sources()["feature_memberships"]["fetched_at"] == now[0]
+        now[0] += 120
+    sources = store.sources()
+    assert all(f"metric:job-{i}:{metric}" in sources for i in range(29) for metric in ("cpu", "ram"))
+    assert all(f"job:job-{i}" in sources for i in range(10))
+    assert sources["feature_memberships"]["fetched_at"] >= 1360
+
+
+def test_optional_time_deferral_keeps_snapshot_and_reports_partial_round(store, cfg, monkeypatch):
+    from gpumon.pai import collector
+    import time
+    monkeypatch.setattr(collector.time, "time", lambda: 1000)
+    store.save("feature_memberships", [{"user_id": "u", "quota_ids": []}], now=0)
+    class Client(PaiClient):
+        def identity(self): return {"AccountId": cfg.account_id}
+        def quota(self, q): return {"quota_id": q}
+        def nodes(self, q): return [], 0
+        def workloads(self): return [], 0
+        def users(self): return [], 0
+        def members(self): raise AssertionError("optional call must be deferred")
+    client = Client(cfg)
+    client.deadline = time.monotonic() + 1
+    result = collector.run_once(cfg, store, client)
+    assert result["ok"] and not result["complete"] and result["errors"] == {}
+    assert result["deferred_sources"] == ["feature_memberships"]
+    assert store.sources()["feature_memberships"]["fetched_at"] == 0
+    assert overview(store, cfg, 1000)["state"] == "partial"
 
 
 def test_denominator_owner_and_conflict_are_preserved(store, cfg):
@@ -123,7 +339,7 @@ def test_denominator_owner_and_conflict_are_preserved(store, cfg):
     assert overview(store, cfg, 2000)["summary"]["compute_mean"] is None
 
 
-@pytest.mark.parametrize("failure", ["metric", "pods", "nodes", "workloads", "unmapped"])
+@pytest.mark.parametrize("failure", ["metric", "pods", "borrowed", "nodes", "workloads", "unmapped"])
 def test_cluster_mean_does_not_replace_missing_data_with_zero(store, cfg, failure):
     seed(store)
     store.put_metrics(normalize_metrics([{"jobId": "job", "pod": "pod", "gpu": "0",
@@ -131,7 +347,7 @@ def test_cluster_mean_does_not_replace_missing_data_with_zero(store, cfg, failur
     if failure == "unmapped":
         store.save("nodes", [{"NodeName": "node", "GPU": "2", "RequestGPU": 2}], now=960)
     else:
-        name = {"metric": "metric:job:compute", "pods": "pods:node"}.get(failure, failure)
+        name = {"metric": "metric:job:compute", "pods": "pods:node", "borrowed": "pods-borrowed:node"}.get(failure, failure)
         store.failure(name, "unavailable", now=980)
     summary = overview(store, cfg, 1000)["summary"]
     assert summary["cluster_compute_mean"] is None

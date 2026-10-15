@@ -50,23 +50,54 @@ def overview(store, cfg, now):
         # Unbounded/unparseable topology must not generate arbitrary cards.
         count = int(count) if count is not None and count <= 128 and count.is_integer() else 0
         cards = [{"index": i, "assignments": [], "compute": None, "memory": None} for i in range(count)]
-        for pod in payload("pods:" + name, []):
-            indices = pod.get("GPUIndexes") or []
-            for i in indices:
-                if not isinstance(i, int) or not 0 <= i < count:
+        pod_sources = ("pods:" + name, "pods-borrowed:" + name)
+        source_order = lambda s: (fresh(s), sources[s].get("fetched_at") or 0)
+        merged, placements = {}, {}
+        mapping_conflict = False
+        for source_name in pod_sources:
+            for pod in payload(source_name, []):
+                raw_indices = pod.get("GPUIndexes") or []
+                if not isinstance(raw_indices, list):
+                    mapping_conflict = True
                     continue
-                w = by_workload.get(pod.get("WorkloadId"), {})
+                indices = tuple(sorted({i for i in raw_indices if type(i) is int and 0 <= i < count}))
+                if any(type(i) is not int or not 0 <= i < count for i in raw_indices):
+                    mapping_conflict = True
+                identity = (pod.get("WorkloadId"), pod.get("PodName"))
+                if indices and not all(identity):
+                    mapping_conflict = True
+                placements.setdefault(identity, set()).add(indices)
+                key = (*identity, indices)
+                if key not in merged:
+                    merged[key] = {**pod, "GPUIndexes": indices, "sources": []}
+                elif source_order(source_name) > max(source_order(s) for s in merged[key]["sources"]):
+                    merged[key] = {**pod, "GPUIndexes": indices, "sources": merged[key]["sources"]}
+                merged[key]["sources"].append(source_name)
+        conflicts = {identity for identity, positions in placements.items() if len(positions) > 1}
+        mapping_conflict = mapping_conflict or bool(conflicts)
+        for pod in merged.values():
+            indices = pod["GPUIndexes"]
+            w = by_workload.get(pod.get("WorkloadId"), {})
+            # Prefer a current successful observation when both views contain the same Pod.
+            observed = max(pod["sources"], key=source_order)
+            conflicting = (pod.get("WorkloadId"), pod.get("PodName")) in conflicts
+            for i in indices:
                 assignment = {"workload_id": pod.get("WorkloadId"), "pod": pod.get("PodName"),
                               "owner_id": w.get("UserId"), "owner_name": w.get("UserName"),
+                              "quota_id": pod.get("QuotaId") or w.get("QuotaId"),
+                              "workspace_id": pod.get("WorkspaceId") or w.get("WorkspaceId"),
+                              "borrowed": True if pod_sources[1] in pod["sources"] and fresh(pod_sources[1]) else w.get("oversold"),
                               "phase": pod.get("Phase"),
-                              "observed_at": sources.get("pods:" + name, {}).get("fetched_at"),
-                              "fresh": fresh("pods:" + name) and fresh("workloads")}
-                cards[i]["assignments"].append(assignment)
+                              "observed_at": sources[observed].get("fetched_at"),
+                              "fresh": fresh(observed) and fresh("workloads") and not conflicting}
+                if not any(a["workload_id"] == assignment["workload_id"] and a["pod"] == assignment["pod"]
+                           for a in cards[i]["assignments"]):
+                    cards[i]["assignments"].append(assignment)
                 # Only join when the observed metric index set equals the physical assignment set.
                 # Otherwise local/container GPU indices may differ: leave physical values unknown.
                 for metric in ("compute", "memory"):
                     key = (pod.get("WorkloadId"), pod.get("PodName"), metric)
-                    if gpu_sets.get(key) == {str(j) for j in indices}:
+                    if not conflicting and gpu_sets.get(key) == {str(j) for j in indices}:
                         m = metric_lookup.get((key[0], key[1], str(i), metric))
                         if m:
                             cards[i][metric] = {"value": m["value"], "sampled_at": m["ts"],
@@ -76,7 +107,14 @@ def overview(store, cfg, now):
             if len(card["assignments"]) > 1:
                 card["compute"] = card["memory"] = None
             physical[(name, card["index"])] = card
-        nodes.append({**node, "cards": cards, "mapping_state": by_status.get("pods:" + name, {}).get("state", "unknown")})
+        mapping_states = [by_status.get(s, {}).get("state", "unknown") for s in pod_sources]
+        mapping_state = next((s for s in ("error", "stale", "unknown", "partial", "no_data")
+                              if s in mapping_states), "ok")
+        nodes.append({**node, "cards": cards,
+                      "mapping_state": "conflict" if mapping_conflict else mapping_state,
+                      "mapping_conflict": mapping_conflict,
+                      "mapped_gpus": sum(bool(c["assignments"]) for c in cards),
+                      "borrowed_gpus": sum(any(a["borrowed"] is True for a in c["assignments"]) for c in cards)})
     for w in workloads:
         w["job"] = payload("job:" + w["WorkloadId"], None)
         w["cards"] = [{"node": n, "index": i} for (n, i), c in physical.items()
@@ -98,8 +136,8 @@ def overview(store, cfg, now):
                    and w.get("scheduled") is not False}
     task_values = [m["value"] for m in metrics if m["metric"] == "compute" and m["fresh"]
                    and m["workload_id"] in running_ids and fresh("workloads")]
-    # A hidden borrowing task can occupy any otherwise unmapped card. No donor
-    # quota/node is published, so these cards must not be classified as idle.
+    # Borrowing is locatable through the explicit Pod view, but an unmatched task
+    # can still occupy an unmapped card; incomplete evidence must not become idle.
     def scheduled(w):
         return w.get("scheduled_gpu") if w.get("scheduled_gpu") is not None else w.get("requested_gpu")
     running = [w for w in workloads if w["WorkloadId"] in running_ids]
@@ -112,16 +150,19 @@ def overview(store, cfg, now):
     outside_workloads = any(a["workload_id"] not in running_ids for c in physical.values() for a in c["assignments"])
     task_estimate_ready = (fresh("nodes") and fresh("workloads") and bool(physical) and
                           complete_task_metrics and not outside_workloads and expected_gpus <= len(physical)
+                          and not any(n["mapping_conflict"] for n in nodes)
                           and all(len(c["assignments"]) <= 1 for c in physical.values()))
     # Only confirmed unallocated cards contribute zero. Missing allocated metrics and
     # uncertain allocation remain unknown, never silently reducing the cluster mean.
     cluster_values = []
     unallocated = 0
     for node in nodes:
-        node_assigned = sum(bool(c["assignments"]) for c in node["cards"])
+        # ListNodes.RequestGPU is the ordinary-quota counter. Borrowed placements
+        # must not conceal a missing ordinary allocation when checking completeness.
+        regular_assigned = sum(any(a["borrowed"] is not True for a in c["assignments"]) for c in node["cards"])
         requested = number(node.get("RequestGPU"))
-        mapping_complete = (fresh("nodes") and fresh("workloads") and fresh("pods:" + node["NodeName"])
-                            and requested is not None and requested <= node_assigned)
+        mapping_complete = (fresh("nodes") and fresh("workloads") and node["mapping_state"] == "ok"
+                            and requested is not None and requested <= regular_assigned)
         free_known = mapping_complete and not unlocated
         node["free_known"] = free_known
         # Original-quota idle cards remain reclaimable while borrowing is unlocated.
@@ -146,7 +187,7 @@ def overview(store, cfg, now):
             "stale_after_s": cfg.stale_after_s, "sources": statuses, "round": round_info,
             "quotas": payload("quotas", []), "nodes": nodes, "workloads": workloads, "users": users,
             "summary": {"physical_gpus": len(physical) if fresh("nodes") else None,
-                "mapped_gpus": assigned if fresh("nodes") and all(fresh("pods:" + n["NodeName"]) for n in nodes) else None,
+                "mapped_gpus": assigned if fresh("nodes") and all(n["mapping_state"] == "ok" for n in nodes) else None,
                 "measured_gpus": len(measured), "metric_denominator": len(physical),
                 "compute_mean": sum(measured) / len(measured) if measured else None,
                 "task_compute_mean": sum(task_values) / len(task_values) if task_values else None,
