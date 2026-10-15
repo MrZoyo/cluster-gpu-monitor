@@ -134,7 +134,7 @@ const server = http.createServer((req, res) => {
     check('ordinary optional 404 has no recovery alert', await normal.locator('#page-recovery').count() === 0);
     enabled = true;
     await normal.goto(base); await normal.locator('.home-stats').first().waitFor();
-    check('PAI enabled: two entry cards', await normal.locator('a.home-card').count() === 2);
+    check('PAI enabled: two entry cards', await normal.locator('section.home-card .home-main-link').count() === 2);
     const queuedWorkload = pai.workloads.pop();
     for (const queued of [false, true, false]) {
       if (queued) pai.workloads.push(queuedWorkload);
@@ -144,7 +144,7 @@ const server = http.createServer((req, res) => {
       check('home queue transition: no null ' + queued, !text.includes('null') && text.includes('排队') === queued);
     }
     pai.workloads.push(queuedWorkload);
-    const homeStats = normal.locator('.pai-scope .mini-metric');
+    const homeStats = normal.locator('.pai-scope .home-stats > *');
     check('home cluster denominator', (await homeStats.nth(1).innerText()).includes('3%'));
     check('home task mean', (await homeStats.nth(2).innerText()).includes('20%'));
     for (const route of ['overview', 'nodes', 'workloads', 'users', 'user/user-example', 'node/node-example', 'workload/job-example', 'ranking']) {

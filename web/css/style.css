@@ -1209,6 +1209,11 @@ body[data-theme="light"] .pai-chip.ok { color: #3d6300; }
 .home-card.pai-scope { --home-c: var(--pai); }
 .home-card .eyebrow { color: var(--home-c); }
 .home-card h2 { margin: 9px 0 4px; font-size: 22px; font-weight: 750; letter-spacing: -.2px; }
+.home-main-link { color: inherit; }
+.home-main-link::after { content: ""; position: absolute; inset: 0; border-radius: var(--r-lg); }
+.home-main-link:focus-visible { outline: none; }
+.home-main-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -4px; }
+.home-go, .home-card .pai-estimate { position: relative; z-index: 1; }
 .home-card .note { margin: 0; }
 .home-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .home-status { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
@@ -1254,6 +1259,33 @@ body[data-theme="light"] .pai-chip.ok { color: #3d6300; }
 .pai-alloc-total { margin-left: auto; color: var(--faint); }
 .pai-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .pai-kpis .hint { white-space: normal; line-height: 1.5; }
+.pai-estimate { min-width: 0; }
+.pai-estimate-heading { display: flex; align-items: flex-start; gap: 4px; }
+.pai-estimate-heading > span { flex: 1; min-width: 0; }
+.pai-estimate-info { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 23px; height: 23px; padding: 0; margin: -4px 0 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: 16px var(--sans); cursor: help; }
+.pai-estimate-info:hover, .pai-estimate-info[aria-expanded="true"] { color: var(--ink); background: var(--surface-soft); }
+.pai-estimate-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pai-estimate.unavailable .pai-estimate-value { font: 700 18px/1.3 var(--sans); letter-spacing: 0; }
+.pai-estimate-reasons { display: flex; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+.pai-estimate.unavailable .pai-estimate-reasons { color: var(--table-ink); }
+.pai-estimate-more { color: var(--muted); font-size: 11px; }
+.pai-estimate-home { display: flex; flex-direction: column; gap: 5px; }
+.pai-estimate-home .pai-estimate-heading { order: -1; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.pai-estimate-home .pai-estimate-value { font: 700 18px var(--mono); }
+.pai-estimate-home .hint { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.pai-estimate-slim { display: grid; grid-template-columns: auto auto; gap: 3px 8px; max-width: 350px; align-items: baseline; }
+.pai-estimate-slim .pai-estimate-value, .pai-estimate-slim.unavailable .pai-estimate-value { font-size: 14px; white-space: nowrap; }
+.pai-estimate-slim .pai-estimate-heading { margin: 0; font-size: 12px; }
+.pai-estimate-slim .hint { grid-column: 1 / -1; font-size: 11px; }
+.pai-estimate-slim .pai-estimate-reasons { flex-direction: row; flex-wrap: wrap; gap: 2px 10px; }
+.pai-estimate-slim .pai-estimate-reasons > span + span::before { content: "·"; margin-right: 8px; color: var(--muted); }
+.pai-estimate-tip { position: fixed; inset: auto; margin: 0; box-sizing: border-box; width: min(390px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px 16px; border: 1px solid var(--tooltip-border); border-radius: var(--r-md); background: var(--tooltip-bg); color: var(--ink); box-shadow: var(--shadow-2); font: 12px/1.6 var(--sans); overflow-wrap: anywhere; }
+.pai-estimate-tip strong { font-size: 13px; }
+.pai-estimate-tip p { margin: 9px 0 0; }
+.pai-estimate-detail-reasons { padding-left: 18px; margin: 9px 0; }
+.pai-estimate-detail-reasons li + li { margin-top: 6px; }
+.pai-estimate-detail-reasons small { display: block; color: var(--muted); font-size: 11px; }
+.pai-estimate-tip .pai-estimate-dismiss { color: var(--muted); font-size: 11px; }
 .pai-borrowed-subset { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--mem); font-size: 12px; font-weight: 600; line-height: 1.5; }
 .pai-allocation-kpi .pai-borrowed-subset { margin-top: 6px; }
 

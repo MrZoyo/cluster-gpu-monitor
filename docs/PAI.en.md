@@ -122,6 +122,13 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   or stale values are excluded. This is not an equal-weight average of task averages.
 - Pool GPU utilization is a monitored-workspace workload estimate over the owned physical capacity, including borrowing once.
   Unlocated workloads prevent counting unmapped cards as measured idle GPUs. It is not a complete per-card measurement of the whole tenant.
+  The value also requires fresh topology/workloads, complete per-task compute metrics, counts within physical capacity,
+  no conflicting/shared mappings, and no mapped allocation outside the running workload set.
+  Home and overview cards show a value or concise reasons, such as “8 GPUs saving” or “2 GPUs missing metrics”.
+  Hover, focus or tap the explanation control for the formula, all blocking reasons and data completeness.
+  The backend remains the source of the value; the frontend explains a missing value from the same API snapshot.
+  It neither substitutes zero nor relaxes the completeness checks. Stale mappings describe last-seen allocation,
+  without claiming that the workload is still saving or stopping now.
 - “Allocated GPUs” sums running workloads’ scheduled GPUs, falling back to requested counts when absent,
   and includes borrowing once. A purple “Including N borrowed GPUs” label appears in the same card.
   “Mapped allocation” describes only the subset with known physical mapping.

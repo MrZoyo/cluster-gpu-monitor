@@ -109,6 +109,10 @@ window.PaiUI = (() => {
 
   // 派生当前视图模型：只基于快照中已有字段，不推断历史归属。
   function prepare(d) {
+    d.estimateInfo = window.PaiEstimate?.explain(d) || {
+      available: num(d.summary?.pool_compute_estimate) != null,
+      reasons: [{ code: "estimate_unavailable", labelZh: "当前快照未满足估算条件", labelEn: "The snapshot does not meet estimation requirements" }],
+    };
     const names = d.nodes.map((n) => n.NodeName);
     const prefix = commonPrefix(names);
     const short = (name) => (prefix.length >= 6 && name.length - prefix.length >= 4 ? "…" + name.slice(prefix.length) : name);
@@ -491,7 +495,7 @@ window.PaiUI = (() => {
         el("span", { class: "pai-slim-item pai-slim-allocation" }, [
           el("span", { class: "pai-slim-amount" }, [el("b", {}, [allocatedCount(m)]), t("已分配 GPU", "allocated GPUs")]), borrowedLabel(m)]),
         item(t("计算均值（任务）", "task mean"), pct(sum.task_compute_mean)),
-        item(t("集群计算（估算）", "pool compute (est.)"), pct(sum.pool_compute_estimate)),
+        estimateMetric(m, "slim"),
         item(t("运行任务", "running"), String(s.running)),
       ]),
     ]);
@@ -501,6 +505,93 @@ window.PaiUI = (() => {
     `Fresh metrics from ${sum.task_measured_gpus || 0} GPUs in running tasks, weighted equally per GPU; includes idle-time tasks, excludes missing values`);
   const clusterMeanHint = (sum) => t(`监控工作空间的任务 GPU 计算之和 ÷ 自有池 ${gpus(sum.physical_gpus)} 张物理卡；含池内借用，不增加容量。仅任务/指标完整且数量不超容量时折算；不是可逐卡核实的全池实测值。`,
     `Monitored workspace workload compute / ${gpus(sum.physical_gpus)} owned physical GPUs, including borrowing without adding capacity. Estimated only with complete workload metrics and consistent counts; not a fully mapped physical measurement.`);
+
+  function estimateMetric(m, variant = "kpi") {
+    const sum = m.summary || {}, info = m.estimateInfo || {}, available = num(sum.pool_compute_estimate) != null;
+    const reasons = available ? [] : (info.reasons?.length ? info.reasons : [{labelZh:"当前快照未满足估算条件",labelEn:"The snapshot does not meet estimation requirements"}]);
+    const label = variant === "slim" ? t("集群计算（估算）", "Pool compute (est.)") : t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)");
+    const reasonLabel = r => t(r.labelZh, r.labelEn);
+    const taskState = status => ({Saving:t("保存中","saving"),Stopping:t("停止中","stopping"),Stopped:t("已停止","stopped"),
+      Terminating:t("终止中","terminating"),Terminated:t("已终止","terminated"),Succeeded:t("已完成","completed"),Failed:t("已失败","failed"),
+      Starting:t("启动中","starting"),Creating:t("创建中","creating")}[status] || stateText(status));
+    const shortReasons = reasons.flatMap(r => {
+      if(r.code === "non_running_allocations" && r.tasks?.length && r.tasks.reduce((n,w)=>n+(num(w.gpus)||0),0) === r.gpus) {
+        const byState = new Map();
+        r.tasks.forEach(w=>{const state=w.scheduled === false ? t("未调度","unscheduled") : taskState(w.status);byState.set(state,(byState.get(state)||0)+(num(w.gpus)||0));});
+        return [...byState].map(([state,count])=>({code:r.code,text:t(`${gpus(count)} 张卡${state}`,`${gpus(count)} GPUs ${state}`)}));
+      }
+      const count = gpus(r.gpus), compact = {
+        non_running_allocations:t(`${count} 张卡占用状态待确认`,`${count} GPUs with unconfirmed allocation state`),
+        missing_compute:t(`${count} 张卡缺指标`,`${count} GPUs missing metrics`),
+        extra_compute:t(`多出 ${count} 条 GPU 指标`,`${count} extra GPU metrics`),
+        retained_allocations:t(`${count} 张卡状态待确认`,`${count} GPUs awaiting confirmation`),
+        unlisted_allocations:t(`${count} 张卡的任务未列出`,`${count} GPUs with unlisted workloads`),
+        source_unavailable:t(`${r.sources?.length || "—"} 项关键来源未就绪`,`${r.sources?.length || "—"} required sources unavailable`),
+        capacity_unknown:t("物理容量待确认","Physical capacity unconfirmed"),
+        unknown_gpu_count:t(`${r.tasks?.length || "—"} 个任务卡数未知`,`${r.tasks?.length || "—"} workloads with unknown GPU counts`),
+        over_capacity:t(`${count} 张卡超出物理容量`,`${count} GPUs over capacity`),
+        mapping_conflict:t(`${r.nodes?.length || "—"} 个节点映射冲突`,`${r.nodes?.length || "—"} nodes with mapping conflicts`),
+        shared_cards:t(`${count} 张卡映射重叠`,`${count} GPUs with overlapping mappings`),
+      };
+      return [{code:r.code,text:compact[r.code] || reasonLabel(r)}];
+    }).sort((a,b)=> {
+      const priority = code => ({non_running_allocations:0,missing_compute:1,retained_allocations:2}[code] ?? 3);
+      return priority(a.code)-priority(b.code);
+    });
+    const id = "paiEstimateTip-" + variant;
+    let button, tip;
+    const current = () => ({button:UI.live(button), tip:UI.live(tip)});
+    const close = () => {
+      const live = current();live.tip._pinned = false;
+      if(live.tip.matches(":popover-open")) live.tip.hidePopover();
+      live.button.setAttribute("aria-expanded", "false");
+    };
+    const show = () => {
+      const live = current();
+      if(!live.button.isConnected || window.LiveDOM?.draft(live.button)) return;
+      if(!live.tip.matches(":popover-open")) live.tip.showPopover();
+      live.button.setAttribute("aria-expanded", "true");
+      const b = live.button.getBoundingClientRect(), below = innerHeight-b.bottom-20, above = b.top-20;
+      live.tip.style.maxHeight = Math.max(60, Math.max(below,above)) + "px";
+      const box = live.tip.getBoundingClientRect(), useBelow = box.height<=below || below>=above;
+      live.tip.style.left = Math.max(12, Math.min(b.right - box.width, innerWidth - box.width - 12)) + "px";
+      live.tip.style.top = Math.max(12, useBelow ? b.bottom+8 : b.top-box.height-8) + "px";
+    };
+    const leave = () => setTimeout(() => {
+      const live = current();
+      if(!live.tip._pinned && !live.button.matches(":hover, :focus") && !live.tip.matches(":hover")) close();
+    }, 100);
+    const escape = e => { if(e.key === "Escape") { e.preventDefault();e.stopPropagation();close(); } };
+    button = el("button", { type:"button", class:"pai-estimate-info", "aria-label":t("查看估算口径与当前原因", "Estimation method and current reasons"),
+      "aria-expanded":"false", "aria-controls":id, "aria-describedby":id,
+      onmouseenter:show, onmouseleave:leave, onfocus:show, onblur:leave, onkeydown:escape,
+      onclick:e=>{e.preventDefault();e.stopPropagation();const live=current();if(live.tip._pinned)close();else{show();live.tip._pinned=true;}} },
+      [el("span", {"aria-hidden":"true"}, ["ⓘ"])]);
+    tip = el("div", {id, class:"pai-estimate-tip", popover:"auto", role:"tooltip", onmouseleave:leave, onkeydown:escape,
+      ontoggle:e=>{const live=current();if(e.newState === "closed"){live.tip._pinned=false;live.button.setAttribute("aria-expanded","false");}} }, [
+      el("strong", {}, [label]),
+      reasons.length ? el("ul", {class:"pai-estimate-detail-reasons"}, reasons.map(r=>el("li", {}, [reasonLabel(r),
+        r.tasks?.length ? el("small", {}, [r.tasks.map(w=>(w.name || w.id) + (w.gpus != null ? t(`（${gpus(w.gpus)} 卡）`, ` (${gpus(w.gpus)} GPUs)`) : "")
+          + (w.status ? " · " + taskState(w.status) : "")).join(" · ")]) : null]))) : null,
+      el("p", {}, [clusterMeanHint(sum)]),
+      el("p", {class:"pai-estimate-dismiss"}, [t("点击 ⓘ 可固定；再次点击、点击外部或按 Esc 关闭。", "Click ⓘ to keep open; click it again, click outside or press Esc to close.")]),
+    ]);
+    const previousTip = document.getElementById(id);
+    if(previousTip?.matches(":popover-open")) {
+      // The reconciler retains the open element; carry its geometry into the draft, then fit updated content.
+      tip.style.cssText = previousTip.style.cssText;
+      requestAnimationFrame(()=>{if(UI.live(tip)===previousTip && previousTip.matches(":popover-open"))show();});
+    }
+    const shown = shortReasons.slice(0, 2);
+    return el("div", {class:"pai-estimate pai-estimate-" + variant + (available ? "" : " unavailable")}, [
+      el("div", {class:"pai-estimate-value v"}, [available ? pct(sum.pool_compute_estimate) : t("暂无法估算", "Unavailable")]),
+      el("div", {class:"pai-estimate-heading k"}, [el("span", {}, [label]), button]),
+      available ? el("div", {class:"pai-estimate-summary hint"}, [t(`按 ${gpus(sum.physical_gpus)} 张物理卡折算`, `Across ${gpus(sum.physical_gpus)} physical GPUs`)])
+        : el("div", {class:"pai-estimate-reasons hint"}, [...shown.map(r=>el("span", {}, [r.text])),
+          shortReasons.length > shown.length ? el("span", {class:"pai-estimate-more"}, [t(`另 ${shortReasons.length-shown.length} 项原因，点 ⓘ 查看`, `${shortReasons.length-shown.length} more reasons · ⓘ`)]) : null]),
+      tip,
+    ]);
+  }
 
   const allocatedCount = (m) => m.summary?.pool_scheduled_gpus == null ? "—"
     : `${gpus(m.summary.pool_scheduled_gpus)} / ${gpus(m.summary.physical_gpus)}`;
@@ -514,10 +605,10 @@ window.PaiUI = (() => {
       [String(s.physical), t("物理 GPU", "Physical GPUs"), plural(m.nodes.length, "节点", "node") + (s.types.length ? " · " + s.types.join(" / ") : "")],
       [allocatedCount(m), t("已分配 GPU", "Allocated GPUs"), t("运行任务总占用，含借用；借用已计入总数", "Running workload allocation, including borrowing once"), "allocation"],
       [pct(sum.task_compute_mean), t("计算均值（任务）", "Compute mean (tasks)"), taskMeanHint(sum)],
-      [pct(sum.pool_compute_estimate), t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)"), clusterMeanHint(sum)],
+      [null, null, null, "estimate"],
       [String(s.running), t("运行中任务", "Running workloads"), `DSW ${s.dsw} · DLC ${s.dlc}`],
     ];
-    return el("div", { class: "kpis pai-kpis" }, items.map(([v, k, hint, kind]) => el("div", { class: "kpi" + (kind === "allocation" ? " pai-allocation-kpi" : "") }, [
+    return el("div", { class: "kpis pai-kpis" }, items.map(([v, k, hint, kind]) => kind === "estimate" ? el("div", {class:"kpi pai-estimate-kpi"}, [estimateMetric(m)]) : el("div", { class: "kpi" + (kind === "allocation" ? " pai-allocation-kpi" : "") }, [
       el("div", { class: "v" }, [v]), el("div", { class: "k" }, [k]),
       kind === "allocation" ? borrowedLabel(m) : null,
       el("div", { class: "hint", title: hint }, [hint]),
@@ -1524,7 +1615,7 @@ window.PaiUI = (() => {
   }
 
   return { el, t, ui, LOW, isLow, num, pct, pct1, gpus, ago, clock, href, link, note, chip, typeChip, bar, prepare, cell, card, legend,
-    header, slimHeader, kpis, taskMeanHint, clusterMeanHint, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel,
+    header, slimHeader, kpis, taskMeanHint, clusterMeanHint, estimateMetric, tabs, panel, back, heatPanel, nodesPanel, workloadsPanel, workloadsTable, usersTable, quotasPanel,
     sourcesPanel, docsPanel, queueBanner, healText, rankingPanel, strategyText, specText, dur, doc, oversoldChip, stateCell, nodeChips, OVERSOLD_TIP, drawSeries, metaList, miniMetrics, rangeText, conflictFlag };
 })();
 
@@ -1536,10 +1627,10 @@ Views.home = { async render(root) {
   const shell = (cls, eyebrow, title, desc, path, go) => {
     const body = el("div", { class: "home-body" }, [note(t("读取中…", "Loading…"))]);
     const status = el("div", { class: "home-status" });
-    const card = el("a", { class: "home-card " + cls, href: "#" + path }, [
-      el("div", { class: "home-card-head" }, [el("div", {}, [el("div", { class: "eyebrow" }, [eyebrow]), el("h2", {}, [title]), note(desc)]), status]),
+    const card = el("section", { class: "home-card " + cls }, [
+      el("div", { class: "home-card-head" }, [el("div", {}, [el("div", { class: "eyebrow" }, [eyebrow]), el("h2", {}, [el("a", {class:"home-main-link",href:"#"+path}, [title])]), note(desc)]), status]),
       body,
-      el("div", { class: "home-foot" }, [el("span", { class: "home-go" }, [go])]),
+      el("div", { class: "home-foot" }, [el("a", { class: "home-go", href:"#"+path }, [go])]),
     ]);
     return { card, body, status };
   };
@@ -1565,7 +1656,7 @@ Views.home = { async render(root) {
       pai.body.replaceChildren(
         el("div", { class: "home-stats" }, [
           stat(t("已分配 / 物理卡", "Allocated / physical"), `${m.summary.mapped_gpus ?? "—"} / ${s.physical}`),
-          stat(t("集群 GPU 利用率（估算）", "Pool GPU utilization (est.)"), pct(m.summary.pool_compute_estimate), PaiUI.clusterMeanHint(m.summary)),
+          PaiUI.estimateMetric(m, "home"),
           stat(t("计算均值（任务）", "Compute mean (tasks)"), pct(m.summary.task_compute_mean), PaiUI.taskMeanHint(m.summary)),
           stat(t("运行任务", "Running"), String(s.running)),
         ]),

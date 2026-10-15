@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 require("./frontend_recovery.js");
+require("./frontend_pai_estimate.js");
 
 const componentsSource = fs.readFileSync(
   path.join(__dirname, "..", "web", "js", "components.js"),
