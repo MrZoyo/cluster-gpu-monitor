@@ -4,6 +4,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {chromium} = require('playwright');
 const web=path.resolve(__dirname,'../web');
+const capture=async(target,name)=>{
+  if(!process.env.SHOT_DIR || (process.env.SHOT_FILTER && !new RegExp(process.env.SHOT_FILTER).test(name)))return;
+  fs.mkdirSync(process.env.SHOT_DIR,{recursive:true});
+  await target.screenshot({path:path.join(process.env.SHOT_DIR,name)});
+};
 
 (async()=>{
   const browser=await chromium.launch({headless:true,...(process.env.CHROME_BIN?{executablePath:process.env.CHROME_BIN}:{})});
@@ -56,11 +61,11 @@ const web=path.resolve(__dirname,'../web');
         assert.equal(await tip.isVisible(),false);
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
         await metric.scrollIntoViewIfNeeded();
-        if(process.env.SHOT_DIR){fs.mkdirSync(process.env.SHOT_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.SHOT_DIR,`estimate-${locale}-${width}-${mode}-closed.png`)});}
+        await capture(page,`estimate-${locale}-${width}-${mode}-closed.png`);
         await button.hover();assert.equal(await tip.isVisible(),true);
         assert.match(await tip.innerText(),/Checkpoint example/);
         assert(await tip.evaluate(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&r.top>=0&&r.bottom<=innerHeight+1;}));
-        if(process.env.SHOT_DIR)await page.screenshot({path:path.join(process.env.SHOT_DIR,`estimate-${locale}-${width}-${mode}-open.png`)});
+        await capture(page,`estimate-${locale}-${width}-${mode}-open.png`);
         await page.mouse.move(0,0);await page.waitForTimeout(140);assert.equal(await tip.isVisible(),false);
         await button.focus();assert.equal(await tip.isVisible(),true);
         await page.keyboard.press('Escape');assert.equal(await tip.isVisible(),false);
@@ -90,7 +95,7 @@ const web=path.resolve(__dirname,'../web');
         assert.match(await page.locator('.pai-estimate-summary').innerText(),locale==='zh'?/按 128 张物理卡折算/:/Across 128 physical GPUs/);
         assert.equal(await page.locator('.pai-estimate-reasons').count(),0);
         await page.locator('.pai-estimate').scrollIntoViewIfNeeded();
-        if(process.env.SHOT_DIR)await page.screenshot({path:path.join(process.env.SHOT_DIR,`estimate-${locale}-${width}-normal-${value?'value':'zero'}.png`)});
+        await capture(page.locator('.pai-kpis'),`estimate-${locale}-${width}-normal-${value?'value':'zero'}.png`);
       }
       await page.evaluate(async()=>{fixture=structuredClone(original);fixture.nodes[0].cards.forEach(c=>c.assignments.forEach(a=>a.fresh=false));await renderEstimate('overview');});
       assert.match(await page.locator('.pai-estimate-reasons').innerText(),locale==='zh'?/8 张卡状态待确认/:/8 GPUs awaiting confirmation/);
