@@ -123,7 +123,7 @@ function ranking() {
       assert.equal(await page.locator('.pai-tabs a.active[href="#/pai/quotas"]').count(), 1);
       assert.equal(await page.locator('.pai-q-detail h2').innerText(), 'alpha');
       assert.equal(await page.locator('.pai-q-detail a[href="#/pai/quota/q-root"]').count(), 1);
-      assert.match(await page.locator('.pai-q-detail .pai-meta').innerText(), zh ? /本配额任务 1 · 子配额 0 · 父配额任务占用 2/ : /This quota 1 · subquotas 0 · parent-quota workloads 2/);
+      assert.match(await page.locator('.pai-q-detail .pai-meta').innerText(), zh ? /本配额任务 1 · 子配额 0 · 父配额占用 2/ : /This quota 1 · subquotas 0 · parent-quota workloads 2/);
       assert.match(await page.locator('.pai-q-detail .pai-meta').innerText(), zh ? /8 张 · 本配额任务 1 · 父配额任务 2 · 借出 0 · 原配额空闲 5/ : /8 · this quota 1 · parent-quota 2 · lent out 0 · quota-idle 5/);
       assert.equal(await page.locator('#paiQuotaWeek .pai-rank-stat').count(), 4);
       assert.match(await page.locator('#paiQuotaWeek .pai-rank-stat').first().innerText(), /\b120\b/); // hrs() rounds values >= 100

@@ -679,7 +679,7 @@ window.PaiUI = (() => {
   const borrowedLabel = (m) => {
     const n = m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu);
     return el("span", { class: "pai-borrowed-subset", title: OVERSOLD_TIP() }, [el("i", { class: "pai-borrowed-swatch", "aria-hidden": "true" }),
-      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPU${n === "1" ? "" : "s"} · no extra capacity`)]);
+      t(`其中借用 ${n} 卡`, `Including ${n} borrowed GPU${n === "1" ? "" : "s"}`)]);
   };
 
   function kpis(m) {
@@ -1029,6 +1029,7 @@ window.PaiUI = (() => {
       [u.name, el("b", {}, [gpus(u.gpus)]), suffix || null]);
     const fold = (chips, rest) => (rest.length ? [...chips, el("span", { class: "pai-user-chip more", title: rest.map((u) => `${u.name} ${gpus(u.gpus)}`).join("\n") }, ["+" + rest.length])] : chips);
     return panel(t("配额", "Quotas"), [
+      anyBreakdown ? quotaLegend() : null,
       el("div", { class: "pai-quotas" }, list.map((q) => {
         const cap = num(q.gpu_capacity), used = num(q.gpu_used), shown = quotaShown(q), root = q.isRoot;
         const who = fold(q.direct.slice(0, MAX_CHIPS).map((u) => userChip(u, "", t(`${u.jobs} 个配额内任务直接提交到 ${q.quota_name}，共申请 ${gpus(u.gpus)} 卡`, `${u.jobs} in-quota workloads, ${gpus(u.gpus)} GPUs requested`))), q.direct.slice(MAX_CHIPS));
@@ -1037,9 +1038,9 @@ window.PaiUI = (() => {
         if (q.borrowedBy.length) {
           const lent = q.borrowedBy.slice(0, MAX_CHIPS).map((u) => userChip(u, "borrowed", t(`${u.quota} 配额的任务占用本配额节点上的 ${gpus(u.gpus)} 张卡`, `${u.quota} workloads use ${gpus(u.gpus)} GPUs on this quota's nodes`),
             u.quota !== q.parent?.quota_name ? " · " + u.quota : null));
-          who.push(el("span", { class: "pai-quota-label" }, [t("父配额任务占用", "Parent-quota workloads")]), ...fold(lent, q.borrowedBy.slice(MAX_CHIPS)));
+          who.push(el("span", { class: "pai-quota-label" }, [t("父配额占用", "Parent quota usage")]), ...fold(lent, q.borrowedBy.slice(MAX_CHIPS)));
         }
-        if (q.oversoldUsers.length) who.push(el("span", { class: "pai-quota-label" }, [t("借入（闲时）", "Borrowing in (idle-time)")]), ...q.oversoldUsers.map((u) => userChip(u, "oversold", OVERSOLD_TIP())));
+        if (q.oversoldUsers.length) who.push(el("span", { class: "pai-quota-label" }, [t("闲时借用", "Idle borrowing")]), ...q.oversoldUsers.map((u) => userChip(u, "oversold", OVERSOLD_TIP())));
         const flags = [];
         if (q.oversold_enabled === false) flags.push(el("span", { class: "pai-chip warn",
           title: t("控制台“闲时共享”已关闭：本级和子级的空闲资源不供闲时任务使用。它不决定本配额的任务能否借用别处资源，那由任务的提交策略决定。接口：OversoldUsageConfig.Disabled",
@@ -1064,11 +1065,10 @@ window.PaiUI = (() => {
           flags.length || who.length ? el("div", { class: "pai-quota-users" }, [...flags, root && q.direct.length ? el("span", { class: "pai-quota-label" }, [t("直接提交", "Direct")]) : null, ...who]) : null,
         ]);
       })),
-      anyBreakdown ? quotaLegend() : null,
       methodDetails([
         t("数字为配额资源上的实际分配 / 容量，来自配额接口；父配额包含子配额，容量不可相加。", "Numbers are allocation / capacity from the quota API; parents include subquotas and capacities never add up."),
-        t("人名按任务的 QuotaId 归入其直接提交的配额，卡数优先使用调度量，缺失时使用申请量；父配额任务落在子配额节点上时，列在该子配额的“父配额任务占用”下。",
-          "Users are listed under the quota their workloads were submitted to, with scheduled GPUs (requested as fallback); parent-quota workloads placed on a subquota's nodes appear under that subquota as parent-quota workloads."),
+        t("人名按任务的 QuotaId 归入其直接提交的配额，卡数优先使用调度量，缺失时使用申请量；父配额任务落在子配额节点上时，列在该子配额的“父配额占用”下。",
+          "Users are listed under the quota their workloads were submitted to, with scheduled GPUs (requested as fallback); parent-quota workloads placed on a subquota's nodes appear under that subquota as parent quota usage."),
         t("闲时借用是团队占用的子集，不增加容量。控制台“闲时共享”默认开启，只在关闭时标注；可调度节点少于绑定节点时标注数量。",
           "Idle borrowing is a subset of team allocation and adds no capacity. Console idle sharing is on by default and only flagged when off; schedulable nodes are flagged when fewer than bound nodes."),
       ]),
@@ -1087,7 +1087,7 @@ window.PaiUI = (() => {
   function quotaSegments(q) {
     const segs = q.hasBreakdown
       ? [["", q.self_allocated_gpu, t("本配额任务", "This quota")], ["child", q.descendants_allocated_gpu, t("子配额", "Subquotas")],
-        ["borrowed", q.ancestors_allocated_gpu, t("父配额任务占用", "Used by parent quota")]]
+        ["borrowed", q.ancestors_allocated_gpu, t("父配额占用", "Used by parent quota")]]
       : [["", q.gpu_used, t("配额用量", "Quota usage")]];
     return segs.filter(([, v]) => num(v)).map(([cls, v, label]) => ({ cls, v: num(v), label }));
   }
@@ -1149,7 +1149,7 @@ window.PaiUI = (() => {
   function quotaLegend() {
     return el("div", { class: "pai-quota-legend" }, [
       el("span", {}, [el("i"), t("本配额任务", "This quota")]), el("span", {}, [el("i", { class: "child" }), t("子配额", "Subquotas")]),
-      el("span", {}, [el("i", { class: "borrowed" }), t("父配额任务占用", "Parent-quota workloads")]),
+      el("span", {}, [el("i", { class: "borrowed" }), t("父配额占用", "Parent quota usage")]),
       el("span", {}, [el("i", { class: "oversold" }), t("闲时借用（计入团队总占用）", "Borrowing (included in team total)")]),
     ]);
   }
@@ -1280,7 +1280,7 @@ window.PaiUI = (() => {
           q.parent ? [t("父配额", "Parent"), linkQuota(q.parent)] : null,
           q.children.length ? [t("子配额", "Subquotas"), el("span", { class: "pai-inline" }, q.children.map(linkQuota))] : null,
           [t("已分配 / 容量", "Allocated / capacity"), el("span", { class: "pai-q-cap-line" }, [el("b", { class: "mono" }, [`${gpus(shown)} / ${gpus(cap)}`]), quotaBar(q)])],
-          q.hasBreakdown ? [t("分配构成（当前）", "Allocation (current)"), t(`本配额任务 ${gpus(q.self_allocated_gpu)} · 子配额 ${gpus(q.descendants_allocated_gpu)} · 父配额任务占用 ${gpus(q.ancestors_allocated_gpu)}`,
+          q.hasBreakdown ? [t("分配构成（当前）", "Allocation (current)"), t(`本配额任务 ${gpus(q.self_allocated_gpu)} · 子配额 ${gpus(q.descendants_allocated_gpu)} · 父配额占用 ${gpus(q.ancestors_allocated_gpu)}`,
             `This quota ${gpus(q.self_allocated_gpu)} · subquotas ${gpus(q.descendants_allocated_gpu)} · parent-quota workloads ${gpus(q.ancestors_allocated_gpu)}`)] : null,
           [t("绑定节点", "Bound nodes"), t(`${q.nodesTotal} 个 · 可接新任务 ${q.nodesSchedulable} 个`, `${q.nodesTotal} · ${q.nodesSchedulable} schedulable`)],
           [t("物理卡", "Physical GPUs"), t(`${cs.total} 张 · 本配额任务 ${cs.self} · 父配额任务 ${cs.ancestor} · 借出 ${cs.lent} · 原配额空闲 ${cs.free} · 未知 ${cs.unknown}`,
