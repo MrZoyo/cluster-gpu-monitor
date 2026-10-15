@@ -679,7 +679,7 @@ window.PaiUI = (() => {
   const borrowedLabel = (m) => {
     const n = m.summary?.pool_scheduled_gpus == null ? "—" : gpus(m.sx.oversoldGpu);
     return el("span", { class: "pai-borrowed-subset", title: OVERSOLD_TIP() }, [el("i", { class: "pai-borrowed-swatch", "aria-hidden": "true" }),
-      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPU${n === 1 ? "" : "s"} · no extra capacity`)]);
+      t(`其中借用 ${n} 卡 · 不增加容量`, `Including ${n} borrowed GPU${n === "1" ? "" : "s"} · no extra capacity`)]);
   };
 
   function kpis(m) {
