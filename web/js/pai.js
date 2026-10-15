@@ -448,12 +448,12 @@ window.PaiUI = (() => {
     ]);
   }
 
-  function legend() {
+  function legend(opts = {}) {
     const bands = [[5, t("空闲", "Idle")], [20, t("在用", "In use")], [50, t("偏忙", "Busy")], [80, t("繁忙", "Very busy")], [95, t("满载", "Full")]];
     return el("div", { class: "pai-legend" }, [
       el("span", { class: "pai-legend-cap" }, [t("计算", "Compute")]),
       ...bands.map(([v, label]) => el("span", {}, [el("i", { style: `background:${UI.utilColor(v).bg}` }), label])),
-      el("span", {}, [el("i", { class: "mem" }), t("显存（底条）", "Memory (bar)")]),
+      opts.memory ? el("span", {}, [el("i", { class: "mem" }), t("显存（底条）", "Memory (bar)")]) : null,
       el("span", {}, [el("i", { class: "low" }), t(`已分配·近10分钟计算<${LOW}%`, `Allocated, 10-min <${LOW}%`)]),
       el("span", {}, [el("i", { class: "free" }), t("原配额空闲", "Quota idle")]),
       el("span", {}, [el("i", { class: "unknown" }), t("未知", "Unknown")]),
@@ -750,8 +750,8 @@ window.PaiUI = (() => {
         `${s.oversoldJobs} 个运行任务借用共 ${gpus(s.oversoldGpu)} 卡，已确认物理映射 ${s.borrowedMapped} 卡。`,
         `${s.oversoldJobs} running workloads borrow ${gpus(s.oversoldGpu)} GPUs; ${s.borrowedMapped} have confirmed physical mappings. `), doc("idle")]) : null,
       methodDetails([
-        t("每格一张物理卡，数字为最新计算利用率，底条为显存占比。只有节点、任务和两种 Pod 视图新鲜一致、且没有未定位的运行任务时，确认未分配的卡才显示 0。",
-          "One square per physical GPU showing the latest compute; the bottom bar is memory. A confirmed unallocated GPU shows 0 only when nodes, workloads and both Pod views are fresh and consistent, with no unlocated running workload."),
+        t("每格一张物理卡，数字为最新计算利用率；显存可通过悬停或进入节点、任务详情查看。只有节点、任务和两种 Pod 视图新鲜一致、且没有未定位的运行任务时，确认未分配的卡才显示 0。",
+          "One square per physical GPU showing the latest compute; memory is available on hover and in node or workload details. A confirmed unallocated GPU shows 0 only when nodes, workloads and both Pod views are fresh and consistent, with no unlocated running workload."),
         t("借用卡显示借用任务与使用人；指标卡号与物理卡号不能可靠关联时利用率保持未知，不按空闲补零。借用不增加物理容量，原配额需要时会回收。",
           "Borrowed GPUs show the borrowing workload and owner; utilization stays unknown when metric indices cannot be matched to physical indices and is never filled in as idle. Borrowing adds no capacity and is reclaimed by the original quota."),
         t("已定位借用的 GPU 卡号见节点与任务详情；未确认的映射保持未知，显示为 ?。", "GPU indices of located borrowers are on node and workload pages; unconfirmed mappings stay unknown and show ?."),
@@ -790,7 +790,7 @@ window.PaiUI = (() => {
     const seg = el("div", { class: "pai-seg" }, filters.map(([k, label, n]) => el("button", {
       "data-k": k, onclick: () => { ui.nodes = k; draw(); } }, [label, el("span", { class: "count" }, [String(n)])])));
     draw();
-    return panel(t("节点与单卡", "Nodes & GPUs"), [legend(), list], { tools: seg });
+    return panel(t("节点与单卡", "Nodes & GPUs"), [legend({ memory: true }), list], { tools: seg });
   }
 
   // ── 任务 ───────────────────────────────────────────────
@@ -2112,7 +2112,7 @@ Views.pai = { async render(root, params) {
             n.unhealthy ? P.doc("selfHeal") : null])],
           [t("Pod 映射", "Pod mapping"), chip(n.mapping_state)], [t("未见占用的卡", "No visible allocation"), String(n.free)]], "cols2"),
         ...n.healTasks.map((w) => el("div", { class: "pai-note warn" }, [P.healText(n, w), " ", P.link(t("查看任务", "Open workload"), href("workload", w.WorkloadId)), " ", P.doc("selfHeal")])),
-        P.legend(),
+        P.legend({ memory: true }),
         // 单卡行右侧放节点摘要，利用宽屏空间；窄屏自然换行到下方。
         el("div", { class: "pai-node-detail-row" }, [
           el("div", { class: "cards pai-cards-lg" }, n.cards.map((c) => P.card(c, { href: c.assignments[0] ? href("workload", c.assignments[0].workload_id) : null }))),
@@ -2218,7 +2218,7 @@ Views.pai = { async render(root, params) {
             el("div", { class: "cards pai-cards-lg" }, w.gpus.filter((g) => g.pod === pod).map((g) => P.card(dimCard(g), { index: g.gpu, label: `${pod} / GPU ${g.gpu}` }))),
           ])),
           note(t("任务内 GPU 编号来自云监控维度；仅当与 Pod 的物理 GPUIndexes 完全一致时才关联到物理卡。", "GPU numbers come from cloud-monitor dimensions; they map to physical cards only when they match the Pod's GPUIndexes exactly.")),
-        ], { tools: P.legend() }));
+        ], { tools: P.legend({ memory: true }) }));
       } else {
         root.appendChild(P.panel(t("单卡指标", "GPU metrics"), [note(requested ? t("源未返回该任务的单卡指标；保持未知，不计为 0%。", "No GPU metrics returned; kept unknown, not 0%.") : t("该任务未申请 GPU。", "This workload requests no GPUs."))]));
       }

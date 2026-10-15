@@ -1344,10 +1344,9 @@ body[data-theme="light"] { --pai: #0b74b5; --pai-dark: #075985; --pai-soft: rgba
 .pai-node-who { margin-left: auto; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pai-node-who.free { color: var(--faint); }
 .pai-cells { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
-.pai-cell { position: relative; height: 34px; display: flex; align-items: center; justify-content: center; padding-bottom: 3px; overflow: hidden; border-radius: 5px;
+.pai-cell { position: relative; height: 34px; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 5px;
   font: 700 12px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--util-color, var(--muted));
   background: var(--surface-card); border: 1px solid var(--line); border-top: 2px solid var(--util-color, var(--line-strong)); }
-.pai-cell::after { content: ""; position: absolute; left: 3px; bottom: 3px; height: 3px; width: calc((100% - 6px) * var(--mem-f, 0)); border-radius: 2px; background: var(--mem); opacity: .9; }
 .pai-cell.measured { background: color-mix(in srgb, var(--util-color) 14%, var(--surface-card)); }
 .pai-cell.free { background: transparent; border: 1px dashed var(--line-strong); }
 .pai-cell.unknown { background: repeating-linear-gradient(135deg, var(--nodata) 0 5px, var(--surface-low) 5px 10px); color: var(--faint); font-weight: 600; }
