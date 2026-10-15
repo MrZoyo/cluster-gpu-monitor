@@ -111,13 +111,16 @@ def test_generated_demo_is_marked_and_exportable(tmp_path, with_pai):
     assert export_run.returncode == 0, export_run.stderr
     assert static_output_is_marked(out)
     assert (out / "index.html").is_file()
-    # No PAI API artefact in the public demo: the UI falls back to bare-metal on 404.
+    # PAI remains optional; only explicitly requested synthetic data is exported.
     if with_pai:
         pai = json.loads((out / "api/pai_overview.json").read_text())
         assert pai["synthetic"] is True and pai["workspace_id"] == "demo-workspace"
         assert len(pai["nodes"]) == 4 and len(pai["workloads"]) == 5
         assert any(w["oversold"] for w in pai["workloads"])
         assert any(w["scheduled"] is False for w in pai["workloads"])
+        assert pai["summary"]["mapped_gpus"] == pai["summary"]["pool_scheduled_gpus"] == 20
+        assert pai["summary"]["pool_compute_estimate"] is None
+        assert (out / "js/pai-estimate.js").is_file()
         assert (out / "api/pai_series.demo-dsw-vision.json").is_file()
         assert (out / "api/pai_ranking.24h.json").is_file()
         week = json.loads((out / "api/pai_ranking.week.json").read_text())
@@ -223,3 +226,57 @@ def test_pai_demo_previous_week_without_history_is_unknown():
     assert last["first_hour"] > last["until"]
     assert last["users"] == []
     assert all(f["gpu_hours"] is None and f["occupancy_pct"] is None for f in last["features"])
+
+
+def test_pai_demo_has_confirmed_borrowing_parent_placement_and_missing_metrics():
+    from pai_demo import fixtures
+
+    now = 1792051200
+    data = fixtures(now, {"24h": 86400})
+    snapshot = data["pai_overview.json"]
+    sources = {s["name"]: s for s in snapshot["sources"]}
+    for node in snapshot["nodes"]:
+        assert node["mapping_state"] == "ok"
+        assert sources["pods:" + node["NodeName"]]["state"] == "ok"
+        assert sources["pods-borrowed:" + node["NodeName"]]["state"] == "ok"
+        assert all(len(card["assignments"]) <= 1 for card in node["cards"])
+
+    borrowed = next(n for n in snapshot["nodes"] if n["borrowed_gpus"])
+    assert borrowed["bound_quotas"] == ["demo-root", "demo-dev"]
+    assert borrowed["RequestGPU"] == 0
+    assert borrowed["borrowed_gpus"] == 8
+    assert [c["index"] for c in borrowed["cards"]] == list(range(8))
+    assert all(c["assignments"][0]["borrowed"] is True
+               and c["assignments"][0]["owner_id"] == "demo-carol"
+               and c["compute"]["fresh"] for c in borrowed["cards"])
+    assert snapshot["summary"]["mapped_gpus"] == 20  # Both Pod views must not double-count.
+
+    debug = next(w for w in snapshot["workloads"] if w["WorkloadId"] == "demo-dsw-debug")
+    assert debug["QuotaId"] == "demo-root" and len(debug["cards"]) == 2
+    assert not [m for m in debug["metrics"] if m["metric"] == "compute"]
+    assert sources["metric:demo-dsw-debug:compute"]["state"] == "no_data"
+    assert snapshot["summary"]["pool_compute_estimate"] is None
+    assert snapshot["summary"]["task_measured_gpus"] == 18
+    assert snapshot["summary"]["cluster_unallocated_gpus"] == 12
+    training = next(q for q in snapshot["quotas"] if q["quota_id"] == "demo-train")
+    assert training["oversold_enabled"] is False and training["ancestors_allocated_gpu"] == 2
+    assert any(n["NodeStatus"] == "SchedulingDisabled" for n in snapshot["nodes"])
+
+    rank = data["pai_ranking.24h.json"]
+    for user in rank["users"]:
+        assert sum(q["gpu_hours"] + q["oversold_gpu_hours"] for q in user["quotas"]) == user["gpu_hours"]
+    assert sum(f["gpu_hours"] for f in rank["features"]) == rank["totals"]["gpu_hours"]
+    assert sum(f["borrowed_gpu_hours"] for f in rank["features"]) == rank["totals"]["borrowed_gpu_hours"]
+    assert sum(f["root_attributed_gpu_hours"] for f in rank["features"]) == rank["root_quota"]["gpu_hours"]
+    assert rank["root_quota"]["root_attributed_gpu_hours"] == rank["root_quota"]["gpu_hours"]
+    assert rank["root_quota"]["compute_mean"] == 1
+    assert rank["root_quota"]["effective_gpu_hours"] == pytest.approx(2 * 24 * .01)
+    assert sum(f["effective_gpu_hours"] for f in rank["features"]) == pytest.approx(rank["totals"]["effective_gpu_hours"])
+    assert rank["quota_coverage_basis"] == "window_excluding_known_absence"
+    assert all(f["expected_quota_hours"] == 24 and f["absent_quota_hours"] == 0
+               for f in [*rank["features"], rank["root_quota"]])
+    # Earlier fully observed history is independent of the missing current metrics.
+    assert rank["cluster"]["physical_metric_coverage_pct"] == 100
+    assert rank["cluster"]["known_gpu_hours"] == rank["cluster"]["capacity_gpu_hours"]
+    assert rank["cluster"]["task_effective_gpu_hours"] == rank["totals"]["effective_gpu_hours"]
+    assert rank["cluster"]["physical_utilization_pct"] == rank["cluster"]["task_utilization_estimate_pct"]

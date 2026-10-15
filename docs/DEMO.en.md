@@ -111,6 +111,8 @@ are rendered by the production UI code. All examples are synthetic; no GPU queri
 
 Pass `--with-pai` to the exporter to include fictional quotas, four nodes, running/queued/idle-capacity workloads, GPU charts and feature/user rankings. `scripts/pai_demo.py` never reads cloud credentials, PAI settings, or a production database. The Pages workflow enables this option; ordinary deployments and exports remain PAI-free by default.
 
+The PAI pool has 32 physical GPUs and 20 GPUs occupied by running workloads, including 8 with confirmed idle-borrowing placement. Quota pages show parent-quota workloads on child-quota nodes, borrowing in and out, a node closed to new scheduling, and disabled idle sharing. The current snapshot deliberately omits compute metrics for one two-GPU workload to demonstrate the missing-metric explanation; existing memory values remain in tooltips. Rankings use earlier complete synthetic observations, independently of current missing metrics, so the current state does not rewrite history.
+
 
 The synthetic PAI demo also defaults to Monday 00:00 Asia/Shanghai. Export flags can select another reporting rule without reading runtime `pai.toml`:
 

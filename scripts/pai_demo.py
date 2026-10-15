@@ -16,11 +16,12 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
     cfg = PaiSettings(enabled=True, account_id="0000000000000000", region="demo-region",
                       workspace_id="demo-workspace", quota_id="demo-root", ranking_timezone=ranking_timezone,
                       ranking_week_start=ranking_week_start, ranking_reset_time=ranking_reset_time)
-    # Two development instances, a training job, an idle-capacity job, and a queued job.
+    # Entirely fictional: parent-quota placement, confirmed borrowing, a cordoned
+    # node, and missing compute metrics exercise the current UI without cloud reads.
     specs = [
         ("demo-dsw-vision", "演示 · 视觉开发", "dsw", "demo-alice", "Demo Alice", "demo-dev", 2, 36, False),
         ("demo-dlc-train", "演示 · 策略训练", "dlc", "demo-bob", "Demo Bob", "demo-train", 8, 78, False),
-        ("demo-dsw-debug", "演示 · 调试环境", "dsw", "demo-alice", "Demo Alice", "demo-dev", 2, 1, False),
+        ("demo-dsw-debug", "演示 · 调试环境（指标待到达）", "dsw", "demo-alice", "Demo Alice", "demo-root", 2, 1, False),
         ("demo-dlc-idle", "演示 · 闲时评估", "dlc", "demo-carol", "Demo Carol", "demo-train", 8, 52, True),
         ("demo-dlc-queue", "演示 · 等待资源", "dlc", "demo-carol", "Demo Carol", "demo-train", 24, 0, False),
     ]
@@ -41,24 +42,28 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
             store.save("identity", {"AccountId": cfg.account_id}, now=now)
             store.save("workloads", workloads, now=now)
             store.save("quotas", [dict(quota_id=qid, quota_name=name, parent_quota_id=parent,
-                gpu_capacity=cap, gpu_used=used, allocated_gpu=used,
-                self_allocated_gpu=0 if parent is None else used,
-                descendants_allocated_gpu=used if parent is None else 0,
-                ancestors_allocated_gpu=0, oversold_enabled=True, status="Ready")
-                for qid, name, parent, cap, used in [
-                    ("demo-root", "演示资源池", None, 32, 12),
-                    ("demo-dev", "演示开发配额", "demo-root", 16, 4),
-                    ("demo-train", "演示训练配额", "demo-root", 16, 8)]], now=now)
+                gpu_capacity=cap, gpu_used=used, allocated_gpu=allocated,
+                self_allocated_gpu=own, descendants_allocated_gpu=children,
+                ancestors_allocated_gpu=ancestor, oversold_enabled=sharing, status="Ready")
+                for qid, name, parent, cap, used, allocated, own, children, ancestor, sharing in [
+                    ("demo-root", "演示资源池", None, 32, 12, 12, 2, 10, 0, True),
+                    ("demo-dev", "演示开发配额", "demo-root", 16, 2, 2, 2, 0, 0, True),
+                    ("demo-train", "演示训练配额", "demo-root", 16, 8, 10, 8, 0, 2, False)]], now=now)
             nodes = []
-            for i, job in enumerate([workloads[0], workloads[1], workloads[2], None]):
+            for i, job in enumerate([workloads[0], workloads[1], workloads[2], workloads[3]]):
                 name = f"demo-node-{i + 1:02d}"
-                quota = "demo-dev" if i in (0, 2) else "demo-train"
+                quota = "demo-dev" if i in (0, 3) else "demo-train"
+                borrowed = job["oversold"]
+                pod = dict(WorkloadId=job["WorkloadId"], PodName=job["WorkloadId"] + "-pod",
+                    GPUIndexes=list(range(job["scheduled_gpu"])), Phase="Running")
                 nodes.append(dict(NodeName=name, GPU="8", GPUType="Demo GPU 80GB",
-                    NodeStatus="Ready", RequestGPU=job["requested_gpu"] if job else 0,
+                    NodeStatus="SchedulingDisabled" if i == 2 else "Ready",
+                    RequestGPU=0 if borrowed else job["scheduled_gpu"],
                     health_rate=10000, bound_quotas=["demo-root", quota], ReasonCode=None))
-                store.save("pods:" + name, [] if job is None else [dict(
-                    WorkloadId=job["WorkloadId"], PodName=job["WorkloadId"] + "-pod",
-                    GPUIndexes=list(range(job["requested_gpu"])), Phase="Running")], now=now)
+                # The default view may also include a borrowed Pod. The real view
+                # must deduplicate it against the explicit idle-borrowing view.
+                store.save("pods:" + name, [pod], now=now)
+                store.save("pods-borrowed:" + name, [pod] if borrowed else [], now=now)
             store.save("nodes", nodes, now=now)
             store.save("users", [dict(UserId=uid, Username=owner, WorkloadCount=sum(w["UserId"] == uid for w in workloads),
                 used_gpu=sum(w["scheduled_gpu"] for w in workloads if w["UserId"] == uid and not w["oversold"]),
@@ -72,6 +77,10 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                 if wid.endswith("queue"):
                     continue
                 for metric in ("compute", "memory", "cpu", "ram"):
+                    if wid == "demo-dsw-debug" and metric == "compute":
+                        # Keep the two allocated cards unknown, rather than zero.
+                        store.save(f"metric:{wid}:{metric}", [], state="no_data", now=now)
+                        continue
                     indices = range(gpu) if metric in ("compute", "memory") else [""]
                     for index in indices:
                         sid = f"{wid}:{index}:{metric}"
@@ -96,37 +105,46 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                 users = []
                 for uid, owner, gpu, util, quota, idle in [
                     ("demo-bob", "Demo Bob", 8, 78, "demo-train", False),
-                    ("demo-carol", "Demo Carol", 8, 52, "demo-root", True),
+                    ("demo-carol", "Demo Carol", 8, 52, "demo-train", True),
                     ("demo-alice", "Demo Alice", 4, 18.5, "demo-dev", False)]:
                     gh = gpu * hours
                     users.append(dict(user_id=uid, username=owner, gpu_hours=gh, oversold_gpu_hours=gh if idle else 0,
                         effective_gpu_hours=gh * util / 100, measured_gpu_hours=gh, cpu_core_hours=gh * 8,
                         mem_gib_hours=gh * 32, workloads=2 if uid == "demo-alice" else 1, compute_mean=util,
                         gpu_memory_mean=62, cpu_util_mean=util * .6, ram_util_mean=44,
-                        quotas=[dict(quota_id=quota, quota_name=next(q["quota_name"] for q in snapshot["quotas"] if q["quota_id"] == quota),
-                            gpu_hours=0 if idle else gh, oversold_gpu_hours=gh if idle else 0)]))
+                        quotas=[dict(quota_id=qid, quota_name=next(q["quota_name"] for q in snapshot["quotas"] if q["quota_id"] == qid),
+                            gpu_hours=0 if idle else portion * hours, oversold_gpu_hours=portion * hours if idle else 0)
+                            for qid, portion in ([("demo-dev", 2), ("demo-root", 2)] if uid == "demo-alice" else [(quota, gpu)])]))
                 features = []
                 for q in snapshot["quotas"]:
-                    members = [u for u in users if u["quotas"][0]["quota_id"] == q["quota_id"]]
-                    direct = sum(u["gpu_hours"] for u in members)
-                    if q["quota_id"] == "demo-train":
-                        members += [u for u in users if u["user_id"] == "demo-carol"]
-                    gh = sum(u["gpu_hours"] for u in members)
-                    idle = sum(u["oversold_gpu_hours"] for u in members)
+                    qid = q["quota_id"]
+                    # Current synthetic membership attributes Alice's root task
+                    # to the development Feature; user bars keep submission Quotas.
+                    attributed = 2 * hours if qid == "demo-dev" else 0
+                    direct = sum(p["gpu_hours"] + p["oversold_gpu_hours"] for u in users for p in u["quotas"] if p["quota_id"] == qid)
+                    idle = sum(p["oversold_gpu_hours"] for u in users for p in u["quotas"] if p["quota_id"] == qid)
+                    gh = direct + attributed
+                    # Preserve task-level efficiency when one user's submissions
+                    # span quotas with different compute utilization.
+                    effective = sum(gpu * util / 100 * hours
+                        for wid, _, _, _, _, quota, gpu, util, _ in specs
+                        if not wid.endswith("queue") and
+                        (quota == qid or (qid == "demo-dev" and quota == "demo-root")))
                     features.append(dict(quota_id=q["quota_id"], quota_name=q["quota_name"], is_root=q["quota_id"] == "demo-root",
                         gpu_hours=gh, quota_gpu_hours=gh-idle, oversold_gpu_hours=idle,
-                        direct_gpu_hours=direct, root_attributed_gpu_hours=8*hours if q["quota_id"] in ("demo-root", "demo-train") else 0,
-                        cpu_core_hours=sum(u["cpu_core_hours"] for u in members),
-                        mem_gib_hours=sum(u["mem_gib_hours"] for u in members),
-                        effective_gpu_hours=sum(u["effective_gpu_hours"] for u in members), measured_gpu_hours=gh,
-                        compute_mean=sum(u["effective_gpu_hours"] for u in members)/gh*100 if gh else None,
+                        direct_gpu_hours=direct, root_attributed_gpu_hours=attributed,
+                        cpu_core_hours=gh * 8, mem_gib_hours=gh * 32,
+                        effective_gpu_hours=effective, measured_gpu_hours=gh,
+                        compute_mean=effective/gh*100 if gh else None,
                         current_capacity_gpu=q["gpu_capacity"], current_used_gpu=q["gpu_used"],
                         current_occupancy_pct=q["gpu_used"]/q["gpu_capacity"]*100,
-                        current_allocated_gpu=q["gpu_used"], current_ancestor_allocated_gpu=0, current_borrowed_gpu=0, quota_fresh=True,
+                        current_allocated_gpu=q["allocated_gpu"], current_ancestor_allocated_gpu=q["ancestors_allocated_gpu"],
+                        current_borrowed_gpu=q["ancestors_allocated_gpu"], quota_fresh=True,
                         capacity_gpu_hours=q["gpu_capacity"]*hours, used_gpu_hours=q["gpu_used"]*hours,
                         occupancy_pct=q["gpu_used"]/q["gpu_capacity"]*100 if hours else None,
-                        observed_quota_hours=hours, quota_coverage_pct=hours*3600/seconds*100 if seconds else 0,
-                        workloads=sum(u["workloads"] for u in members) if hours else 0))
+                        observed_quota_hours=hours, expected_quota_hours=seconds/3600,
+                        absent_quota_hours=0, quota_coverage_pct=hours*3600/seconds*100 if seconds else None,
+                        workloads=(1 if qid == "demo-root" else 2) if hours else 0))
                 features.sort(key=lambda f: -f["gpu_hours"])
                 if not hours:
                     users = []
@@ -138,14 +156,17 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                     row["hardware_efficiency_pct"] = row["effective_gpu_hours"] / row["measured_gpu_hours"] * 100 if row["measured_gpu_hours"] else None
                     row["gpu_metric_coverage_pct"] = 100 if row["gpu_hours"] else None
                 root = next(f for f in features if f["is_root"])
-                root.update(rank=None, unattributed_gpu_hours=0 if hours else None)
+                root.update(rank=None, root_attributed_gpu_hours=2 * hours if hours else None,
+                    unattributed_gpu_hours=0 if hours else None)
                 features = [f for f in features if not f["is_root"]]
                 for rank, f in enumerate(features, 1):
                     f["rank"] = rank if hours else None
                 totals = {k: sum(u[k] for u in users) if hours else None for k in
                           ("gpu_hours", "oversold_gpu_hours", "borrowed_gpu_hours", "effective_gpu_hours",
                            "measured_gpu_hours", "cpu_core_hours", "mem_gib_hours", "workloads")}
-                # Fictional pool is 32 GPUs; borrowing is included in the 20 occupied GPUs.
+                # Synthetic history represents earlier complete observations:
+                # 20 measured occupied GPUs plus 12 confirmed idle GPUs. The
+                # current debug task's missing metrics must not rewrite history.
                 effective = sum(u["effective_gpu_hours"] for u in users)
                 cluster = dict(scope="monitored_workspace_workloads_over_physical_pool", first_hour=now-72*3600,
                     observed_hours=hours, capacity_gpu_hours=32*hours, task_estimate_hours=hours,
@@ -154,13 +175,16 @@ def fixtures(now: int, windows: dict[str, int], *, ranking_timezone="Asia/Shangh
                     task_effective_gpu_hours=effective,
                     task_utilization_estimate_pct=effective/(32*hours)*100 if hours else None,
                     task_occupancy_pct=20/32*100 if hours else None,
-                    physical_utilization_pct=None, physical_metric_coverage_pct=37.5 if hours else None)
+                    known_gpu_hours=32*hours,
+                    physical_utilization_pct=effective/(32*hours)*100 if hours else None,
+                    physical_metric_coverage_pct=100 if hours else None)
                 result[f"pai_ranking.{window}.json"] = dict(cluster=cluster,current_pool={"capacity_gpu":32,"occupied_gpu":20,"borrowed_gpu":8,"occupancy_pct":62.5,"fresh":True},window=window, since=since, until=until, generated_at=now,
                     **reporting_metadata(cfg), boundary_estimate=bool(since % 3600 or (until < now and until % 3600)),
                     quota_fresh=True, features=features, root_quota=root, totals=totals,
                     feature_attribution={"basis":"current_workspace_roles", "historical_role_membership":False,
                         "fresh":True, "state":"ok", "fetched_at":now, "error":None, "unresolved_root_gpu_hours":{} if hours else None},
                     user_quota_basis="submission_quota", root_quota_usage_scope="direct_submissions",
+                    quota_coverage_basis="window_excluding_known_absence",
                     first_hour=now - 72 * 3600, bucket_s=3600, users=users, truncated=False, synthetic=True)
             return result
         finally:

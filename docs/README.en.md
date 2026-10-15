@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.4 release notes](RELEASE_0.6.4.md#english) — quota-presence coverage, explicit denominators, and multi-quota attribution guidance.
+Current version: [v0.6.5 release notes](RELEASE_0.6.5.md#english) — quota views, borrowed-workload placement, background refresh, and explicit missing-data explanations.
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |

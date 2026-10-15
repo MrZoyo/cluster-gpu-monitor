@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.4">
-    <img src="docs/assets/badges/release.svg" alt="Current release: Cluster GPU Monitor v0.6.4">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.5">
+    <img src="docs/assets/badges/release.svg" alt="Current release: Cluster GPU Monitor v0.6.5">
   </a>
 </p>
 
@@ -33,8 +33,8 @@ The two resource types keep separate accounting; installations without PAI retai
 [Native deployment](docs/DEPLOYMENT.en.md) ·
 [Docker Compose](docs/DOCKER.en.md)
 
-v0.6.4 excludes confirmed quota absence from time coverage while retaining collection failures as missing data. Details and CSV expose the denominator.
-See the [release notes](docs/RELEASE_0.6.4.md#english) and [PAI guide](docs/PAI.en.md).
+v0.6.5 adds PAI quota views, per-card placement of borrowed workloads, and background refresh that preserves page state. Missing and stale data remain explicit.
+See the [release notes](docs/RELEASE_0.6.5.md#english) and [PAI guide](docs/PAI.en.md).
 
 ## Why use it
 
@@ -194,7 +194,7 @@ and rollback.
 | --- | --- | --- |
 | Choose a guide | [Documentation index](docs/README.en.md) | [文档目录](docs/README.md) |
 | Use PAI monitoring | [PAI guide](docs/PAI.en.md) | [PAI 指南](docs/PAI.md) |
-| Read about this release | [Release notes](docs/RELEASE_0.6.4.md#english) | [v0.6.4 发布说明](docs/RELEASE_0.6.4.md) |
+| Read about this release | [Release notes](docs/RELEASE_0.6.5.md#english) | [v0.6.5 发布说明](docs/RELEASE_0.6.5.md) |
 | Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
 | Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
 | Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |
