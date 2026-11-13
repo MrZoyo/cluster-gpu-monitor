@@ -247,7 +247,76 @@ def test_unpairable_pod_gpu_ids_leave_physical_values_unknown(store, cfg, ids):
     cards = data["nodes"][0]["cards"]
     assert [c["compute"] for c in cards] == [None] * 4
     assert [len(c["assignments"]) for c in cards] == [0, 0, 1, 1]
+    assert [c["metric_gap"] for c in cards] == [None, None, "id_mismatch", "id_mismatch"]
     assert data["summary"]["cluster_compute_mean"] is None
+
+
+def pod_order_case(store, cfg, nodes, pods, metrics, workloads=("job",)):
+    """Nodes -> GPU count, node -> Pod rows, (workload, pod) -> {metric gpu id: value}."""
+    seed(store)
+    store.save("nodes", [{"NodeName": n, "GPU": gpu, "RequestGPU": 0} for n, gpu in nodes.items()], now=960)
+    store.save("workloads", [{"WorkloadId": w, "WorkloadName": w, "WorkloadStatus": "Running", "UserId": w,
+        "UserName": w, "requested_gpu": 2, "scheduled_gpu": 2} for w in workloads], now=960)
+    for node in nodes:
+        store.save("pods:" + node, [{"WorkloadId": w, "PodName": name, "GPUIndexes": idx, "Phase": "Running"}
+            for w, name, idx in pods.get(node, [])], now=960)
+        store.save("pods-borrowed:" + node, [], now=960)
+    for (w, name), values in metrics.items():
+        store.save(f"metric:{w}:compute", [{"sampled_at": 900}], now=960)
+        store.put_metrics(normalize_metrics([{"jobId": w, "pod": name, "gpu": gpu, "timestamp": 900, "Value": value}
+            for gpu, value in values.items()], cfg, w, "compute", 960), 0)
+
+
+def test_pod_order_pairing_covers_non_contiguous_cards_and_reports_missing_metrics(store, cfg):
+    pod_order_case(store, cfg, {"node": 8}, {"node": [("job", "pod", [5, 1]), ("quiet", "quiet-pod", [7])]},
+                   {("job", "pod"): {"0": 10, "1": 90}}, workloads=("job", "quiet"))
+    cards = overview(store, cfg, 1000)["nodes"][0]["cards"]
+    assert [(c["index"], c["compute"]["value"], c["compute"]["pod_gpu"]) for c in cards if c["compute"]] == [
+        (1, 10, "0"), (5, 90, "1")]
+    assert (cards[7]["compute"], cards[7]["metric_gap"]) == (None, "no_metrics")
+    assert [c["metric_gap"] for c in cards[:7]] == [None] * 7
+
+
+def test_pod_listed_under_several_nodes_never_carries_metrics_twice(store, cfg):
+    """A migrating Pod can sit in two fresh node views; both placements stay unknown."""
+    pod_order_case(store, cfg, {"a": 4, "b": 4},
+                   {"a": [("job", "pod", [2, 3]), ("multi", "worker-0", [0, 1])],
+                    "b": [("job", "pod", [2, 3]), ("multi", "worker-1", [0, 1])]},
+                   {("job", "pod"): {"0": 100, "1": 100}, ("multi", "worker-0"): {"0": 20, "1": 20},
+                    ("multi", "worker-1"): {"0": 60, "1": 60}}, workloads=("job", "multi"))
+    data = overview(store, cfg, 1000)
+    by_node = {n["NodeName"]: n["cards"] for n in data["nodes"]}
+    for cards in by_node.values():
+        assert [(c["compute"], c["metric_gap"]) for c in cards[2:]] == [(None, "several_nodes")] * 2
+    # Distinct Pods of one multi-node job still pair independently.
+    assert [c["compute"]["value"] for c in by_node["a"][:2] + by_node["b"][:2]] == [20, 20, 60, 60]
+    assert data["summary"]["measured_gpus"] == 4
+    assert data["summary"]["cluster_compute_mean"] is None
+
+
+def test_only_the_freshly_observed_node_keeps_a_relisted_pod(store, cfg):
+    pod_order_case(store, cfg, {"a": 4, "b": 4}, {"a": [("job", "pod", [2, 3])], "b": [("job", "pod", [2, 3])]},
+                   {("job", "pod"): {"0": 100, "1": 100}})
+    with store.connect() as c:
+        c.execute("UPDATE source SET state='error' WHERE name='pods:a'")
+    by_node = {n["NodeName"]: n["cards"] for n in overview(store, cfg, 1000)["nodes"]}
+    assert [(c["compute"], c["metric_gap"]) for c in by_node["a"][2:]] == [(None, "several_nodes")] * 2
+    assert [(c["compute"]["value"], c["compute"]["fresh"]) for c in by_node["b"][2:]] == [(100, True)] * 2
+
+
+def test_malformed_or_shared_placements_do_not_carry_metrics(store, cfg):
+    pod_order_case(store, cfg, {"bad": 4, "shared": 4},
+                   {"bad": [("job", "pod", [2, 99])], "shared": [("one", "one-pod", [0, 1]), ("two", "two-pod", [1])]},
+                   {("job", "pod"): {"0": 100}, ("one", "one-pod"): {"0": 30, "1": 30}, ("two", "two-pod"): {"0": 70}},
+                   workloads=("job", "one", "two"))
+    data = overview(store, cfg, 1000)
+    by_node = {n["NodeName"]: n for n in data["nodes"]}
+    assert by_node["bad"]["mapping_conflict"]
+    assert (by_node["bad"]["cards"][2]["compute"], by_node["bad"]["cards"][2]["metric_gap"]) == (None, "invalid_indexes")
+    shared = by_node["shared"]["cards"]
+    assert (shared[0]["compute"]["value"], shared[0]["metric_gap"]) == (30, None)
+    assert (shared[1]["compute"], shared[1]["metric_gap"]) == (None, "shared_card")
+    assert data["summary"]["measured_gpus"] == 1
 
 
 @pytest.mark.parametrize("problem", ["missing", "stale", "conflict", "regular_request"])

@@ -107,10 +107,16 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   and differs in capitalization from the submission policy `ForceQuotaOverSold`.
   Node `RequestGPU` remains the platform's regular request counter; borrowed mappings are not added twice.
 - CloudMonitor's GPU dimension is numbered inside the Pod (from 0), wherever the Pod sits on the node: a Pod on
-  physical cards 4–7 reports 0–3. In-Pod ids are therefore paired with physical `GPUIndexes` in ascending order,
-  and each card metric carries `pod_gpu` and `by_order` to show where the value came from. Pairing requires
-  exactly one series per physical card; incomplete metrics, ambiguous mappings or multiple workloads sharing
-  a card remain unknown.
+  physical cards 4–7 reports 0–3. When a Pod's metric ids equal its physical `GPUIndexes`, or form a complete
+  `0..n-1` set (n being the Pod's physical card count), they are paired in ascending order and each card metric
+  carries `pod_gpu` and `by_order` to show where the value came from. Ascending order is an inference: the
+  platform does not document per-card order. A different order would only swap values between cards of the
+  same Pod and never change Pod, node or cluster totals.
+  Everything else remains unknown, with the reason in the card's `metric_gap`: `no_metrics` (no per-GPU metrics
+  yet), `id_mismatch` (ids cannot be paired one-to-one), `placement_conflict` (the two Pod views disagree on the
+  cards), `invalid_indexes` (the placement contains invalid indexes), `several_nodes` (the same Pod is listed
+  under several nodes; if exactly one of them is a fresh observation, that one is still paired) and
+  `shared_card` (multiple workloads share the card).
 - `UseOversoldResource` describes actual idle-time allocation for a scheduled workload. It differs from
   submission policy and quota sharing. Borrowing stays inside owned capacity; the explicit Pod view can locate it,
   borrowed GPU counts are never added to the physical total.

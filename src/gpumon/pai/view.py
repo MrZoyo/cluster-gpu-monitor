@@ -20,8 +20,12 @@ def pod_metric_ids(observed, indices):
     """Pair one Pod's physical GPU indexes with its metric GPU dimension.
 
     CloudMonitor numbers GPUs inside the Pod (0..n-1) wherever the Pod sits on the node, so a
-    Pod on physical cards 4-7 reports 0-3. Pair them in ascending order, and only when the
-    Pod reports exactly one series per physical card; anything else stays unknown.
+    Pod on physical cards 4-7 reports 0-3. Accept ids equal to the physical indexes, else a
+    complete 0..n-1 set paired in ascending order; anything else stays unknown.
+
+    Ascending order is an inference: the platform does not document per-card order. A wrong
+    order can only swap values between cards of the same Pod, never change Pod, node or
+    cluster sums, and callers expose it as ``by_order``.
     Returns ({physical index: metric id}, paired_by_order).
     """
     physical = [str(i) for i in indices]
@@ -60,16 +64,26 @@ def overview(store, cfg, now):
         m["recent_mean"], m["recent_n"] = recent.get(m["series_id"], (None, 0))
         metric_lookup[(m["workload_id"], m["pod"], m["gpu"], m["metric"])] = m
         gpu_sets.setdefault((m["workload_id"], m["pod"], m["metric"]), set()).add(m["gpu"])
+    # A Pod runs on one node. When its identity is listed under several nodes, at most the one
+    # freshly observed placement may carry its metrics; the others are out of date.
+    pod_nodes = {}
+    for node in payload("nodes", []):
+        for source_name in ("pods:" + node["NodeName"], "pods-borrowed:" + node["NodeName"]):
+            for pod in payload(source_name, []):
+                if isinstance(pod.get("GPUIndexes"), list) and pod["GPUIndexes"]:
+                    seen = pod_nodes.setdefault((pod.get("WorkloadId"), pod.get("PodName")), {})
+                    seen[node["NodeName"]] = seen.get(node["NodeName"], False) or fresh(source_name)
     nodes, physical = [], {}
     for node in payload("nodes", []):
         name = node["NodeName"]
         count = number(node["GPU"])
         # Unbounded/unparseable topology must not generate arbitrary cards.
         count = int(count) if count is not None and count <= 128 and count.is_integer() else 0
-        cards = [{"index": i, "assignments": [], "compute": None, "memory": None} for i in range(count)]
+        cards = [{"index": i, "assignments": [], "compute": None, "memory": None, "metric_gap": None}
+                 for i in range(count)]
         pod_sources = ("pods:" + name, "pods-borrowed:" + name)
         source_order = lambda s: (fresh(s), sources[s].get("fetched_at") or 0)
-        merged, placements = {}, {}
+        merged, placements, invalid = {}, {}, set()
         mapping_conflict = False
         for source_name in pod_sources:
             for pod in payload(source_name, []):
@@ -78,13 +92,15 @@ def overview(store, cfg, now):
                     mapping_conflict = True
                     continue
                 indices = tuple(sorted({i for i in raw_indices if type(i) is int and 0 <= i < count}))
-                if any(type(i) is not int or not 0 <= i < count for i in raw_indices):
-                    mapping_conflict = True
                 identity = (pod.get("WorkloadId"), pod.get("PodName"))
-                if indices and not all(identity):
-                    mapping_conflict = True
+                malformed = (any(type(i) is not int or not 0 <= i < count for i in raw_indices)
+                             or bool(indices and not all(identity)))
+                mapping_conflict = mapping_conflict or malformed
                 placements.setdefault(identity, set()).add(indices)
                 key = (*identity, indices)
+                # The valid subset of a malformed placement cannot prove which cards the Pod holds.
+                if malformed:
+                    invalid.add(key)
                 if key not in merged:
                     merged[key] = {**pod, "GPUIndexes": indices, "sources": []}
                 elif source_order(source_name) > max(source_order(s) for s in merged[key]["sources"]):
@@ -92,15 +108,21 @@ def overview(store, cfg, now):
                 merged[key]["sources"].append(source_name)
         conflicts = {identity for identity, positions in placements.items() if len(positions) > 1}
         mapping_conflict = mapping_conflict or bool(conflicts)
-        for pod in merged.values():
-            indices = pod["GPUIndexes"]
+        for key, pod in merged.items():
+            indices, identity = pod["GPUIndexes"], key[:2]
             w = by_workload.get(pod.get("WorkloadId"), {})
             # Prefer a current successful observation when both views contain the same Pod.
             observed = max(pod["sources"], key=source_order)
-            conflicting = (pod.get("WorkloadId"), pod.get("PodName")) in conflicts
-            paired = {metric: ({}, False) if conflicting else pod_metric_ids(
-                gpu_sets.get((pod.get("WorkloadId"), pod.get("PodName"), metric)), indices)
-                for metric in ("compute", "memory")}
+            conflicting = identity in conflicts
+            seen = pod_nodes.get(identity, {})
+            # Why this Pod's metrics cannot be attached to its cards; None when they can.
+            blocked = ("placement_conflict" if conflicting else "invalid_indexes" if key in invalid
+                       else "several_nodes" if len(seen) > 1 and not (seen.get(name) and sum(seen.values()) == 1)
+                       else None)
+            paired = {metric: ({}, False) if blocked else pod_metric_ids(gpu_sets.get((*identity, metric)), indices)
+                      for metric in ("compute", "memory")}
+            gap = blocked or (None if paired["compute"][0] else
+                              "id_mismatch" if (*identity, "compute") in gpu_sets else "no_metrics")
             for i in indices:
                 assignment = {"workload_id": pod.get("WorkloadId"), "pod": pod.get("PodName"),
                               "owner_id": w.get("UserId"), "owner_name": w.get("UserName"),
@@ -117,15 +139,18 @@ def overview(store, cfg, now):
                 # partial or foreign id sets leave the physical values unknown.
                 for metric in ("compute", "memory"):
                     ids, by_order = paired[metric]
-                    m = metric_lookup.get((pod.get("WorkloadId"), pod.get("PodName"), ids.get(i), metric))
+                    m = metric_lookup.get((*identity, ids.get(i), metric))
                     if m:
                         cards[i][metric] = {"value": m["value"], "sampled_at": m["ts"],
                             "recent": m["recent_mean"], "recent_n": m["recent_n"],
                             "pod_gpu": m["gpu"], "by_order": by_order,
                             "fresh": m["fresh"] and assignment["fresh"] and fresh("nodes")}
+                if cards[i]["compute"] is None:
+                    cards[i]["metric_gap"] = gap
         for card in cards:
             if len(card["assignments"]) > 1:
                 card["compute"] = card["memory"] = None
+                card["metric_gap"] = "shared_card"
             physical[(name, card["index"])] = card
         mapping_states = [by_status.get(s, {}).get("state", "unknown") for s in pod_sources]
         mapping_state = next((s for s in ("error", "stale", "unknown", "partial", "no_data")
