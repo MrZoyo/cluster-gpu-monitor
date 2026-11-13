@@ -426,12 +426,13 @@ window.PaiUI = (() => {
       lines.push(t("计算 ", "Compute ") + pct1(c.compute?.value) + (c.compute && !c.compute.fresh ? t("（陈旧）", " (stale)") : ""));
       lines.push(t("显存 ", "Memory ") + pct1(c.memory?.value) + (c.memory && !c.memory.fresh ? t("（陈旧）", " (stale)") : ""));
       if (c.compute) lines.push(t("源采样 ", "Sampled ") + clock(c.compute.sampled_at));
-      if (c.compute?.by_order) lines.push(t(`指标取自任务内 GPU ${c.compute.pod_gpu}：云监控按 Pod 内编号，物理卡号按升序推断`,
-        `Metrics from in-Pod GPU ${c.compute.pod_gpu}: CloudMonitor numbers GPUs per Pod; the physical card is inferred by ascending order`));
+      const inferred = [c.compute, c.memory].find((x) => x?.by_order);
+      if (inferred) lines.push(t(`指标取自任务内 GPU ${inferred.pod_gpu}：云监控按 Pod 内编号，物理卡号按升序推断`,
+        `Metrics from in-Pod GPU ${inferred.pod_gpu}: CloudMonitor numbers GPUs per Pod; the physical card is inferred by ascending order`));
       if (c.physical) lines.push(t(`物理卡 ${c.physical.short} · GPU ${c.physical.index}`, `Physical card ${c.physical.short} · GPU ${c.physical.index}`)
         + (c.physical.byOrder ? t("（按升序推断）", " (inferred by ascending order)") : "")
         + (c.physical.fresh ? "" : t("（上次关联）", " (last seen)")));
-      if (c.state === "assigned" && !c.compute && (c.assignments || []).length) lines.push(t("利用率未知：", "Utilization unknown: ") + gapText(c));
+      if (c.state === "assigned" && !c.compute && (c.assignments || []).length) lines.push(t("计算利用率未知：", "Compute unknown: ") + gapText(c));
     }
     (c.assignments || []).forEach((a) => lines.push((a.borrowed === true ? t("闲时借用 · ", "Idle borrowing · ") : "")
       + (a.owner_name || "—") + " · " + (a.workload_id || "—") + (a.pod ? " · " + a.pod : "") + (a.fresh ? "" : t("（上次关联）", " (last seen)"))));
@@ -440,18 +441,18 @@ window.PaiUI = (() => {
     return lines.join("\n");
   }
 
-  // 已分配但没有利用率的原因：后端给出原因码；旧后端没有该字段时给笼统说明。
+  // 已分配但没有计算利用率的原因：后端给出原因码；旧后端没有该字段、或出现未知原因码时给笼统说明。
+  const GAP_TEXT = new Map([
+    ["no_metrics", ["该 Pod 尚未返回单卡计算指标", "this Pod has returned no per-GPU compute metrics yet"]],
+    ["id_mismatch", ["该 Pod 的指标卡号与物理卡无法一一配对", "this Pod's metric GPU ids cannot be paired one-to-one with its physical cards"]],
+    ["placement_conflict", ["两种 Pod 视图给出的卡号不一致", "the two Pod views disagree on this Pod's cards"]],
+    ["invalid_indexes", ["Pod 落位含无效卡号", "the Pod placement contains invalid GPU indexes"]],
+    ["several_nodes", ["同一 Pod 同时出现在多个节点", "the same Pod is listed under several nodes"]],
+    ["shared_card", ["多个 Pod 关联到同一张卡", "several Pods map to this GPU"]],
+  ]);
   function gapText(c) {
-    const known = {
-      no_metrics: ["该 Pod 尚未返回单卡指标", "this Pod has returned no GPU metrics yet"],
-      id_mismatch: ["该 Pod 的指标卡号与物理卡无法一一配对", "this Pod's metric GPU ids cannot be paired one-to-one with its physical cards"],
-      placement_conflict: ["两种 Pod 视图给出的卡号不一致", "the two Pod views disagree on this Pod's cards"],
-      invalid_indexes: ["Pod 落位含无效卡号", "the Pod placement contains invalid GPU indexes"],
-      several_nodes: ["同一 Pod 同时出现在多个节点", "the same Pod is listed under several nodes"],
-      shared_card: ["多个任务关联到同一张卡", "several workloads map to this GPU"],
-    }[c.metric_gap] || (c.assignments.length > 1 ? ["多个任务关联到同一张卡", "several workloads map to this GPU"]
-      : ["该 Pod 的单卡指标未返回，或无法与物理卡配对", "this Pod's GPU metrics are missing or cannot be paired with its physical cards"]);
-    return t(...known);
+    return t(...(GAP_TEXT.get(c.metric_gap) || (c.assignments.length > 1 ? GAP_TEXT.get("shared_card")
+      : ["该 Pod 的单卡计算指标未返回，或无法与物理卡配对", "this Pod's per-GPU compute metrics are missing or cannot be paired with its physical cards"])));
   }
 
   function cardParts(c) {

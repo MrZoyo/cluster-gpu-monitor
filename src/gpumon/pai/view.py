@@ -23,10 +23,11 @@ def pod_metric_ids(observed, indices):
     Pod on physical cards 4-7 reports 0-3. Accept ids equal to the physical indexes, else a
     complete 0..n-1 set paired in ascending order; anything else stays unknown.
 
-    Ascending order is an inference: the platform does not document per-card order. A wrong
-    order can only swap values between cards of the same Pod, never change Pod, node or
-    cluster sums, and callers expose it as ``by_order``.
-    Returns ({physical index: metric id}, paired_by_order).
+    Both branches pair in ascending order, which is an inference: the platform does not
+    document per-card order. A wrong order can only swap values between cards of the same Pod;
+    sums over the Pod, node or cluster are unaffected as long as all of the Pod's cards are
+    counted (not when one of them is excluded, e.g. as a shared card).
+    Returns ({physical index: metric id}, paired_by_order); paired_by_order marks the 0..n-1 branch.
     """
     physical = [str(i) for i in indices]
     if observed == set(physical):
@@ -65,13 +66,15 @@ def overview(store, cfg, now):
         metric_lookup[(m["workload_id"], m["pod"], m["gpu"], m["metric"])] = m
         gpu_sets.setdefault((m["workload_id"], m["pod"], m["metric"]), set()).add(m["gpu"])
     # A Pod runs on one node. When its identity is listed under several nodes, at most the one
-    # freshly observed placement may carry its metrics; the others are out of date.
+    # freshly observed placement may carry its metrics; the others are out of date. Any listing
+    # counts, whatever its GPUIndexes look like: an empty or unreadable one is still a second node.
     pod_nodes = {}
     for node in payload("nodes", []):
         for source_name in ("pods:" + node["NodeName"], "pods-borrowed:" + node["NodeName"]):
             for pod in payload(source_name, []):
-                if isinstance(pod.get("GPUIndexes"), list) and pod["GPUIndexes"]:
-                    seen = pod_nodes.setdefault((pod.get("WorkloadId"), pod.get("PodName")), {})
+                identity = (pod.get("WorkloadId"), pod.get("PodName"))
+                if all(identity):
+                    seen = pod_nodes.setdefault(identity, {})
                     seen[node["NodeName"]] = seen.get(node["NodeName"], False) or fresh(source_name)
     nodes, physical = [], {}
     for node in payload("nodes", []):
@@ -83,16 +86,18 @@ def overview(store, cfg, now):
                  for i in range(count)]
         pod_sources = ("pods:" + name, "pods-borrowed:" + name)
         source_order = lambda s: (fresh(s), sources[s].get("fetched_at") or 0)
-        merged, placements, invalid = {}, {}, set()
+        merged, placements, invalid, unreadable = {}, {}, set(), set()
         mapping_conflict = False
         for source_name in pod_sources:
             for pod in payload(source_name, []):
                 raw_indices = pod.get("GPUIndexes") or []
+                identity = (pod.get("WorkloadId"), pod.get("PodName"))
                 if not isinstance(raw_indices, list):
+                    # No cards can be drawn from it, and the Pod's other view cannot be trusted either.
                     mapping_conflict = True
+                    unreadable.add(identity)
                     continue
                 indices = tuple(sorted({i for i in raw_indices if type(i) is int and 0 <= i < count}))
-                identity = (pod.get("WorkloadId"), pod.get("PodName"))
                 malformed = (any(type(i) is not int or not 0 <= i < count for i in raw_indices)
                              or bool(indices and not all(identity)))
                 mapping_conflict = mapping_conflict or malformed
@@ -116,7 +121,8 @@ def overview(store, cfg, now):
             conflicting = identity in conflicts
             seen = pod_nodes.get(identity, {})
             # Why this Pod's metrics cannot be attached to its cards; None when they can.
-            blocked = ("placement_conflict" if conflicting else "invalid_indexes" if key in invalid
+            blocked = ("placement_conflict" if conflicting
+                       else "invalid_indexes" if key in invalid or identity in unreadable
                        else "several_nodes" if len(seen) > 1 and not (seen.get(name) and sum(seen.values()) == 1)
                        else None)
             paired = {metric: ({}, False) if blocked else pod_metric_ids(gpu_sets.get((*identity, metric)), indices)

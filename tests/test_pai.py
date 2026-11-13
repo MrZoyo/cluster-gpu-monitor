@@ -304,6 +304,27 @@ def test_only_the_freshly_observed_node_keeps_a_relisted_pod(store, cfg):
     assert [(c["compute"]["value"], c["compute"]["fresh"]) for c in by_node["b"][2:]] == [(100, True)] * 2
 
 
+@pytest.mark.parametrize("other", [[], None, "2,3"])
+def test_empty_or_unreadable_listing_on_another_node_still_blocks_pairing(store, cfg, other):
+    pod_order_case(store, cfg, {"a": 4, "b": 4}, {"a": [("job", "pod", [2, 3])], "b": [("job", "pod", other)]},
+                   {("job", "pod"): {"0": 10, "1": 90}})
+    data = overview(store, cfg, 1000)
+    cards = {n["NodeName"]: n["cards"] for n in data["nodes"]}["a"]
+    assert [(c["compute"], c["metric_gap"]) for c in cards[2:]] == [(None, "several_nodes")] * 2
+    assert data["summary"]["measured_gpus"] == 0
+    assert data["summary"]["cluster_compute_mean"] is None
+
+
+def test_unreadable_view_of_a_pod_blocks_its_other_view(store, cfg):
+    pod_order_case(store, cfg, {"node": 4}, {"node": [("job", "pod", [2, 3])]}, {("job", "pod"): {"0": 10, "1": 90}})
+    store.save("pods-borrowed:node", [{"WorkloadId": "job", "PodName": "pod", "GPUIndexes": "2,3", "Phase": "Running"}], now=960)
+    data = overview(store, cfg, 1000)
+    node = data["nodes"][0]
+    assert node["mapping_conflict"]
+    assert [(c["compute"], c["metric_gap"]) for c in node["cards"][2:]] == [(None, "invalid_indexes")] * 2
+    assert data["summary"]["measured_gpus"] == 0
+
+
 def test_malformed_or_shared_placements_do_not_carry_metrics(store, cfg):
     pod_order_case(store, cfg, {"bad": 4, "shared": 4},
                    {"bad": [("job", "pod", [2, 99])], "shared": [("one", "one-pod", [0, 1]), ("two", "two-pod", [1])]},

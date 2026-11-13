@@ -89,20 +89,30 @@ assert.deepEqual(plain(m.nodes[0].holders.slice(1).map((h) => [h.name, h.indices
 
 // Allocated without a value: the backend reason code is explained; unknown codes and an older
 // backend without the field fall back to a generic reason.
-const reasons = { no_metrics: /尚未返回单卡指标/, id_mismatch: /无法一一配对/, placement_conflict: /两种 Pod 视图/,
-  invalid_indexes: /无效卡号/, several_nodes: /多个节点/, shared_card: /多个任务关联到同一张卡/,
-  future_code: /未返回，或无法与物理卡配对/, [undefined]: /未返回，或无法与物理卡配对/ };
-for (const [code, text] of Object.entries(reasons)) {
+const generic = /未返回，或无法与物理卡配对/;
+const reasons = [["no_metrics", /尚未返回单卡计算指标/], ["id_mismatch", /无法一一配对/], ["placement_conflict", /两种 Pod 视图/],
+  ["invalid_indexes", /无效卡号/], ["several_nodes", /多个节点/], ["shared_card", /多个 Pod 关联到同一张卡/],
+  // Codes this page does not know, including names that exist on every object, never break rendering.
+  ["future_code", generic], ["constructor", generic], ["toString", generic], ["__proto__", generic], [undefined, generic]];
+for (const [code, text] of reasons) {
   m = P.prepare(fixture((raw) => raw.nodes[0].cards.slice(4).forEach((c) => {
     c.compute = c.memory = null;
-    if (code === "undefined") delete c.metric_gap; else c.metric_gap = code;
+    if (code === undefined) delete c.metric_gap; else c.metric_gap = code;
   })));
   node = m.nodes[0];
   assert.deepEqual(node.cards.slice(4).map((c) => c.state), Array(4).fill("assigned"), code);
   assert.equal(P.cell(node.cards[4]).children[0], "—", code);
-  assert.match(tip(node.cards[4]), new RegExp("^利用率未知：.*" + text.source, "m"), code);
+  assert.match(tip(node.cards[4]), new RegExp("^计算利用率未知：.*" + text.source, "m"), code);
   assert.equal(gpusOf(m, "busy")[0].physical, null, code);
 }
+
+// Compute and memory pair separately. With memory alone, the shown value still says it is inferred
+// and the gap is about compute only.
+m = P.prepare(fixture((raw) => { const c = raw.nodes[0].cards[6]; c.compute = null; c.metric_gap = "no_metrics"; }));
+assert.match(tip(m.nodes[0].cards[6]), /^显存 100\.0%$/m);
+assert.match(tip(m.nodes[0].cards[6]), /指标取自任务内 GPU 2.*按升序推断/);
+assert.match(tip(m.nodes[0].cards[6]), /^计算利用率未知：该 Pod 尚未返回单卡计算指标$/m);
+assert.deepEqual(plain(gpusOf(m, "busy")[2].physical), { short: "node", index: 6, byOrder: true, fresh: true });
 
 // An older backend sends neither pod_gpu nor by_order: values still render, without pairing claims.
 m = P.prepare(fixture((raw) => raw.nodes[0].cards.forEach((c) => {
@@ -120,6 +130,6 @@ assert.match(tip(m.nodes[0].cards[5], E), /Metrics from in-Pod GPU 1: .*inferred
 assert.equal(find(E.heatPanel(m), (x) => String(x.attrs?.class || "").includes("pai-node-who")).attrs.title,
   "idle · idle borrowing · GPU 0–3 (last seen)\nbusy · GPU 4–7");
 m = E.prepare(fixture((raw) => { const c = raw.nodes[0].cards[6]; c.compute = c.memory = null; c.metric_gap = "several_nodes"; }));
-assert.match(tip(m.nodes[0].cards[6], E), /Utilization unknown: the same Pod is listed under several nodes/);
+assert.match(tip(m.nodes[0].cards[6], E), /Compute unknown: the same Pod is listed under several nodes/);
 
 console.log("PAI pod-order pairing checks passed (inference label, stale placement, reason codes, older backend, English).");
