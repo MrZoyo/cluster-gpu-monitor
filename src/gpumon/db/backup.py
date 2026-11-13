@@ -4,19 +4,34 @@
 - 由 systemd timer 每天 04:00 触发
 - 保留指定数量的备份（默认 3 个）
 - 使用 SQLite backup API 在线写临时文件，自检、fsync 后再原子发布
+- 写入前确认磁盘放得下整库副本；不在备份目录里留下临时文件
 """
 from __future__ import annotations
 
+import errno
 import os
 import re
+import shutil
 import sqlite3
 import stat
+import time
 from datetime import datetime
 from pathlib import Path
 
 from ..config import db_path, load_settings
 
 _BACKUP_PREFIX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_MIB = 1024 ** 2
+# 备份期间和之后，正在运行的数据库仍要写入：整库副本之外再留 20%，至少 256 MiB。
+_SPACE_HEADROOM_MIN = 256 * _MIB
+_SIDECARS = ("-wal", "-shm", "-journal")
+# 本模块自己产生的文件名：成品 <前缀>_<时间>.db、临时副本 .<成品名>.tmp，以及 SQLite 伴生文件。
+_OWN_NAME = re.compile(
+    r"^(?P<base>(?P<temp>\.)?[A-Za-z0-9][A-Za-z0-9_-]{0,63}_\d{8}_\d{6}_\d{6}\.db(?(temp)\.tmp))"
+    r"(?P<sidecar>-wal|-shm|-journal)?$"
+)
+# 一次备份远用不了一天；超过这个时间仍未发布的临时副本只可能是被中断后留下的。
+_STALE_TEMP_S = 24 * 3600
 
 
 def backup_dir() -> Path:
@@ -73,6 +88,75 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _require_space(source: Path, directory: Path) -> None:
+    """整库副本放不下时在写入前拒绝。
+
+    写满磁盘会让正在写库的采集器出错，备份自身也必然失败。这是一次即时检查，不预留空间。
+    """
+    need = source.stat().st_size
+    try:
+        wal = source.with_name(source.name + "-wal").lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        if stat.S_ISREG(wal.st_mode):
+            need += wal.st_size
+    need += max(_SPACE_HEADROOM_MIN, need // 5)
+    free = shutil.disk_usage(directory).free
+    if free < need:
+        raise OSError(
+            errno.ENOSPC,
+            f"备份需要约 {need // _MIB} MiB，磁盘可用仅 {free // _MIB} MiB；未写入备份",
+            str(directory),
+        )
+
+
+def _remove_sidecars(path: Path) -> None:
+    for suffix in _SIDECARS:
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+
+def _settle_temp(tmp: Path) -> None:
+    """发布前收拾临时副本的伴生文件。
+
+    源库是 WAL 模式时副本也是，只读自检会在它旁边留下空的 -wal / -shm；改名后它们就成了
+    无主文件。副本内容此时应全部在主文件里，-wal 非空说明假设不成立，拒绝发布而不是丢弃。
+    """
+    try:
+        pending = tmp.with_name(tmp.name + "-wal").lstat().st_size
+    except FileNotFoundError:
+        pending = 0
+    if pending:
+        raise sqlite3.DatabaseError("临时备份仍有未合并的 WAL 内容，拒绝发布")
+    _remove_sidecars(tmp)
+
+
+def _sweep_leftovers(directory: Path) -> None:
+    """清掉以往备份留下的临时文件；尽力而为，不影响已完成的备份。
+
+    只处理本模块命名的文件：主文件已不存在的伴生文件，以及超过一天仍未发布的临时副本。
+    成品备份、正在进行的备份和目录里的其他文件一律不动。
+    """
+    try:
+        with os.scandir(directory) as scan:
+            entries = [(entry.name, entry.path) for entry in scan
+                       if entry.is_file(follow_symlinks=False)]
+        present = {name for name, _ in entries}
+        cutoff = time.time() - _STALE_TEMP_S
+        for name, path in entries:
+            match = _OWN_NAME.fullmatch(name)
+            if not match:
+                continue
+            if match["sidecar"]:
+                if match["base"] not in present:
+                    os.unlink(path)
+            elif match["temp"] and os.lstat(path).st_mtime < cutoff:
+                os.unlink(path)
+                _remove_sidecars(Path(path))
+    except OSError:
+        return
+
+
 def _new_backup_paths(directory: Path, prefix: str = "gpumon") -> tuple[Path, Path]:
     """用微秒和 O_EXCL 避免并发手工备份覆盖同名成品。"""
     if not _BACKUP_PREFIX.fullmatch(prefix):
@@ -97,6 +181,9 @@ def backup_database(source: str | Path, *, directory: str | Path | None = None,
     target_dir = _prepare_backup_dir(
         Path(directory) if directory is not None else src.parent / "backups"
     )
+    if not _BACKUP_PREFIX.fullmatch(prefix):
+        raise ValueError("备份文件前缀不合法")
+    _require_space(src, target_dir)
     dest, tmp = _new_backup_paths(target_dir, prefix)
     src_conn: sqlite3.Connection | None = None
     dest_conn: sqlite3.Connection | None = None
@@ -113,6 +200,7 @@ def backup_database(source: str | Path, *, directory: str | Path | None = None,
         src_conn = None
 
         _quick_check(tmp)
+        _settle_temp(tmp)
         os.chmod(tmp, 0o600)
         _fsync_file(tmp)
         os.replace(tmp, dest)
@@ -123,8 +211,10 @@ def backup_database(source: str | Path, *, directory: str | Path | None = None,
         if src_conn is not None:
             src_conn.close()
         tmp.unlink(missing_ok=True)
+        _remove_sidecars(tmp)
         raise
 
+    _sweep_leftovers(target_dir)
     return dest
 
 
@@ -152,6 +242,8 @@ def prune_old_backups(keep: int | None = None) -> list[Path]:
     to_delete = backups[keep:]
     for f in to_delete:
         f.unlink()
+        # 有人打开过这份备份时 SQLite 会在旁边留下伴生文件，随备份一起清掉。
+        _remove_sidecars(f)
     return to_delete
 
 

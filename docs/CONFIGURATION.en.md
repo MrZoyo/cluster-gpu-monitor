@@ -322,6 +322,14 @@ Each backup is written through the SQLite backup API to a temporary file. It mus
 `quick_check`, is set to mode `0600`, and is fsynced before an atomic rename. Old backups
 are pruned only after the new file is published successfully.
 
+Before writing, the backup checks that the disk can hold a whole copy: the database plus its WAL,
+plus 20% and at least 256 MiB. If it cannot, the command fails with `ENOSPC` before creating any
+file and without pruning old backups. This is a point-in-time check; it does not reserve space.
+After each successful backup, temporary files left by earlier runs are removed: SQLite sidecar
+files (`-wal` / `-shm` / `-journal`) whose main file no longer exists, and temporary copies that
+are more than a day old and were never published. Completed backups, a copy that may still be in
+progress and any other file in the directory are left alone.
+
 **To change the native deployment backup time**, edit the systemd timer. There is deliberately no
 separate settings value that could drift from the real schedule:
 
