@@ -323,12 +323,18 @@ Each backup is written through the SQLite backup API to a temporary file. It mus
 are pruned only after the new file is published successfully.
 
 Before writing, the backup checks that the disk can hold a whole copy: the database plus its WAL,
-plus 20% and at least 256 MiB. If it cannot, the command fails with `ENOSPC` before creating any
-file and without pruning old backups. This is a point-in-time check; it does not reserve space.
-After each successful backup, temporary files left by earlier runs are removed: SQLite sidecar
-files (`-wal` / `-shm` / `-journal`) whose main file no longer exists, and temporary copies that
-are more than a day old and were never published. Completed backups, a copy that may still be in
-progress and any other file in the directory are left alone.
+plus 20% and at least 256 MiB of extra headroom. If it cannot, the command fails with `ENOSPC`
+without creating a backup file (the backup directory may already have been created) and without
+pruning old backups. This is a point-in-time check that does not reserve space; deployments on
+very small disks may need to free space first.
+
+A backup leaves none of its own temporary files in the directory. After a scheduled or manual
+`gpumon backup`, orphaned SQLite sidecar files (`-wal` / `-shm` / `-journal`) left by earlier runs
+are removed, but only those unchanged for more than a day whose main file no longer exists.
+Database files themselves are never deleted automatically, including temporary copies
+(`.…db.tmp`) left by an interrupted backup; when such a copy is more than a day old the command
+lists it for an operator to check and remove by hand. Other directories passed explicitly by
+maintenance scripts are not tidied.
 
 **To change the native deployment backup time**, edit the systemd timer. There is deliberately no
 separate settings value that could drift from the real schedule:

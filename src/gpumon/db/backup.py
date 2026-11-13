@@ -25,13 +25,13 @@ _MIB = 1024 ** 2
 # 备份期间和之后，正在运行的数据库仍要写入：整库副本之外再留 20%，至少 256 MiB。
 _SPACE_HEADROOM_MIN = 256 * _MIB
 _SIDECARS = ("-wal", "-shm", "-journal")
-# 本模块自己产生的文件名：成品 <前缀>_<时间>.db、临时副本 .<成品名>.tmp，以及 SQLite 伴生文件。
-_OWN_NAME = re.compile(
-    r"^(?P<base>(?P<temp>\.)?[A-Za-z0-9][A-Za-z0-9_-]{0,63}_\d{8}_\d{6}_\d{6}\.db(?(temp)\.tmp))"
-    r"(?P<sidecar>-wal|-shm|-journal)?$"
+# 本模块产生的文件旁的 SQLite 伴生文件：成品 <前缀>_<时间>.db 或临时副本 .<成品名>.tmp 加后缀。
+_OWN_SIDECAR = re.compile(
+    r"^(?P<main>(?P<temp>\.)?[A-Za-z0-9][A-Za-z0-9_-]{0,63}_[0-9]{8}_[0-9]{6}_[0-9]{6}\.db(?(temp)\.tmp))"
+    r"(?:-wal|-shm|-journal)$"
 )
-# 一次备份远用不了一天；超过这个时间仍未发布的临时副本只可能是被中断后留下的。
-_STALE_TEMP_S = 24 * 3600
+# 进行中的备份的伴生文件总是新的，并且主文件一直存在；清理只看早已无人使用的。
+_ORPHAN_AGE_S = 24 * 3600
 
 
 def backup_dir() -> Path:
@@ -112,15 +112,25 @@ def _require_space(source: Path, directory: Path) -> None:
 
 
 def _remove_sidecars(path: Path) -> None:
+    """尽力删除某个文件旁的 SQLite 伴生文件；只删普通文件，失败不抛出。
+
+    它只在主文件已确定不再使用时调用，属于收尾，不能掩盖调用方真正的结果或异常。
+    """
     for suffix in _SIDECARS:
-        path.with_name(path.name + suffix).unlink(missing_ok=True)
+        sidecar = path.with_name(path.name + suffix)
+        try:
+            if stat.S_ISREG(sidecar.lstat().st_mode):
+                sidecar.unlink()
+        except OSError:
+            continue
 
 
 def _settle_temp(tmp: Path) -> None:
     """发布前收拾临时副本的伴生文件。
 
     源库是 WAL 模式时副本也是，只读自检会在它旁边留下空的 -wal / -shm；改名后它们就成了
-    无主文件。副本内容此时应全部在主文件里，-wal 非空说明假设不成立，拒绝发布而不是丢弃。
+    无主文件。副本由本进程独占地写入一个新文件，内容此时应全部在主文件里；-wal 非空说明
+    这个前提不成立，拒绝发布而不是丢弃。这不是任意 SQLite 文件都适用的规则。
     """
     try:
         pending = tmp.with_name(tmp.name + "-wal").lstat().st_size
@@ -131,30 +141,54 @@ def _settle_temp(tmp: Path) -> None:
     _remove_sidecars(tmp)
 
 
-def _sweep_leftovers(directory: Path) -> None:
-    """清掉以往备份留下的临时文件；尽力而为，不影响已完成的备份。
+def _sweep_orphan_sidecars(directory: Path) -> list[Path]:
+    """清掉以往备份留下的无主伴生文件，返回已删除的文件；尽力而为。
 
-    只处理本模块命名的文件：主文件已不存在的伴生文件，以及超过一天仍未发布的临时副本。
-    成品备份、正在进行的备份和目录里的其他文件一律不动。
+    只删同时满足以下条件的普通文件：名称是本模块产生的文件加 -wal/-shm/-journal；
+    超过一天没有改动；删除前再次确认它的主文件不存在。主文件（成品、临时副本，包括被中断
+    后留下的）从不删除：仅凭名称和时间无法证明一个数据库文件没有人在用。
     """
+    removed: list[Path] = []
     try:
         with os.scandir(directory) as scan:
-            entries = [(entry.name, entry.path) for entry in scan
-                       if entry.is_file(follow_symlinks=False)]
-        present = {name for name, _ in entries}
-        cutoff = time.time() - _STALE_TEMP_S
-        for name, path in entries:
-            match = _OWN_NAME.fullmatch(name)
-            if not match:
-                continue
-            if match["sidecar"]:
-                if match["base"] not in present:
-                    os.unlink(path)
-            elif match["temp"] and os.lstat(path).st_mtime < cutoff:
-                os.unlink(path)
-                _remove_sidecars(Path(path))
+            names = [entry.name for entry in scan]
     except OSError:
-        return
+        return removed
+    cutoff = time.time() - _ORPHAN_AGE_S
+    for name in names:
+        match = _OWN_SIDECAR.fullmatch(name)
+        if not match:
+            continue
+        sidecar = directory / name
+        try:
+            info = sidecar.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_mtime >= cutoff:
+                continue
+            try:
+                (directory / match["main"]).lstat()
+            except FileNotFoundError:
+                sidecar.unlink()
+                removed.append(sidecar)
+        except OSError:
+            continue
+    return removed
+
+
+def abandoned_temp_copies() -> list[Path]:
+    """备份目录中超过一天仍未发布的临时副本，通常是被中断的备份留下的。
+
+    只报告、不删除，由操作者确认后处理。
+    """
+    cutoff = time.time() - _ORPHAN_AGE_S
+    found = []
+    for path in backup_dir().glob(".*.db.tmp"):
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+            found.append(path)
+    return sorted(found)
 
 
 def _new_backup_paths(directory: Path, prefix: str = "gpumon") -> tuple[Path, Path]:
@@ -210,17 +244,23 @@ def backup_database(source: str | Path, *, directory: str | Path | None = None,
             dest_conn.close()
         if src_conn is not None:
             src_conn.close()
-        tmp.unlink(missing_ok=True)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass  # 保留真正的失败原因
         _remove_sidecars(tmp)
         raise
 
-    _sweep_leftovers(target_dir)
     return dest
 
 
 def backup_now() -> Path:
     """生成并原子发布一份经过 quick_check 的 0600 SQLite 在线备份。"""
-    return backup_database(db_path(), directory=backup_dir())
+    directory = backup_dir()
+    dest = backup_database(db_path(), directory=directory)
+    # 只在本功能自己管理的目录里收拾旧残留；调用方显式指定的目录不做任何清理。
+    _sweep_orphan_sidecars(directory)
+    return dest
 
 
 def list_backups() -> list[Path]:
