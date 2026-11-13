@@ -334,32 +334,42 @@ def test_explicit_directory_is_never_swept(source_db, tmp_path):
     assert orphan.exists(), "only the managed backup directory is tidied"
 
 
-def test_copy_that_fails_while_writing_leaves_nothing_and_keeps_old_backups(source_db, monkeypatch):
+def test_copy_that_dies_part_way_leaves_nothing_and_keeps_old_backups(source_db, monkeypatch):
     directory = backup.backup_dir()
     old = _aged(directory / "gpumon_20000101_000000.db", 0, b"previous-good-backup")
+    filler = sqlite3.connect(source_db)
+    filler.executemany("INSERT INTO samples(value) VALUES (?)", [("x" * 3000,) for _ in range(200)])
+    filler.commit()
+    filler.close()
     real_connect = sqlite3.connect
+    progress = []
 
-    class FailingSource:
-        """Stands in for the source connection: the copy dies part-way, mid-transaction."""
+    class DyingSource:
+        """The real copy, stopped after its first pages have reached the temporary file."""
 
         def __init__(self, conn):
             self._conn = conn
 
         def backup(self, target):
-            tmp = next(directory.glob(".gpumon_*.db.tmp"))
-            tmp.with_name(tmp.name + "-journal").write_bytes(b"rollback journal of a partial copy")
-            raise sqlite3.OperationalError("database or disk is full")
+            def stop(_status, remaining, total):
+                tmp = next(directory.glob(".gpumon_*.db.tmp"))
+                progress.append((remaining, total, tmp.stat().st_size))
+                raise sqlite3.OperationalError("database or disk is full")
+
+            self._conn.backup(target, pages=8, progress=stop)
 
         def close(self):
             self._conn.close()
 
     def connect(target, *args, **kwargs):
         conn = real_connect(target, *args, **kwargs)
-        return FailingSource(conn) if kwargs.get("uri") else conn
+        return DyingSource(conn) if kwargs.get("uri") else conn
 
     monkeypatch.setattr(backup.sqlite3, "connect", connect)
     with pytest.raises(sqlite3.OperationalError, match="full"):
         backup.backup_and_prune(keep=1)
+    remaining, total, _written = progress[0]
+    assert 0 < remaining < total, "the copy really was interrupted in the middle"
     assert [p.name for p in directory.iterdir()] == [old.name]
     assert old.read_bytes() == b"previous-good-backup"
 
@@ -367,36 +377,53 @@ def test_copy_that_fails_while_writing_leaves_nothing_and_keeps_old_backups(sour
 def test_cleanup_trouble_never_hides_the_real_failure_or_a_finished_job(source_db, monkeypatch, tmp_path):
     directory = backup.backup_dir()
     # Sidecar paths that are not plain files are left alone instead of raising.
-    victim = directory / "gpumon_20000101_000000.db"
-    (directory / (victim.name + "-wal")).mkdir()
+    other = directory / "gpumon_20000102_000000.db"
+    (directory / (other.name + "-wal")).mkdir()
     outside = _aged(tmp_path / "outside", 0)
-    (directory / (victim.name + "-shm")).symlink_to(outside)
-    backup._remove_sidecars(victim)
-    assert (directory / (victim.name + "-wal")).is_dir() and outside.exists()
+    (directory / (other.name + "-shm")).symlink_to(outside)
+    backup._remove_sidecars(other)
+    assert (directory / (other.name + "-wal")).is_dir() and outside.exists()
+    (directory / (other.name + "-wal")).rmdir()
+    (directory / (other.name + "-shm")).unlink()
 
     real_unlink = backup.Path.unlink
+    refused = []
 
     def stubborn(self, *args, **kwargs):
-        if self.name.endswith(("-wal", "-shm", "-journal")):
+        if self.name.startswith(".") or self.name.endswith(("-wal", "-shm", "-journal")):
+            refused.append(self.name)
             raise PermissionError("simulated")
         return real_unlink(self, *args, **kwargs)
 
-    monkeypatch.setattr(backup.Path, "unlink", stubborn)
-
-    def fail_check(_path):
+    # A failed copy whose temporary file and sidecars cannot be removed: the real reason wins.
+    def fail_check(path):
+        for suffix in ("-wal", "-shm", "-journal"):
+            path.with_name(path.name + suffix).write_bytes(b"")
         raise sqlite3.DatabaseError("simulated check failure")
 
-    monkeypatch.setattr(backup, "_quick_check", fail_check)
-    with pytest.raises(sqlite3.DatabaseError, match="simulated check failure"):
-        backup.backup_now()
-    monkeypatch.undo()
+    with monkeypatch.context() as patched:
+        patched.setattr(backup, "_quick_check", fail_check)
+        patched.setattr(backup.Path, "unlink", stubborn)
+        with pytest.raises(sqlite3.DatabaseError, match="simulated check failure"):
+            backup.backup_now()
+    tmp_names = [name for name in refused if name.endswith(".db.tmp")]
+    assert len(tmp_names) == 1, "removing the temporary copy was attempted and refused"
+    assert sorted(refused) == sorted(tmp_names + [tmp_names[0] + suffix for suffix in ("-wal", "-shm", "-journal")])
+    for leftover in directory.iterdir():
+        real_unlink(leftover)
 
-    # Pruning: once the old backup is gone the result is reported even if a sidecar resists.
-    monkeypatch.setattr(backup, "db_path", lambda: source_db)
-    victim.write_bytes(b"oldest")
-    monkeypatch.setattr(backup.Path, "unlink", stubborn)
-    created, deleted = backup.backup_and_prune(keep=1)
+    # Pruning: once the old backup is gone the result is reported even if its sidecars resist.
+    victim = _aged(directory / "gpumon_20000101_000000.db", 0, b"oldest")
+    sidecars = [_aged(directory / (victim.name + suffix), 0) for suffix in ("-wal", "-shm")]
+    refused.clear()
+    with monkeypatch.context() as patched:
+        patched.setattr(backup.Path, "unlink", stubborn)
+        created, deleted = backup.backup_and_prune(keep=1)
     assert created.exists() and deleted == [victim] and not victim.exists()
+    # (The new copy's own sidecars were refused too, and it was still published.)
+    assert sorted(name for name in refused if name.startswith(victim.name)) == sorted(
+        sidecar.name for sidecar in sidecars)
+    assert all(sidecar.exists() for sidecar in sidecars)
 
 
 def test_pruned_backup_takes_its_sidecar_files_with_it(source_db):
@@ -422,19 +449,76 @@ def test_sweep_failure_never_fails_a_completed_backup(source_db, monkeypatch):
     assert backup.backup_now().exists()
 
 
-def test_cli_reports_interrupted_copies_without_deleting_them(source_db, monkeypatch, capsys):
+def _enabled_settings(monkeypatch):
     from gpumon import config
-    from gpumon.cli import _cmd_backup
 
     monkeypatch.setattr(config, "load_settings",
                         lambda: SimpleNamespace(backup=SimpleNamespace(enabled=True, keep_count=3)))
     monkeypatch.setattr(backup, "load_settings", config.load_settings)
+
+
+def test_cli_lists_stale_temporary_copies_without_touching_them(source_db, monkeypatch, capsys):
+    from gpumon.cli import _cmd_backup
+
+    _enabled_settings(monkeypatch)
     directory = backup.backup_dir()
     stale = _aged(directory / ".gpumon_20261101_040000_992863.db.tmp", 2 * DAY, b"half a copy")
     fresh = _aged(directory / ".gpumon_20261113_040001_318771.db.tmp", 0)
+    unrelated = _aged(directory / ".notes.db.tmp", 2 * DAY)
+    (directory / ".gpumon_20261102_040002_713922.db.tmp").symlink_to(stale)
+    assert backup.stale_temp_copies(directory) == [(stale, len(b"half a copy"))]
 
+    # The listing is taken once; the files are not looked at again afterwards.
+    real_stat = backup.Path.stat
+
+    def no_second_look(self, *args, **kwargs):
+        assert self.name != stale.name, "a listed temporary copy must not be re-read"
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(backup.Path, "stat", no_second_look)
     assert _cmd_backup(SimpleNamespace(scheduled=True)) == 0
     out = capsys.readouterr().out
-    assert stale.name in out and fresh.name not in out and "手工删除" in out
-    assert stale.read_bytes() == b"half a copy" and fresh.exists()
-    assert backup.abandoned_temp_copies() == [stale]
+    assert stale.name in out and str(directory) in out and "手工删除" in out
+    assert fresh.name not in out and unrelated.name not in out
+    assert stale.read_bytes() == b"half a copy" and fresh.exists() and unrelated.exists()
+
+
+@pytest.mark.parametrize("trouble", ["listing_fails", "entry_vanishes", "directory_gone"])
+def test_hint_trouble_never_fails_a_finished_backup_command(source_db, monkeypatch, capsys, trouble):
+    from gpumon.cli import _cmd_backup
+
+    _enabled_settings(monkeypatch)
+    directory = backup.backup_dir()
+    stale = _aged(directory / ".gpumon_20261101_040000_992863.db.tmp", 2 * DAY)
+    real_scandir = os.scandir
+
+    class Vanishing:
+        """Entries whose file disappears between the listing and the look at it."""
+
+        def __init__(self, path):
+            self._scan = real_scandir(path)
+
+        def __enter__(self):
+            return (SimpleNamespace(name=entry.name, path=entry.path, stat=self._gone) for entry in self._scan)
+
+        def __exit__(self, *exc):
+            self._scan.close()
+
+        @staticmethod
+        def _gone(**_kwargs):
+            raise FileNotFoundError("vanished")
+
+    if trouble == "listing_fails":
+        def scandir(_path):
+            raise PermissionError("simulated")
+        monkeypatch.setattr(backup.os, "scandir", scandir)
+    elif trouble == "entry_vanishes":
+        monkeypatch.setattr(backup.os, "scandir", Vanishing)
+        assert backup.stale_temp_copies(directory) == []
+    else:
+        assert backup.stale_temp_copies(directory / "no-such-directory") == []
+        assert not (directory / "no-such-directory").exists(), "reporting never creates anything"
+
+    assert _cmd_backup(SimpleNamespace(scheduled=True)) == 0
+    assert "备份完成" in capsys.readouterr().out
+    assert stale.exists()

@@ -30,7 +30,9 @@ _OWN_SIDECAR = re.compile(
     r"^(?P<main>(?P<temp>\.)?[A-Za-z0-9][A-Za-z0-9_-]{0,63}_[0-9]{8}_[0-9]{6}_[0-9]{6}\.db(?(temp)\.tmp))"
     r"(?:-wal|-shm|-journal)$"
 )
-# 进行中的备份的伴生文件总是新的，并且主文件一直存在；清理只看早已无人使用的。
+# 本模块的临时副本：.<前缀>_<时间>.db.tmp。
+_OWN_TEMP = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}_[0-9]{8}_[0-9]{6}_[0-9]{6}\.db\.tmp$")
+# 进行中的备份的主文件一直存在，这是清理时的主要保护；年龄只是额外筛选，不是活动性证明。
 _ORPHAN_AGE_S = 24 * 3600
 
 
@@ -174,20 +176,27 @@ def _sweep_orphan_sidecars(directory: Path) -> list[Path]:
     return removed
 
 
-def abandoned_temp_copies() -> list[Path]:
-    """备份目录中超过一天仍未发布的临时副本，通常是被中断的备份留下的。
+def stale_temp_copies(directory: Path) -> list[tuple[Path, int]]:
+    """目录中超过一天未改动的临时副本候选及其大小，供操作者核对。
 
-    只报告、不删除，由操作者确认后处理。
+    只读、只报告：不创建或修改任何东西，不删除，出任何文件系统错误都返回已得到的结果而
+    不抛出。它们通常是被中断的备份留下的，但名称和时间不足以证明无人使用。
     """
-    cutoff = time.time() - _ORPHAN_AGE_S
-    found = []
-    for path in backup_dir().glob(".*.db.tmp"):
-        try:
-            info = path.lstat()
-        except OSError:
-            continue
-        if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
-            found.append(path)
+    found: list[tuple[Path, int]] = []
+    try:
+        cutoff = time.time() - _ORPHAN_AGE_S
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                if not _OWN_TEMP.fullmatch(entry.name):
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                    found.append((Path(entry.path), info.st_size))
+    except OSError:
+        pass
     return sorted(found)
 
 

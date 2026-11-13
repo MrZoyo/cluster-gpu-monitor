@@ -328,13 +328,13 @@ without creating a backup file (the backup directory may already have been creat
 pruning old backups. This is a point-in-time check that does not reserve space; deployments on
 very small disks may need to free space first.
 
-A backup leaves none of its own temporary files in the directory. After a scheduled or manual
+Each backup makes a best effort to remove its own temporary files. After a scheduled or manual
 `gpumon backup`, orphaned SQLite sidecar files (`-wal` / `-shm` / `-journal`) left by earlier runs
 are removed, but only those unchanged for more than a day whose main file no longer exists.
-Database files themselves are never deleted automatically, including temporary copies
-(`.…db.tmp`) left by an interrupted backup; when such a copy is more than a day old the command
-lists it for an operator to check and remove by hand. Other directories passed explicitly by
-maintenance scripts are not tidied.
+This tidying never deletes a database main file, including temporary copies (`.…db.tmp`) left by
+an interrupted backup; when such a copy has not changed for more than a day the command lists it
+for an operator to check and remove by hand. Completed backups are still rotated only by
+`keep_count`. Other directories passed explicitly by maintenance scripts are not tidied.
 
 **To change the native deployment backup time**, edit the systemd timer. There is deliberately no
 separate settings value that could drift from the real schedule:

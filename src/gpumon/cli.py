@@ -106,7 +106,7 @@ def _cmd_rollup_once(args: argparse.Namespace) -> int:
 
 def _cmd_backup(args: argparse.Namespace) -> int:
     from .config import load_settings
-    from .db.backup import abandoned_temp_copies, backup_and_prune, list_backups
+    from .db.backup import backup_and_prune, list_backups, stale_temp_copies
 
     if args.scheduled and not load_settings().backup.enabled:
         print("自动备份已在 settings.toml 中禁用，本次定时任务跳过。")
@@ -123,13 +123,14 @@ def _cmd_backup(args: argparse.Namespace) -> int:
         size_mb = b.stat().st_size / (1024 * 1024)
         print(f"  {b.name}  {size_mb:.1f} MB")
 
-    abandoned = abandoned_temp_copies()
-    if abandoned:
-        total_mb = sum(p.stat().st_size for p in abandoned) / (1024 * 1024)
-        print(f"\n注意: 备份目录中有 {len(abandoned)} 个超过一天仍未完成的临时副本"
-              f"（共 {total_mb:.1f} MB），多为被中断的备份留下。确认无人使用后请手工删除:")
-        for p in abandoned:
-            print(f"  {p.name}")
+    # 附带提示：备份和轮换已经完成，这里只读一次目录，不再访问文件，也不会改变退出状态。
+    stale = stale_temp_copies(new_backup.parent)
+    if stale:
+        total_mb = sum(size for _, size in stale) / (1024 * 1024)
+        print(f"\n注意: {new_backup.parent} 中有 {len(stale)} 个超过一天未更新的临时副本"
+              f"（共 {total_mb:.1f} MB），可能是被中断的备份留下的。确认无人使用后可手工删除:")
+        for path, size in stale:
+            print(f"  {path.name}  {size / (1024 * 1024):.1f} MB")
     return 0
 
 
