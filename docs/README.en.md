@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.5 release notes](RELEASE_0.6.5.md#english) — quota views, borrowed-workload placement, background refresh, and explicit missing-data explanations.
+Current version: [v0.6.6 release notes](RELEASE_0.6.6.md#english) — pairing in-Pod GPU ids with physical cards, with reasons for unknown values. Previous: [v0.6.5](RELEASE_0.6.5.md#english).
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |
