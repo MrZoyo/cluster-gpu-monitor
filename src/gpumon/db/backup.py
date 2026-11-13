@@ -4,7 +4,7 @@
 - 由 systemd timer 每天 04:00 触发
 - 保留指定数量的备份（默认 3 个）
 - 使用 SQLite backup API 在线写临时文件，自检、fsync 后再原子发布
-- 写入前确认磁盘放得下整库副本；不在备份目录里留下临时文件
+- 写入前确认磁盘放得下整库副本；尽力清理自己的临时文件
 """
 from __future__ import annotations
 

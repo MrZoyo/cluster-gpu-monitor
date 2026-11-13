@@ -519,6 +519,17 @@ def test_hint_trouble_never_fails_a_finished_backup_command(source_db, monkeypat
         assert backup.stale_temp_copies(directory / "no-such-directory") == []
         assert not (directory / "no-such-directory").exists(), "reporting never creates anything"
 
+        # The directory disappears right after the backup: only the notice looks at it then.
+        def scandir(path):
+            raise FileNotFoundError(path)
+        real_and_prune = backup.backup_and_prune
+
+        def then_gone():
+            result = real_and_prune()
+            monkeypatch.setattr(backup.os, "scandir", scandir)
+            return result
+        monkeypatch.setattr(backup, "backup_and_prune", then_gone)
+
     assert _cmd_backup(SimpleNamespace(scheduled=True)) == 0
     assert "备份完成" in capsys.readouterr().out
     assert stale.exists()
