@@ -333,7 +333,7 @@ Each backup makes a best effort to remove its own temporary files. After a sched
 are removed, but only those unchanged for more than a day whose main file no longer exists.
 This tidying never deletes a database main file, including temporary copies (`.…db.tmp`) left by
 an interrupted backup; when such a copy has not changed for more than a day the command lists it
-for an operator to check and remove by hand. Completed backups are still rotated only by
+(plain files carrying this feature's own names only) for an operator to check and remove by hand. Completed backups are still rotated only by
 `keep_count`. Other directories passed explicitly by maintenance scripts are not tidied.
 
 **To change the native deployment backup time**, edit the systemd timer. There is deliberately no

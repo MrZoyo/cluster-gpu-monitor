@@ -3,8 +3,8 @@
 [简体中文](README.md) | English
 
 <p align="center">
-  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.6">
-    <img src="docs/assets/badges/release.svg" alt="Current release: Cluster GPU Monitor v0.6.6">
+  <a href="https://github.com/MrZoyo/cluster-gpu-monitor/releases/tag/v0.6.7">
+    <img src="docs/assets/badges/release.svg" alt="Current release: Cluster GPU Monitor v0.6.7">
   </a>
 </p>
 
@@ -33,8 +33,8 @@ The two resource types keep separate accounting; installations without PAI retai
 [Native deployment](docs/DEPLOYMENT.en.md) ·
 [Docker Compose](docs/DOCKER.en.md)
 
-v0.6.6 fixes how PAI per-GPU metrics are joined to physical cards: CloudMonitor numbers GPUs inside the Pod, so Pods that do not start at card 0 now show utilization on the heatmap and node pages. Joins that cannot be confirmed stay unknown with a reason.
-See the [release notes](docs/RELEASE_0.6.6.md#english) and [PAI guide](docs/PAI.en.md).
+v0.6.7 hardens the local backup: it checks disk space before writing and cleans up its own temporary files. v0.6.6 fixed how PAI per-GPU metrics are joined to physical cards, so Pods that do not start at card 0 show utilization on the heatmap and node pages.
+See the [v0.6.7 release notes](docs/RELEASE_0.6.7.md#english), the [v0.6.6 release notes](docs/RELEASE_0.6.6.md#english) and the [PAI guide](docs/PAI.en.md).
 
 ## Why use it
 
@@ -194,7 +194,7 @@ and rollback.
 | --- | --- | --- |
 | Choose a guide | [Documentation index](docs/README.en.md) | [文档目录](docs/README.md) |
 | Use PAI monitoring | [PAI guide](docs/PAI.en.md) | [PAI 指南](docs/PAI.md) |
-| Read about this release | [Release notes](docs/RELEASE_0.6.6.md#english) | [v0.6.6 发布说明](docs/RELEASE_0.6.6.md) |
+| Read about this release | [Release notes](docs/RELEASE_0.6.7.md#english) | [v0.6.7 发布说明](docs/RELEASE_0.6.7.md) |
 | Configure hosts and runtime | [Configuration reference](docs/CONFIGURATION.en.md) | [配置参考](docs/CONFIGURATION.md) |
 | Understand collection and metrics | [Architecture and trade-offs](docs/ARCHITECTURE.en.md) | [架构与设计取舍](docs/ARCHITECTURE.md) |
 | Generate or publish demo data | [Demo guide](docs/DEMO.en.md) | [Demo 指南](docs/DEMO.md) |

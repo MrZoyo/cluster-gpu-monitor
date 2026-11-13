@@ -8,7 +8,7 @@ manual.
 
 ## Where to start
 
-Current version: [v0.6.6 release notes](RELEASE_0.6.6.md#english) — pairing in-Pod GPU ids with physical cards, with reasons for unknown values. Previous: [v0.6.5](RELEASE_0.6.5.md#english).
+Current version: [v0.6.7 release notes](RELEASE_0.6.7.md#english) — disk-space check before a backup and cleanup of its own temporary files. Previous: [v0.6.6](RELEASE_0.6.6.md#english) (pairing in-Pod GPU ids with physical cards) and [v0.6.5](RELEASE_0.6.5.md#english).
 
 | Goal | Start here | What it covers |
 | --- | --- | --- |
