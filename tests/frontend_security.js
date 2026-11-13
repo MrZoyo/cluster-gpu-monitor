@@ -7,6 +7,7 @@ const vm = require("node:vm");
 require("./frontend_recovery.js");
 require("./frontend_pai_estimate.js");
 require("./frontend_pai_quota_quality.js");
+require("./frontend_pai_pod_order.js");
 
 const componentsSource = fs.readFileSync(
   path.join(__dirname, "..", "web", "js", "components.js"),

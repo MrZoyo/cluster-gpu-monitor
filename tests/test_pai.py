@@ -206,6 +206,50 @@ def test_borrowed_pod_maps_owner_quota_cards_and_metrics_once(store, cfg):
     assert summary["cluster_unallocated_gpus"] == 1
 
 
+def test_pod_local_gpu_ids_pair_with_physical_cards_in_order(store, cfg):
+    """CloudMonitor numbers GPUs inside the Pod: a Pod on cards 4-7 still reports 0-3."""
+    seed(store)
+    store.save("nodes", [{"NodeName": "node", "GPU": 8, "RequestGPU": 4}], now=960)
+    store.save("workloads", [{"WorkloadId": wid, "WorkloadName": wid, "WorkloadStatus": "Running",
+        "UserId": wid, "UserName": wid, "requested_gpu": 4, "scheduled_gpu": 4, "oversold": wid == "idle"}
+        for wid in ("idle", "busy")], now=960)
+    pod = lambda wid, first: {"WorkloadId": wid, "PodName": wid + "-pod", "Phase": "Running",
+                              "GPUIndexes": list(range(first, first + 4))}
+    store.save("pods:node", [pod("busy", 4)], now=960)
+    store.save("pods-borrowed:node", [pod("idle", 0)], now=960)
+    for wid, values in (("idle", [0, 0, 0, 0]), ("busy", [100, 90, 80, 70])):
+        for metric in ("compute", "memory"):
+            store.save(f"metric:{wid}:{metric}", [{"sampled_at": 900}], now=960)
+            store.put_metrics(normalize_metrics([{"jobId": wid, "pod": wid + "-pod", "gpu": str(i),
+                "timestamp": 900, "Value": value} for i, value in enumerate(values)], cfg, wid, metric, 960), 0)
+    data = overview(store, cfg, 1000)
+    cards, summary = data["nodes"][0]["cards"], data["summary"]
+    assert [c["compute"]["value"] for c in cards] == [0, 0, 0, 0, 100, 90, 80, 70]
+    assert [c["memory"]["value"] for c in cards[4:]] == [100, 90, 80, 70]
+    assert [(c["compute"]["pod_gpu"], c["compute"]["by_order"]) for c in cards[4:]] == [
+        ("0", True), ("1", True), ("2", True), ("3", True)]
+    # A Pod that starts at card 0 pairs identically either way and is not flagged.
+    assert [(c["compute"]["pod_gpu"], c["compute"]["by_order"]) for c in cards[:4]] == [
+        ("0", False), ("1", False), ("2", False), ("3", False)]
+    assert all(c["compute"]["fresh"] for c in cards)
+    assert (summary["measured_gpus"], summary["cluster_known_gpus"]) == (8, 8)
+    assert summary["cluster_compute_mean"] == summary["pool_compute_estimate"] == 42.5
+
+
+@pytest.mark.parametrize("ids", [["0"], ["0", "1", "2"], ["1", "2"], ["0", "x"], ["0", "3"]])
+def test_unpairable_pod_gpu_ids_leave_physical_values_unknown(store, cfg, ids):
+    seed(store)
+    store.save("nodes", [{"NodeName": "node", "GPU": 4, "RequestGPU": 2}], now=960)
+    store.save("pods:node", [{"WorkloadId": "job", "PodName": "pod", "GPUIndexes": [2, 3], "Phase": "Running"}], now=960)
+    store.put_metrics(normalize_metrics([{"jobId": "job", "pod": "pod", "gpu": gpu, "timestamp": 900, "Value": 50}
+        for gpu in ids], cfg, "job", "compute", 960), 0)
+    data = overview(store, cfg, 1000)
+    cards = data["nodes"][0]["cards"]
+    assert [c["compute"] for c in cards] == [None] * 4
+    assert [len(c["assignments"]) for c in cards] == [0, 0, 1, 1]
+    assert data["summary"]["cluster_compute_mean"] is None
+
+
 @pytest.mark.parametrize("problem", ["missing", "stale", "conflict", "regular_request"])
 def test_pod_view_uncertainty_never_becomes_free_gpu(store, cfg, problem):
     seed(store)

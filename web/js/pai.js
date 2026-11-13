@@ -130,6 +130,8 @@ window.PaiUI = (() => {
     const maxNodeGpu = Math.max(0, ...d.nodes.map((n) => num(n.GPU) || 0));
     const quotaOrder = (id) => { const i = (d.quotas || []).findIndex((q) => q.quota_id === id); return i < 0 ? 999 : i; };
     const cards = [];
+    // 任务内 GPU → 物理卡：后端已按 Pod 内顺序配对，这里只是反查，供任务页悬停展示。
+    const placedGpu = new Map();
     d.nodes.forEach((n) => {
       n.short = short(n.NodeName);
       // 节点绑定的子配额（根配额对所有节点都成立，不重复显示）；健康度 10000 = 100%。
@@ -148,11 +150,22 @@ window.PaiUI = (() => {
         c.state = c.assignments.length ? (c.compute ? "measured" : "assigned") : (canBeFree ? "free" : "unknown");
         c.stale = !!(c.compute && !c.compute.fresh) || c.assignments.some((a) => !a.fresh);
         c.low = c.state === "measured" && isLow({ fresh: c.compute.fresh, recent_mean: c.compute.recent, recent_n: c.compute.recent_n });
+        const paired = c.compute || c.memory, held = c.assignments[0];
+        if (paired?.pod_gpu != null && held) placedGpu.set([held.workload_id, held.pod, paired.pod_gpu].join("\u0000"),
+          { short: n.short, index: c.index, byOrder: paired.by_order === true });
         cards.push(c);
       });
       n.assigned = assigned;
       n.free = n.cards.filter((c) => c.state === "free").length;
       n.owners = [...new Set(n.cards.flatMap((c) => c.assignments.map((a) => a.owner_name || "—")))];
+      // 谁占哪几张卡（区分闲时借用）：节点格只显示人名，明细放悬停。
+      const holders = new Map();
+      n.cards.forEach((c) => c.assignments.forEach((a) => {
+        const key = (a.owner_name || "—") + "\u0000" + (a.borrowed === true);
+        if (!holders.has(key)) holders.set(key, { name: a.owner_name || "—", borrowed: a.borrowed === true, indices: [] });
+        holders.get(key).indices.push(c.index);
+      }));
+      n.holders = [...holders.values()];
       n.workloadIds = [...new Set(n.cards.flatMap((c) => c.assignments.map((a) => a.workload_id)))];
     });
     d.nodes.sort((a, b) => quotaOrder(a.quotaIds[0]) - quotaOrder(b.quotaIds[0]) || a.NodeName.localeCompare(b.NodeName));
@@ -203,7 +216,8 @@ window.PaiUI = (() => {
       const dims = new Map();
       w.metrics.forEach((m) => {
         const key = m.pod + "\u0000" + m.gpu;
-        if (!dims.has(key)) dims.set(key, { pod: m.pod, gpu: m.gpu, compute: null, memory: null });
+        if (!dims.has(key)) dims.set(key, { pod: m.pod, gpu: m.gpu, compute: null, memory: null,
+          physical: placedGpu.get([w.WorkloadId, m.pod, m.gpu].join("\u0000")) || null });
         dims.get(key)[m.metric] = m;
       });
       w.gpus = [...dims.values()].sort((a, b) => a.pod.localeCompare(b.pod) || a.gpu.localeCompare(b.gpu, undefined, { numeric: true }));
@@ -410,6 +424,13 @@ window.PaiUI = (() => {
       lines.push(t("计算 ", "Compute ") + pct1(c.compute?.value) + (c.compute && !c.compute.fresh ? t("（陈旧）", " (stale)") : ""));
       lines.push(t("显存 ", "Memory ") + pct1(c.memory?.value) + (c.memory && !c.memory.fresh ? t("（陈旧）", " (stale)") : ""));
       if (c.compute) lines.push(t("源采样 ", "Sampled ") + clock(c.compute.sampled_at));
+      if (c.compute?.by_order) lines.push(t(`指标取自任务内 GPU ${c.compute.pod_gpu}：云监控按 Pod 内编号，按顺序对应物理卡`,
+        `Metrics from in-Pod GPU ${c.compute.pod_gpu}: CloudMonitor numbers GPUs per Pod, paired with physical cards in order`));
+      if (c.physical) lines.push(t(`物理卡 ${c.physical.short} · GPU ${c.physical.index}`, `Physical card ${c.physical.short} · GPU ${c.physical.index}`)
+        + (c.physical.byOrder ? t("（按 Pod 内顺序对应）", " (paired in Pod order)") : ""));
+      if (c.state === "assigned" && !c.compute) lines.push((c.assignments || []).length > 1
+        ? t("利用率未知：多个任务关联到同一张卡", "Utilization unknown: several workloads map to this GPU")
+        : t("利用率未知：该 Pod 的单卡指标尚未返回，或数量与物理卡数对不上", "Utilization unknown: this Pod's GPU metrics are missing or do not match its physical card count"));
     }
     (c.assignments || []).forEach((a) => lines.push((a.borrowed === true ? t("闲时借用 · ", "Idle borrowing · ") : "")
       + (a.owner_name || "—") + " · " + (a.workload_id || "—") + (a.pod ? " · " + a.pod : "") + (a.fresh ? "" : t("（上次关联）", " (last seen)"))));
@@ -731,7 +752,8 @@ window.PaiUI = (() => {
       el("div", { class: "pai-node-tile-head" }, [el("span", { class: "pai-node-name" }, [n.short]), ...nodeChips(n)]),
       el("div", { class: "pai-node-tile-sub" }, [
         n.quotaNames.length ? el("span", { class: "pai-node-quota" }, [n.quotaNames.join(", ")]) : null,
-        el("span", { class: "pai-node-who" + (n.owners.length ? "" : " free") }, [who]),
+        el("span", { class: "pai-node-who" + (n.owners.length ? "" : " free"), title: n.holders.length ? n.holders.map((h) =>
+          h.name + (h.borrowed ? t(" · 闲时借用", " · idle borrowing") : "") + " · GPU " + rangeText(h.indices)).join("\n") : null }, [who]),
       ]),
       el("div", { class: "pai-cells" }, n.cards.map((c) => cell(c))),
     ]);
@@ -752,8 +774,8 @@ window.PaiUI = (() => {
       methodDetails([
         t("每格一张物理卡，数字为最新计算利用率；显存可通过悬停或进入节点、任务详情查看。只有节点、任务和两种 Pod 视图新鲜一致、且没有未定位的运行任务时，确认未分配的卡才显示 0。",
           "One square per physical GPU showing the latest compute; memory is available on hover and in node or workload details. A confirmed unallocated GPU shows 0 only when nodes, workloads and both Pod views are fresh and consistent, with no unlocated running workload."),
-        t("借用卡显示借用任务与使用人；指标卡号与物理卡号不能可靠关联时利用率保持未知，不按空闲补零。借用不增加物理容量，原配额需要时会回收。",
-          "Borrowed GPUs show the borrowing workload and owner; utilization stays unknown when metric indices cannot be matched to physical indices and is never filled in as idle. Borrowing adds no capacity and is reclaimed by the original quota."),
+        t("借用卡显示借用任务与使用人。云监控的卡号是 Pod 内编号，按顺序对应到该 Pod 的物理卡；指标数量与物理卡数对不上时利用率保持未知（显示 —），不按空闲补零。借用不增加物理容量，原配额需要时会回收。",
+          "Borrowed GPUs show the borrowing workload and owner. CloudMonitor numbers GPUs per Pod, so values are paired in order with that Pod's physical cards; when the counts differ utilization stays unknown (shown as —) and is never filled in as idle. Borrowing adds no capacity and is reclaimed by the original quota."),
         t("已定位借用的 GPU 卡号见节点与任务详情；未确认的映射保持未知，显示为 ?。", "GPU indices of located borrowers are on node and workload pages; unconfirmed mappings stay unknown and show ?."),
       ]),
     ], { tools: legend(), id: "paiHeat" });
@@ -2172,7 +2194,7 @@ Views.pai = { async render(root, params) {
     else {
       GM.crumb(t("任务 › ", "Workloads › ") + w.WorkloadName, root);
       const pods = [...new Set(w.gpus.map((g) => g.pod))];
-      const dimCard = (g) => ({ index: g.gpu, assignments: [], state: g.compute ? "measured" : "assigned",
+      const dimCard = (g) => ({ index: g.gpu, assignments: [], physical: g.physical, state: g.compute ? "measured" : "assigned",
         compute: g.compute && { value: g.compute.value, sampled_at: g.compute.ts, fresh: g.compute.fresh, recent: g.compute.recent_mean, recent_n: g.compute.recent_n },
         memory: g.memory && { value: g.memory.value, sampled_at: g.memory.ts, fresh: g.memory.fresh },
         stale: !!(g.compute && !g.compute.fresh), low: P.isLow(g.compute) });
@@ -2217,7 +2239,7 @@ Views.pai = { async render(root, params) {
             pods.length > 1 || w.WorkloadType === "dlc" ? el("div", { class: "pai-pod-name mono" }, [`P${pods.indexOf(pod) + 1} · ${pod}`]) : null,
             el("div", { class: "cards pai-cards-lg" }, w.gpus.filter((g) => g.pod === pod).map((g) => P.card(dimCard(g), { index: g.gpu, label: `${pod} / GPU ${g.gpu}` }))),
           ])),
-          note(t("任务内 GPU 编号来自云监控维度；仅当与 Pod 的物理 GPUIndexes 完全一致时才关联到物理卡。", "GPU numbers come from cloud-monitor dimensions; they map to physical cards only when they match the Pod's GPUIndexes exactly.")),
+          note(t("卡号是云监控的 Pod 内编号（从 0 起）；与 Pod 的物理卡数量一致时按顺序对应到物理卡，悬停可看。", "GPU numbers are CloudMonitor's in-Pod indexes (from 0); when their count matches the Pod's physical cards they are paired in order — hover for the physical card.")),
         ], { tools: P.legend({ memory: true }) }));
       } else {
         root.appendChild(P.panel(t("单卡指标", "GPU metrics"), [note(requested ? t("源未返回该任务的单卡指标；保持未知，不计为 0%。", "No GPU metrics returned; kept unknown, not 0%.") : t("该任务未申请 GPU。", "This workload requests no GPUs."))]));

@@ -106,8 +106,11 @@ coverage. See [PaiSettings](../src/gpumon/pai/config.py) for validation ranges.
   The parameter follows [ListNodePods](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listnodepods)
   and differs in capitalization from the submission policy `ForceQuotaOverSold`.
   Node `RequestGPU` remains the platform's regular request counter; borrowed mappings are not added twice.
-- Physical mapping requires the pod metric GPU-index set to match `GPUIndexes`. Ambiguous mappings or
-  multiple workloads sharing a card remain unknown.
+- CloudMonitor's GPU dimension is numbered inside the Pod (from 0), wherever the Pod sits on the node: a Pod on
+  physical cards 4–7 reports 0–3. In-Pod ids are therefore paired with physical `GPUIndexes` in ascending order,
+  and each card metric carries `pod_gpu` and `by_order` to show where the value came from. Pairing requires
+  exactly one series per physical card; incomplete metrics, ambiguous mappings or multiple workloads sharing
+  a card remain unknown.
 - `UseOversoldResource` describes actual idle-time allocation for a scheduled workload. It differs from
   submission policy and quota sharing. Borrowing stays inside owned capacity; the explicit Pod view can locate it,
   borrowed GPU counts are never added to the physical total.

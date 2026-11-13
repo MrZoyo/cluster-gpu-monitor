@@ -16,6 +16,23 @@ def source_status(source, now, stale_after):
         "state": state, "age_s": age, "retained": source["state"] == "error" and source.get("payload") is not None}
 
 
+def pod_metric_ids(observed, indices):
+    """Pair one Pod's physical GPU indexes with its metric GPU dimension.
+
+    CloudMonitor numbers GPUs inside the Pod (0..n-1) wherever the Pod sits on the node, so a
+    Pod on physical cards 4-7 reports 0-3. Pair them in ascending order, and only when the
+    Pod reports exactly one series per physical card; anything else stays unknown.
+    Returns ({physical index: metric id}, paired_by_order).
+    """
+    physical = [str(i) for i in indices]
+    if observed == set(physical):
+        return dict(zip(indices, physical)), False
+    local = [str(k) for k in range(len(indices))]
+    if observed == set(local):
+        return dict(zip(indices, local)), True
+    return {}, False
+
+
 def overview(store, cfg, now):
     sources = store.sources()
     payload = lambda name, default: sources.get(name, {}).get("payload") or default
@@ -81,6 +98,9 @@ def overview(store, cfg, now):
             # Prefer a current successful observation when both views contain the same Pod.
             observed = max(pod["sources"], key=source_order)
             conflicting = (pod.get("WorkloadId"), pod.get("PodName")) in conflicts
+            paired = {metric: ({}, False) if conflicting else pod_metric_ids(
+                gpu_sets.get((pod.get("WorkloadId"), pod.get("PodName"), metric)), indices)
+                for metric in ("compute", "memory")}
             for i in indices:
                 assignment = {"workload_id": pod.get("WorkloadId"), "pod": pod.get("PodName"),
                               "owner_id": w.get("UserId"), "owner_name": w.get("UserName"),
@@ -93,16 +113,16 @@ def overview(store, cfg, now):
                 if not any(a["workload_id"] == assignment["workload_id"] and a["pod"] == assignment["pod"]
                            for a in cards[i]["assignments"]):
                     cards[i]["assignments"].append(assignment)
-                # Only join when the observed metric index set equals the physical assignment set.
-                # Otherwise local/container GPU indices may differ: leave physical values unknown.
+                # Join only when the Pod's metric ids pair one-to-one with its physical cards;
+                # partial or foreign id sets leave the physical values unknown.
                 for metric in ("compute", "memory"):
-                    key = (pod.get("WorkloadId"), pod.get("PodName"), metric)
-                    if not conflicting and gpu_sets.get(key) == {str(j) for j in indices}:
-                        m = metric_lookup.get((key[0], key[1], str(i), metric))
-                        if m:
-                            cards[i][metric] = {"value": m["value"], "sampled_at": m["ts"],
-                                "recent": m["recent_mean"], "recent_n": m["recent_n"],
-                                "fresh": m["fresh"] and assignment["fresh"] and fresh("nodes")}
+                    ids, by_order = paired[metric]
+                    m = metric_lookup.get((pod.get("WorkloadId"), pod.get("PodName"), ids.get(i), metric))
+                    if m:
+                        cards[i][metric] = {"value": m["value"], "sampled_at": m["ts"],
+                            "recent": m["recent_mean"], "recent_n": m["recent_n"],
+                            "pod_gpu": m["gpu"], "by_order": by_order,
+                            "fresh": m["fresh"] and assignment["fresh"] and fresh("nodes")}
         for card in cards:
             if len(card["assignments"]) > 1:
                 card["compute"] = card["memory"] = None

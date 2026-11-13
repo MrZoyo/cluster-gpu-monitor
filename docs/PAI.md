@@ -95,7 +95,9 @@ uv run gpumon web --host 127.0.0.1 --port 8848
   已确认的闲时占用显示任务、用户、Pod 和 GPU 卡号；两种视图独立记录来源状态，失败时保留旧值并标注陈旧。
   参数拼写来自 [ListNodePods](https://help.aliyun.com/zh/pai/developer-reference/api-paistudio-2022-01-12-listnodepods)，
   与任务提交策略 `ForceQuotaOverSold` 的大小写不同。节点 `RequestGPU` 仍保留平台普通请求口径，不与闲时映射重复累计。
-- 物理卡仅在 Pod 指标 GPU 索引集合与物理 `GPUIndexes` 一致时关联；多任务共享卡或关联不明时保留未知。
+- 云监控的 GPU 维度是 Pod 内编号（从 0 起），与 Pod 落在节点哪几张卡无关：占用物理卡 4–7 的 Pod 上报 0–3。
+  因此按升序把 Pod 内编号与物理 `GPUIndexes` 一一配对，卡片指标带 `pod_gpu` 和 `by_order` 说明取值来源；
+  仅当 Pod 的指标数量与物理卡数恰好对应时才关联，指标不全、多任务共享卡或关联不明时保留未知。
 - “已分配 GPU”使用运行任务的调度 GPU 总数（缺少调度量时回退申请量），包含借用一次。
   同一卡片以紫色显示“其中借用 × 卡”；热力图的“已定位占用”仅表示已取得物理映射的部分。
 - 热力图区分物理分配与实测计算：只有节点、任务及两种 Pod 视图新鲜、一致且无未定位运行任务时，确认未分配的卡才显示 `0`。
